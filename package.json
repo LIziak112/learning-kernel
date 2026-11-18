@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node scripts/run-tests.mjs --require tests/database.test.ts --require tests/single-quote.test.ts --require tests/browser/reading.test.ts --require tests/publication.test.ts --require tests/reading-progress.test.ts --require tests/concurrent-turn-in.test.ts --require tests/process-recovery.test.ts",
+    "test": "node scripts/run-tests.mjs --require tests/database.test.ts --require tests/single-quote.test.ts --require tests/browser/reading.test.ts --require tests/publication.test.ts --require tests/reading-progress.test.ts --require tests/concurrent-turn-in.test.ts --require tests/process-recovery.test.ts --require tests/verdict-history.test.ts",
     "coverage": "pnpm test --coverage",
     "check:size": "node scripts/check-size.mjs",
     "lint": "node scripts/lint.mjs",

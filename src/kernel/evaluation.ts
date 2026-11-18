@@ -6,6 +6,7 @@ import { readingPracticeSchema, scoringKeySchema } from "../contracts/reading-pu
 import { readingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
+import { assessmentTarget, questionVerdicts } from "./verdict-state.ts";
 
 const task = z.strictObject({
   submissionId: z.uuid(),
@@ -65,40 +66,15 @@ function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, check
   database.prepare("UPDATE evaluation_tasks SET status = 'done' WHERE submission_id = ?").run(input.submissionId);
 }
 
-const storedVerdict = z.strictObject({
-  submissionId: z.uuid(), targetId: z.string(), questionId: z.string(), correct: z.literal([0, 1]).transform(Boolean),
-});
-
-export function activityAutomaticVerdicts(database: DatabaseSync, activityId: string) {
-  return database.prepare(`
-    SELECT v.submission_id AS submissionId, v.target_id AS targetId, v.question_id AS questionId, v.correct
-    FROM automatic_verdicts v
-    JOIN submissions s ON s.id = v.submission_id
-    JOIN step_attempts a ON a.id = s.step_attempt_id
-    WHERE a.activity_id = ?
-    ORDER BY a.ordinal, v.target_id, v.question_id
-  `).all(activityId).map(row => storedVerdict.parse(row));
-}
-
-const counts = z.strictObject({ correctCount: z.int().nonnegative(), questionCount: z.int().nonnegative() });
-const activityTask = z.object({ submission_id: z.uuid(), target_id: z.string(), status: z.enum(["pending", "done"]) });
-
 export function assessmentView(database: DatabaseSync, activity: ReadingActivity) {
-  const row = database.prepare(`
-    SELECT t.submission_id, t.target_id, t.status
-    FROM evaluation_tasks t JOIN completions c ON c.submission_id = t.submission_id
-    WHERE c.activity_id = ?
-  `).get(activity.activityId);
-  if (!row) return undefined;
-  const task = activityTask.parse(row);
+  const target = assessmentTarget(database, activity.activityId);
+  if (!target) return undefined;
   const policy = activity.practice.policy.student;
   const pending = policy.ownSubmission.onFinal.includes("passageGradingStatus") ? { status: "pending" as const } : undefined;
-  if (task.status !== "done") return pending;
-  const result = counts.parse(database.prepare(`
-    SELECT COALESCE(SUM(correct), 0) AS correctCount, COUNT(*) AS questionCount
-    FROM automatic_verdicts WHERE submission_id = ? AND target_id = ?
-  `).get(task.submission_id, task.target_id));
-  if (result.questionCount !== activity.practice.questions.length) return pending;
+  if (target.status !== "done") return pending;
+  const verdicts = questionVerdicts(database, activity, target);
+  if (verdicts.some(verdict => !verdict.effective)) return pending;
+  const result = { questionCount: verdicts.length, correctCount: verdicts.filter(verdict => verdict.effective?.correct).length };
   const fields = Object.fromEntries(policy.passageScore.fields.map(field => [field, result[field]]));
   return { status: "complete" as const, ...fields };
 }

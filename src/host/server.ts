@@ -5,12 +5,13 @@ import { z } from "zod";
 import { startInput, saveInput, submitInput } from "../contracts/reading.ts";
 import type { SubmitInput } from "../contracts/reading.ts";
 import { readingAnswerInput, readingSaveInput } from "../contracts/reading-runtime.ts";
+import { verdictCommand } from "../contracts/verdict.ts";
 import { startActivity } from "../kernel/activity.ts";
 import { openDatabase } from "../kernel/database.ts";
 import { evaluatePending } from "../kernel/evaluation.ts";
 import { LearningError } from "../kernel/learning-error.ts";
 import { registerPublication } from "../kernel/publication.ts";
-import { readReview, selectionFeedbackInput, writeSelectionFeedback } from "../kernel/review.ts";
+import { readReview, selectionFeedbackInput, writeSelectionFeedback, writeVerdict } from "../kernel/review.ts";
 import type { RuntimeCheckpoint } from "../kernel/runtime-checkpoint.ts";
 import { readActivity, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
 import { authenticate, readJSON, sendJSON, sendError } from "./http.ts";
@@ -109,11 +110,11 @@ async function serve(
   const path = new URL(z.string().parse(request.url), "http://localhost").pathname;
   if (context.servePage?.(request, response, path)) return;
   const identity = authenticate(request, context.lookup);
-  const review = path.match(/^\/api\/reviews\/([a-f0-9-]{36})$/);
+  const review = path.match(/^\/api\/reviews\/([a-f0-9-]{36})(?:\/(verdicts))?$/);
   if (review) {
     if (identity.role !== "reviewer") throw new LearningError(403, "FORBIDDEN");
     const activityId = z.uuid().parse(review[1]);
-    const data = await reviewRequest(request, context.database, identity.id, activityId);
+    const data = await reviewRequest(request, context, identity, activityId, review[2]);
     return sendJSON(response, 200, data);
   }
   if (identity.role !== "student") throw new LearningError(403, "FORBIDDEN");
@@ -142,11 +143,17 @@ async function studentRequest(
     : await post(request, context, student, activityId, resource, submissionId);
 }
 
-async function reviewRequest(request: IncomingMessage, database: DatabaseSync, reviewer: string, activityId: string) {
-  if (request.method === "GET") return readReview(database, reviewer, activityId);
+async function reviewRequest(
+  request: IncomingMessage, context: HostContext, identity: Identity, activityId: string, resource?: string,
+) {
+  if (request.method === "GET" && !resource) return readReview(context.database, identity.id, activityId);
   if (request.method === "POST") {
-    const feedback = selectionFeedbackInput.parse(await readJSON(request));
-    return writeSelectionFeedback(database, reviewer, activityId, feedback.text);
+    const command = await readJSON(request);
+    requireSameIdentity(request, context, identity);
+    if (resource === "verdicts") {
+      return writeVerdict(context.database, identity.id, activityId, verdictCommand.parse(command), context.clock);
+    }
+    return writeSelectionFeedback(context.database, identity.id, activityId, selectionFeedbackInput.parse(command).text);
   }
   throw new LearningError(404, "NOT_FOUND");
 }
@@ -179,10 +186,14 @@ async function post(
 
 async function confirmRequest(request: IncomingMessage, context: HostContext, student: string, activityId: string, input: SubmitInput) {
   await context.beforeConfirmation?.(input);
-  const actor = authenticate(request, context.lookup);
-  if (actor.role !== "student" || actor.id !== student) throw new LearningError(403, "FORBIDDEN");
+  requireSameIdentity(request, context, { id: student, role: "student" });
   const receipt = submitDraft(context.database, student, activityId, input, context.clock, context.checkpoint);
   context.checkpoint?.({ point: "afterConfirmationCommit", operationId: input.operationId });
   context.scheduleEvaluation();
   return receipt;
+}
+
+function requireSameIdentity(request: IncomingMessage, context: HostContext, expected: Identity) {
+  const actor = authenticate(request, context.lookup);
+  if (actor.role !== expected.role || actor.id !== expected.id) throw new LearningError(403, "FORBIDDEN");
 }
