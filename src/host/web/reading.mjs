@@ -182,6 +182,10 @@ async function openActivity() {
 }
 
 function showLoadError(error) {
+  if (error.cause === 401 || error.cause === 403) {
+    title.textContent = "阅读练习";
+    progress.textContent = "";
+  }
   if (error.cause === 403) {
     loadError.textContent = "当前账号无权查看此活动。";
   } else if (error.cause === 401) {
@@ -222,8 +226,6 @@ submitButton.addEventListener("click", async () => {
       pending = undefined;
       workspace.hidden = true;
       workspace.replaceChildren();
-      title.textContent = "阅读练习";
-      progress.textContent = "";
       showLoadError(error);
     } else {
       submitError.textContent = "未收到确认。可以用同一选区重试。";

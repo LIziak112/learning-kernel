@@ -283,6 +283,14 @@ test("交卷事务同时固定原答、活动完成和待评任务", async t => 
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM submissions").get()?.count, 2);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM performances").get()?.count, 4);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts").get()?.count, 0);
+    const evaluator = database.prepare(`
+      UPDATE practices SET definition = json_set(definition, '$.grading.assessment.evaluator.id', ?) WHERE id = ?
+    `);
+    evaluator.run("unavailable-evaluator", reading.practice.id);
+    assert.throws(() => evaluatePending(database), /已发布评估器不可用/);
+    assert.equal(database.prepare("SELECT status FROM evaluation_tasks").get()?.status, "pending");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts").get()?.count, 0);
+    evaluator.run(reading.practice.grading.assessment.evaluator.id, reading.practice.id);
     evaluatePending(database);
     const complete = await readResult(get(origin, path), activityView.extend({
       status: z.literal("completed"),
@@ -315,6 +323,15 @@ test("伪造引文引用被拒绝，非法选项保稿，待评写入失败时�
     }), readingAnswerDraft);
     assert.equal(valid.draft.version, 2);
     using database = new DatabaseSync(databasePath);
+    const boundSource = database.prepare(`
+      UPDATE practices SET definition = json_set(definition, '$.steps[1].submit.slots.basis.source', ?) WHERE id = ?
+    `);
+    const originalSource = reading.practice.steps[1]?.submit.slots.basis?.source;
+    assert.ok(originalSource);
+    boundSource.run("missing-source", reading.practice.id);
+    await assertError(post(origin, path + "/submissions", { ...submission, draft: valid.draft }), 403, "FORBIDDEN");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evaluation_tasks").get()?.count, 0);
+    boundSource.run(originalSource, reading.practice.id);
     database.exec(`
       CREATE TRIGGER fail_task BEFORE INSERT ON evaluation_tasks
       BEGIN SELECT RAISE(ABORT, 'test queue failure'); END;

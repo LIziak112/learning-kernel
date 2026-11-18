@@ -11,6 +11,7 @@ import type { Browser, Page } from "playwright";
 import { createDemoServer } from "../../src/host/demo.ts";
 import { evaluatePending } from "../../src/kernel/evaluation.ts";
 import publication from "../../practices/single-quote.json" with { type: "json" };
+import reading from "../../practices/reading-library.json" with { type: "json" };
 
 let coverageSequence = 0;
 
@@ -162,27 +163,35 @@ test("提交已确认但浏览器丢失回执时，保留引文并重发原操�
 test("浏览器完成两步阅读并仅显示整篇初判和原答", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin, databasePath) => {
     const learner = await openBrowserPage(browser);
-    const response = await learner.goto(origin + "/demo/reading");
-    assert.equal(response?.status(), 200);
-    await learner.getByRole("button", { name: "打开活动" }).click();
-    const workspace = learner.locator("#library-workspace");
-    await workspace.getByRole("heading", { name: "图书馆延时开放" }).waitFor();
-    await workspace.locator(".paragraph").filter({ hasText: "每晚平均有三十人" })
-      .getByRole("button", { name: "选为客流观察" }).click();
+    const workspace = await openLibrary(learner, origin);
+    const submitQuotes = workspace.getByRole("button", { name: "提交选据" });
+    assert.equal(await submitQuotes.isDisabled(), true);
+    await selectObservation(workspace);
+    assert.equal(await submitQuotes.isDisabled(), true);
     await workspace.locator(".paragraph").filter({ hasText: "每晚平均有三十人" })
       .getByRole("button", { name: "选为同期条件" }).click();
-    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await submitQuotes.click();
     await workspace.getByRole("alert").waitFor();
     assert.match(await workspace.getByRole("alert").innerText(), /提交未确认/);
-    await workspace.locator(".paragraph").filter({ hasText: "自习室因维修" })
-      .getByRole("button", { name: "选为同期条件" }).click();
-    await workspace.getByRole("button", { name: "提交选据" }).click();
-    await workspace.getByRole("heading", { name: "已交引文" }).waitFor();
-    await workspace.getByRole("radio", { name: "A 延时时段有人到馆" }).check();
-    await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).check();
-    await workspace.getByRole("radio", { name: "A 立即全年延时" }).check();
+    await selectCondition(workspace);
+    assert.equal(await workspace.getByRole("alert").isVisible(), false);
+    await submitQuotes.click();
+    await answerLibrary(workspace);
+    assert.deepEqual(await workspace.locator("blockquote").allTextContents(),
+      reading.material.paragraphs.slice(1, 3).map(paragraph => paragraph.text));
     await workspace.getByRole("button", { name: "交卷" }).click();
     await learner.getByText("活动已完成", { exact: true }).waitFor();
+    await workspace.getByText("已交，待评", { exact: true }).waitFor();
+    assert.equal(await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).isDisabled(), true);
+    const activityURL = learner.url();
+    await learner.context().clearCookies();
+    await workspace.getByRole("button", { name: "刷新成绩" }).click();
+    await learner.getByRole("link", { name: "进入演示学生会话" }).waitFor();
+    assert.equal(await workspace.isHidden(), true);
+    assert.doesNotMatch(await learner.locator("main").innerText(), /图书馆延时开放|已交，待评|活动已完成/);
+    await savePageCoverage(learner, true);
+    await learner.goto(origin + "/demo/reading");
+    await learner.goto(activityURL);
     await workspace.getByText("已交，待评", { exact: true }).waitFor();
     using database = new DatabaseSync(databasePath);
     evaluatePending(database);
@@ -203,6 +212,77 @@ test("浏览器完成两步阅读并仅显示整篇初判和原答", { timeout: 
     assert.deepEqual(await privateFile.json(), { code: "NOT_FOUND" });
   }, false);
 });
+
+test("答题确认受阻时恢复原草稿并重试，只保留一次确认", { timeout: 25_000 }, async t => {
+  await withDemo(t, async (browser, origin, databasePath) => {
+    const learner = await openBrowserPage(browser);
+    const workspace = await openLibrary(learner, origin);
+    await selectObservation(workspace);
+    await selectCondition(workspace);
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await answerLibrary(workspace);
+    const confirm = workspace.getByRole("button", { name: "交卷" });
+    const path = origin + "/api" + new URL(learner.url()).pathname + "/submissions";
+    const arrived = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const inputs: (string | null)[] = [];
+    await learner.route(path, async route => {
+      inputs.push(route.request().postData());
+      if (inputs.length > 1) return route.continue();
+      arrived.resolve();
+      await release.promise;
+      await route.abort();
+    });
+    await confirm.click();
+    try {
+      await arrived.promise;
+      assert.equal(await confirm.isDisabled(), true);
+      assert.equal(await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).isDisabled(), true);
+    } finally {
+      release.resolve();
+    }
+    await workspace.getByText("提交未确认，请检查选段或作答后重试。").waitFor();
+    await savePageCoverage(learner, true);
+    await learner.reload();
+    const originalAnswer = workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" });
+    await originalAnswer.waitFor();
+    assert.equal(await originalAnswer.isChecked(), true);
+    assert.equal(await originalAnswer.isDisabled(), true);
+    await confirm.click();
+    await workspace.getByText("1/3", { exact: true }).waitFor();
+    assert.deepEqual(inputs, [inputs[0], inputs[0]]);
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evaluation_tasks WHERE status = 'done'").get()?.count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM submissions").get()?.count, 2);
+  });
+});
+
+async function openLibrary(learner: Page, origin: string) {
+  const response = await learner.goto(origin + "/demo/reading");
+  assert.equal(response?.status(), 200);
+  await learner.getByRole("button", { name: "打开活动" }).click();
+  const workspace = learner.locator("#library-workspace");
+  await workspace.getByRole("heading", { name: "图书馆延时开放" }).waitFor();
+  return workspace;
+}
+
+function selectObservation(workspace: ReturnType<Page["locator"]>) {
+  return workspace.locator(".paragraph").filter({ hasText: "每晚平均有三十人" })
+    .getByRole("button", { name: "选为客流观察" }).click();
+}
+
+function selectCondition(workspace: ReturnType<Page["locator"]>) {
+  return workspace.locator(".paragraph").filter({ hasText: "自习室因维修" })
+    .getByRole("button", { name: "选为同期条件" }).click();
+}
+
+async function answerLibrary(workspace: ReturnType<Page["locator"]>) {
+  await workspace.getByRole("heading", { name: "已交引文" }).waitFor();
+  assert.equal(await workspace.getByRole("button", { name: "交卷" }).isDisabled(), true);
+  await workspace.getByRole("radio", { name: "A 延时时段有人到馆" }).check();
+  await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).check();
+  await workspace.getByRole("radio", { name: "A 立即全年延时" }).check();
+}
 
 test("会话失效时清除页面引文，重新进入后可恢复活动", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {

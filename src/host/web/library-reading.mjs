@@ -37,8 +37,9 @@ export function renderLibraryActivity(activity, api, refresh, reportError) {
     const selection = activity.submission?.selection;
     if (selection) renderQuotes(preview, selection.ranges);
     side.append(readingResult(activity, refresh, handleError));
+  } else {
+    attachSubmission({ activity, api, refresh, handleError, slotId, storageKey, pending, editor, side });
   }
-  else attachSubmission({ activity, api, refresh, handleError, slotId, storageKey, pending, editor, side });
   root.replaceChildren(article, side);
   root.hidden = false;
 }
