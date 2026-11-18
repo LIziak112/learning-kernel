@@ -26,7 +26,6 @@ function fixture(t: TestContext, files: Record<string, string>) {
 
 function execute(root: string, ...args: string[]) {
   const env = { ...process.env };
-  // 子进程是独立项目的验收入口，不继承父用例的测试通信通道与覆盖率输出位置。
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_V8_COVERAGE;
   const result = spawnSync(process.execPath, [runner, ...args], {

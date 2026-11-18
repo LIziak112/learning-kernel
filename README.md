@@ -12,11 +12,13 @@ pnpm run hooks:install
 pnpm run verify
 ```
 
-`verify` 顺序执行 strict 类型检查、源码规模检查和已登记的测试。目前用例只检查工具链、测试执行器与行数门禁。SQLite 冒烟测试使用内存查询读取驱动版本，项目数据库的首次迁移由 T01 实施。
+`verify` 顺序执行 `lint`、strict 类型检查、源码规模检查和真实测试。日常先运行 `node --test tests/目标.test.ts`，按项运行累计验收。SQLite 冒烟只检查内存驱动，项目数据库的首次迁移仍由 T01 实施。
 
 ## 源码规模与持续集成
 
-`pnpm run check:size` 读取工作区，包括未跟踪并且未被忽略的源码。Git 提交钩子检查实际暂存的版本。克隆后执行一次 `pnpm run hooks:install` 启用钩子；GitHub Actions 在 push 和 pull request 时重新执行 `verify`。规模阈值与例外见[开发约定](AGENTS.md)。
+`pnpm run lint` 用锁定的开发依赖 `@babel/parser` 识别 JS/TS 语法。所有受检源码都检查普通注释、压制指令和显式 `any`，测试路径还检查常用入口的聚焦调用。允许 shebang 和独占文件头一行的 SPDX 标识。别名和运行时配置需要人工审查。
+
+`pnpm run lint` 和 `pnpm run check:size` 检查 Git 跟踪及未忽略的新源码。克隆后执行一次 `pnpm run hooks:install`，提交前两项快检只读暂存版本。CI 对 PR 和 `main` 的 push 重新执行完整 `verify`，不依赖本地钩子。规模豁免不等于 lint 豁免。参见[开发约定](AGENTS.md)和 [PR 模板](.github/pull_request_template.md)。
 
 ## 质量审计
 

@@ -36,7 +36,6 @@ async function verify(files) {
       successful = success;
       return;
     }
-    // 空文件也可能被 Node 汇总成一个成功项；按文件读取实际登记的用例数。
     if (counts.tests > 0) missing.delete(resolve(file));
     actualTests += counts.tests;
     incomplete ||= counts.skipped > 0 || counts.todo > 0 || counts.cancelled > 0;
@@ -57,7 +56,6 @@ async function saveCoverage(event) {
   }
   let content = "";
   for await (const chunk of Readable.from([event]).compose(lcov)) content += chunk;
-  // 统一源码路径，使 Windows 和 Linux 产生的 LCOV 都能供指标工具复用。
   content = content.replace(/^SF:.*$/gm, line => line.replaceAll("\\", "/"));
   mkdirSync("coverage", { recursive: true });
   writeFileSync(report, content);

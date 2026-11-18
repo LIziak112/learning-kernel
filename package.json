@@ -13,13 +13,15 @@
     "test": "node scripts/run-tests.mjs",
     "coverage": "node scripts/run-tests.mjs --coverage",
     "check:size": "node scripts/check-size.mjs",
-    "verify": "pnpm run typecheck && pnpm run check:size && pnpm test",
+    "lint": "node scripts/lint.mjs",
+    "verify": "pnpm run lint && pnpm run typecheck && pnpm run check:size && pnpm test",
     "hooks:install": "git config --local core.hooksPath .githooks"
   },
   "dependencies": {
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@babel/parser": "7.28.5",
     "@types/node": "24.19.0",
     "typescript": "7.0.2"
   }
