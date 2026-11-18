@@ -175,7 +175,8 @@ function answerEditor(activity, sources, pending, article, preview) {
   const values = { ...(activity.submission?.answer?.choices ?? pending?.payload.choices) };
   const editor = choiceEditor(values, questions.map(question => question.id), activity.status === "completed");
   article.append(...activity.material.paragraphs.map(paragraph => paragraphRow(paragraph, {}, editor)));
-  article.append(...questions.map(question => questionRow(question, editor)));
+  const publishedVerdicts = reviewVerdicts(activity.review);
+  article.append(...questions.map(question => questionRow(question, editor, publishedVerdicts.get(question.id))));
   const quotes = sources.filter(input => input.from === "submission").flatMap(input => input.selection?.ranges ?? []);
   renderQuotes(preview, quotes);
   editor.lock(editor.completed);
@@ -185,6 +186,10 @@ function answerEditor(activity, sources, pending, article, preview) {
     submitLabel: "交卷",
     payload: () => ({ choices: values, references: answerReferences(activity) }),
   };
+}
+
+function reviewVerdicts(review) {
+  return new Map((review?.byQuestion ?? []).map(item => [item.questionId, item.correct]));
 }
 
 function renderQuotes(preview, quotes) {
@@ -207,7 +212,7 @@ function paragraphRow(paragraph, labels, editor) {
   return row;
 }
 
-function questionRow(question, editor) {
+function questionRow(question, editor, verdict) {
   const row = document.createElement("fieldset");
   row.className = "reading-question";
   row.append(text("legend", question.prompt));
@@ -223,6 +228,7 @@ function questionRow(question, editor) {
     row.append(option);
     editor.controls.push(choice);
   }
+  if (verdict !== undefined) row.append(text("p", verdict ? "判定正确" : "判定错误"));
   return row;
 }
 
@@ -266,6 +272,8 @@ function readingResult(activity, refresh, reportError) {
   } else if (assessment?.status === "complete") {
     result.append(text("p", scoreText(assessment)));
   }
+  const feedback = activity.review?.selectionFeedback;
+  if (feedback) result.append(text("h3", "选据评语"), text("p", feedback));
   return result;
 }
 

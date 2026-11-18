@@ -11,9 +11,10 @@ import { openDatabase } from "../kernel/database.ts";
 import { evaluatePending } from "../kernel/evaluation.ts";
 import { LearningError } from "../kernel/learning-error.ts";
 import { registerPublication } from "../kernel/publication.ts";
+import { reviewToggle, toggleReview } from "../kernel/review-access.ts";
 import { readReview, selectionFeedbackInput, writeSelectionFeedback, writeVerdict } from "../kernel/review.ts";
 import type { RuntimeCheckpoint } from "../kernel/runtime-checkpoint.ts";
-import { readActivity, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
+import { readActivity, readStudentFragment, readStudentResults, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
 import { authenticate, readJSON, sendJSON, sendError } from "./http.ts";
 
 type PageHandler = (request: IncomingMessage, response: ServerResponse, path: string) => boolean;
@@ -23,7 +24,7 @@ type HostOptions = {
   publication: unknown;
   sessions: ReadonlyMap<string, string>;
   reviewerSessions?: ReadonlyMap<string, string>;
-  assignedReviewer?: string;
+  assignedReviewer?: string | undefined;
   additionalPublications?: readonly unknown[];
   servePage?: PageHandler;
   evaluateAutomatically?: boolean;
@@ -107,33 +108,42 @@ async function serve(
   response: ServerResponse,
   context: HostContext,
 ) {
-  const path = new URL(z.string().parse(request.url), "http://localhost").pathname;
+  const { pathname: path, search } = new URL(z.string().parse(request.url), "http://localhost");
   if (context.servePage?.(request, response, path)) return;
   const identity = authenticate(request, context.lookup);
-  const review = path.match(/^\/api\/reviews\/([a-f0-9-]{36})(?:\/(verdicts))?$/);
-  if (review) {
-    if (identity.role !== "reviewer") throw new LearningError(403, "FORBIDDEN");
-    const activityId = z.uuid().parse(review[1]);
-    const data = await reviewRequest(request, context, identity, activityId, review[2]);
-    return sendJSON(response, 200, data);
-  }
-  if (identity.role !== "student") throw new LearningError(403, "FORBIDDEN");
-  const data = await studentRequest(request, context, identity.id, path);
+  if (request.method === "GET" && search) throw new LearningError(403, "FORBIDDEN");
+  const staff = path.match(/^\/api\/(reviews|manage)\/([a-f0-9-]{36})(?:\/(verdicts|history|export|submissions|fragments)(?:\/([a-f0-9-]{36}))?)?$/);
+  const data = staff
+    ? await staffRequest(request, context, identity, staff)
+    : await studentRequest(request, context, identity, path);
   return sendJSON(response, 200, data);
+}
+
+async function staffRequest(request: IncomingMessage, context: HostContext, identity: Identity, route: RegExpMatchArray) {
+  if (identity.role !== "reviewer") throw new LearningError(403, "FORBIDDEN");
+  const [, group, identifier, resource, item] = route;
+  const activityId = z.uuid().parse(identifier);
+  if (group === "reviews") return reviewRequest(request, context, identity, activityId, resource, item);
+  if (request.method !== "POST" || resource) throw new LearningError(404, "NOT_FOUND");
+  const command = reviewToggle.parse(await readJSON(request));
+  requireSameIdentity(request, context, identity);
+  return toggleReview(context.database, identity.id, activityId, command.action);
 }
 
 async function studentRequest(
   request: IncomingMessage,
   context: HostContext,
-  student: string,
+  identity: Identity,
   path: string,
 ) {
+  if (identity.role !== "student") throw new LearningError(403, "FORBIDDEN");
+  const student = identity.id;
   if (request.method === "POST" && path === "/api/activities") {
     const input = startInput.parse(await readJSON(request));
     return startActivity(context.database, student, input, context.clock, context.assignedReviewer);
   }
   const match = path.match(
-    /^\/api\/activities\/([a-f0-9-]{36})(?:\/(drafts|submissions)(?:\/([a-f0-9-]{36}))?)?$/,
+    /^\/api\/activities\/([a-f0-9-]{36})(?:\/(drafts|submissions|assessment|review|export|fragments)(?:\/([^/]+))?)?$/,
   );
   if (!match) throw new LearningError(404, "NOT_FOUND");
   const [, identifier, resource, submissionId] = match;
@@ -144,23 +154,51 @@ async function studentRequest(
 }
 
 async function reviewRequest(
-  request: IncomingMessage, context: HostContext, identity: Identity, activityId: string, resource?: string,
+  request: IncomingMessage, context: HostContext, identity: Identity, activityId: string, resource?: string, item?: string,
 ) {
-  if (request.method === "GET" && !resource) return readReview(context.database, identity.id, activityId);
-  if (request.method === "POST") {
+  if (request.method === "GET") return reviewerGet(context.database, identity.id, activityId, resource, item);
+  if (request.method === "POST" && !item) {
     const command = await readJSON(request);
     requireSameIdentity(request, context, identity);
     if (resource === "verdicts") {
       return writeVerdict(context.database, identity.id, activityId, verdictCommand.parse(command), context.clock);
     }
-    return writeSelectionFeedback(context.database, identity.id, activityId, selectionFeedbackInput.parse(command).text);
+    if (!resource) return writeSelectionFeedback(context.database, identity.id, activityId, selectionFeedbackInput.parse(command).text);
   }
   throw new LearningError(404, "NOT_FOUND");
 }
 
+function reviewerGet(database: DatabaseSync, reviewer: string, activityId: string, resource?: string, item?: string) {
+  const view = readReview(database, reviewer, activityId);
+  if (resource === "submissions" || resource === "fragments") {
+    return reviewerItem(view.submissions, resource, item);
+  }
+  if (item) throw new LearningError(404, "NOT_FOUND");
+  if (!resource || resource === "export") return view;
+  if (resource === "history") return { verdicts: view.verdicts, automaticVerdicts: view.automaticVerdicts };
+  throw new LearningError(404, "NOT_FOUND");
+}
+
+function reviewerItem(
+  submissions: ReturnType<typeof readReview>["submissions"], resource: "submissions" | "fragments", item?: string,
+) {
+  if (!item) throw new LearningError(404, "NOT_FOUND");
+  const submitted = submissions.find(record => record.receipt.id === item);
+  if (!submitted) throw new LearningError(403, "FORBIDDEN");
+  if (resource === "submissions") return submitted;
+  if (submitted.selection) return submitted.selection;
+  throw new LearningError(403, "FORBIDDEN");
+}
+
 function get(database: DatabaseSync, student: string, activityId: string, resource?: string, submissionId?: string) {
   if (!resource) return readActivity(database, student, activityId);
-  if (resource === "submissions" && submissionId) return readSubmission(database, student, activityId, submissionId);
+  if (resource === "assessment" || resource === "review" || resource === "export") {
+    if (submissionId) throw new LearningError(403, "FORBIDDEN");
+    return readStudentResults(database, student, activityId, resource);
+  }
+  if (!submissionId) throw new LearningError(404, "NOT_FOUND");
+  if (resource === "submissions") return readSubmission(database, student, activityId, z.uuid().parse(submissionId));
+  if (resource === "fragments") return readStudentFragment(database, student, activityId, z.uuid().parse(submissionId));
   throw new LearningError(404, "NOT_FOUND");
 }
 

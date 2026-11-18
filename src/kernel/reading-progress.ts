@@ -7,10 +7,11 @@ import type { ReadingStep } from "../contracts/reading-publication.ts";
 import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { assessmentView, queueEvaluation } from "./evaluation.ts";
+import { queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { answerObservations, findSource, verifyAnswerReferences } from "./reading-answers.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
+import { studentResults } from "./student-results.ts";
 import { finishActivity, recordSubmission, recoverReceipt } from "./submission-store.ts";
 import type { StoredSubmission } from "./submission-store.ts";
 import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
@@ -143,7 +144,7 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
     status: completed ? "completed" : "active",
     inputs,
     submission: submitted ? studentSubmissionView(activity, submitted) : undefined,
-    assessment: assessmentView(database, activity),
+    ...studentResults(database, activity),
   };
 }
 

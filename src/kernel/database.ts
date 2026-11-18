@@ -23,6 +23,9 @@ const migrations = [
   `,
   evaluationMigration,
   verdictMigration,
+  `
+    ALTER TABLE reading_reviews ADD COLUMN review_open INTEGER NOT NULL DEFAULT 0 CHECK (review_open IN (0, 1));
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

@@ -8,6 +8,7 @@ import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { confirmReadingDraft, readingActivityView, saveReadingAnswer, saveReadingSelection, studentSubmissionView } from "./reading-progress.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
+import { studentResults } from "./student-results.ts";
 import { activitySubmissions, finishActivity, recordSubmission, recoverReceipt } from "./submission-store.ts";
 import type { StoredSubmission } from "./submission-store.ts";
 import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
@@ -67,6 +68,30 @@ export function readSubmission(database: DatabaseSync, student: string, activity
   const result = activitySubmissions(database, activityId).find(item => item.receipt.id === submissionId);
   if (!result) throw new LearningError(403, "FORBIDDEN");
   return activity.kind === "reading" ? studentSubmissionView(activity, result) : submissionView(result);
+}
+
+export function readStudentFragment(database: DatabaseSync, student: string, activityId: string, submissionId: string) {
+  const submission = readSubmission(database, student, activityId, submissionId);
+  if (!("selection" in submission) || !submission.selection) throw new LearningError(403, "FORBIDDEN");
+  return submission.selection;
+}
+
+export function readStudentResults(
+  database: DatabaseSync, student: string, activityId: string, resource: "assessment" | "review" | "export",
+) {
+  const activity = loadActivity(database, student, activityId);
+  if (activity.kind !== "reading") throw new LearningError(403, "FORBIDDEN");
+  const results = studentResults(database, activity);
+  if (resource === "assessment") return { assessment: results.assessment };
+  if (resource === "review") {
+    if (!results.review) throw new LearningError(403, "FORBIDDEN");
+    return results.review;
+  }
+  return {
+    activityId, status: activity.completed ? "completed" : "active",
+    submissions: activitySubmissions(database, activityId).map(submitted => studentSubmissionView(activity, submitted)),
+    ...results,
+  };
 }
 
 function submissionView(submitted: StoredSubmission) {

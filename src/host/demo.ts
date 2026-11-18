@@ -14,7 +14,7 @@ const assets = new Map([
   ["/library-reading.mjs", { file: "library-reading.mjs", type: "text/javascript" }],
 ]);
 
-type DemoOptions = Pick<Parameters<typeof createLearningServer>[0], "evaluateAutomatically" | "clock">;
+type DemoOptions = Pick<Parameters<typeof createLearningServer>[0], "evaluateAutomatically" | "clock" | "reviewerSessions">;
 
 export function createDemoServer(databasePath: string, options: DemoOptions = {}) {
   const student = randomUUID();

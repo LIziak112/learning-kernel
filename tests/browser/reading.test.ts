@@ -8,6 +8,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { chromium } from "playwright";
 import type { Browser, Page } from "playwright";
+import { z } from "zod";
 import { createDemoServer } from "../../src/host/demo.ts";
 import { evaluatePending } from "../../src/kernel/evaluation.ts";
 import publication from "../../practices/single-quote.json" with { type: "json" };
@@ -335,6 +336,53 @@ test("浏览器到达截止后禁用交卷，刷新仍保留原草稿", { timeou
     assert.equal(await submit.isDisabled(), true);
     assert.equal(await learner.getByText("活动已完成", { exact: true }).count(), 0);
   }, { clock: () => new Date(now) });
+});
+
+test("学生页面随复盘开关闭合逐题反馈，整篇成绩保持 2/3", { timeout: 25_000 }, async t => {
+  await withDemo(t, async (browser, origin, databasePath) => {
+    const learner = await openBrowserPage(browser);
+    const workspace = await openLibrary(learner, origin);
+    await selectObservation(workspace);
+    await selectCondition(workspace);
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await answerLibrary(workspace);
+    await workspace.getByRole("button", { name: "交卷" }).click();
+    await workspace.getByText("已交，待评", { exact: true }).waitFor();
+    const pathname = new URL(learner.url()).pathname;
+    const activityId = pathname.split("/").at(-1);
+    const data = await learner.request.get(origin + "/api" + pathname);
+    assert.equal(data.status(), 200);
+    const { submission } = z.object({ submission: z.object({ receipt: z.object({ id: z.uuid() }) }) }).parse(await data.json());
+    using database = new DatabaseSync(databasePath);
+    evaluatePending(database);
+    const teacherPost = async (path: string, payload: Record<string, unknown>) => {
+      const response = await fetch(origin + path, {
+        method: "POST",
+        headers: { cookie: "learning_session=browser-teacher", "content-type": "application/json" },
+        body: JSON.stringify({ protocolVersion: 1, ...payload }),
+      });
+      assert.equal(response.status, 200, await response.text());
+    };
+    await teacherPost(`/api/reviews/${activityId}/verdicts`, {
+      submissionId: submission.receipt.id, questionId: "q2", targetId: "interpret",
+      action: "override", operationId: "browser-revise", expectedRevision: 0, correct: true, reason: "具体条件支持作答",
+    });
+    await teacherPost(`/api/reviews/${activityId}`, { text: "说明同期条件对推断的影响。" });
+    await teacherPost(`/api/manage/${activityId}`, { action: "openReview" });
+    await savePageCoverage(learner, true);
+    await learner.reload();
+    await workspace.getByText("2/3", { exact: true }).waitFor();
+    const verdict = workspace.locator(".reading-question").nth(1).getByText("判定正确", { exact: true });
+    await verdict.waitFor();
+    await workspace.getByText("说明同期条件对推断的影响。", { exact: true }).waitFor();
+    await teacherPost(`/api/manage/${activityId}`, { action: "closeReview" });
+    await savePageCoverage(learner, true);
+    await learner.reload();
+    await workspace.getByText("2/3", { exact: true }).waitFor();
+    assert.equal(await verdict.count(), 0);
+    assert.equal(await workspace.getByText("说明同期条件对推断的影响。", { exact: true }).count(), 0);
+    assert.equal(await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).isChecked(), true);
+  }, { evaluateAutomatically: false, reviewerSessions: new Map([["browser-teacher", "teacher-1"]]) });
 });
 
 test("会话失效时清除页面引文，重新进入后可恢复活动", { timeout: 25_000 }, async t => {

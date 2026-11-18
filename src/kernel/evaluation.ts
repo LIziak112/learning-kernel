@@ -6,7 +6,6 @@ import { readingPracticeSchema, scoringKeySchema } from "../contracts/reading-pu
 import { readingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
-import { assessmentTarget, questionVerdicts } from "./verdict-state.ts";
 
 const task = z.strictObject({
   submissionId: z.uuid(),
@@ -64,17 +63,4 @@ function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, check
   }
   checkpoint?.({ point: "beforeEvaluationComplete", submissionId: input.submissionId });
   database.prepare("UPDATE evaluation_tasks SET status = 'done' WHERE submission_id = ?").run(input.submissionId);
-}
-
-export function assessmentView(database: DatabaseSync, activity: ReadingActivity) {
-  const target = assessmentTarget(database, activity.activityId);
-  if (!target) return undefined;
-  const policy = activity.practice.policy.student;
-  const pending = policy.ownSubmission.onFinal.includes("passageGradingStatus") ? { status: "pending" as const } : undefined;
-  if (target.status !== "done") return pending;
-  const verdicts = questionVerdicts(database, activity, target);
-  if (verdicts.some(verdict => !verdict.effective)) return pending;
-  const result = { questionCount: verdicts.length, correctCount: verdicts.filter(verdict => verdict.effective?.correct).length };
-  const fields = Object.fromEntries(policy.passageScore.fields.map(field => [field, result[field]]));
-  return { status: "complete" as const, ...fields };
 }
