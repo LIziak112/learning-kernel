@@ -1,4 +1,4 @@
-import { readingCapability } from "../builtins/reading-capabilities.ts";
+import { readingCapability, studentTool } from "../builtins/reading-capabilities.ts";
 import type { ValueType } from "../builtins/reading-capabilities.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
 
@@ -53,8 +53,8 @@ function resolveInputs(
 }
 
 function validateTool(step: ReadingStep, inputs: ReadonlyMap<string, ValueType>, issue: Issue) {
-  const capability = readingCapability(step.tool);
-  if (capability?.audience !== "student") {
+  const capability = studentTool(step.tool);
+  if (!capability) {
     issue(["tool"], "须绑定已登记且允许学生调用的工具版本");
     return;
   }
@@ -78,8 +78,8 @@ function validateOutputs(slots: Readonly<Record<string, ReadingSlot>>, outputs: 
       issue(["submit", "slots", name, "type"], "槽位类型与工具输出不一致");
     }
   }
-  if (entries.every(([, slot]) => slot.type === "reuse")) {
-    issue(["submit", "slots"], "工具须声明一个新交付槽位");
+  if (entries.filter(([, slot]) => slot.type !== "reuse").length !== 1) {
+    issue(["submit", "slots"], "步骤须恰有一个新交付槽位");
   }
 }
 

@@ -45,7 +45,7 @@ export const startReceipt = z.strictObject({
   startedAt: z.iso.datetime(),
 });
 
-const range = z.strictObject({
+export const range = z.strictObject({
   paragraphId: id,
   start: z.int().nonnegative(),
   end: z.int().positive(),

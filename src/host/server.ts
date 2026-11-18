@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { startInput, saveInput, submitInput } from "../contracts/reading.ts";
+import { readingSaveInput } from "../contracts/reading-runtime.ts";
 import { startActivity } from "../kernel/activity.ts";
 import { openDatabase } from "../kernel/database.ts";
 import { LearningError } from "../kernel/learning-error.ts";
@@ -11,6 +12,7 @@ import { readActivity, readSubmission, saveDraft, submitDraft } from "../kernel/
 import { readJSON, sendJSON, sendError, studentFor } from "./http.ts";
 
 type PageHandler = (request: IncomingMessage, response: ServerResponse, path: string) => boolean;
+const saveRequest = z.union([saveInput, readingSaveInput]);
 
 export function createLearningServer(options: {
   databasePath: string;
@@ -74,7 +76,7 @@ async function post(
 ) {
   if (request.method !== "POST" || submissionId) throw new LearningError(404, "NOT_FOUND");
   if (resource === "drafts") {
-    const input = saveInput.parse(await readJSON(request));
+    const input = saveRequest.parse(await readJSON(request));
     return saveDraft(database, student, activityId, input);
   }
   if (resource === "submissions") {

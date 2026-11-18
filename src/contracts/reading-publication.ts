@@ -82,7 +82,7 @@ export const readingPracticeSchema = versionRef.extend({
   questions: z.array(z.strictObject({
     id, prompt: nonempty, options: descriptions,
   })).min(1),
-  steps: z.array(step).min(1),
+  steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
     selectionFeedback: z.strictObject({ from: slotReference, criterion: nonempty }).optional(),
     assessment: z.strictObject({

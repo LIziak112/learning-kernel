@@ -58,3 +58,8 @@ const capabilities: readonly ReadingCapability[] = [
 export function readingCapability(reference: VersionRef) {
   return capabilities.find(capability => capability.id === reference.id && capability.version === reference.version);
 }
+
+export function studentTool(reference: VersionRef) {
+  const capability = readingCapability(reference);
+  return capability?.audience === "student" ? capability : undefined;
+}

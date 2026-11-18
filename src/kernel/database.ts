@@ -3,7 +3,7 @@ import { z } from "zod";
 import { readingMigration } from "./reading-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
-const migrationVersions = new Set<number | null>([1, 2, 3]);
+const migrationVersions = new Set<number | null>([1, 2, 3, 4]);
 
 export function openDatabase(path: string): DatabaseSync {
   const database = new DatabaseSync(path, { timeout: 5000 });
@@ -44,7 +44,7 @@ function migrate(database: DatabaseSync) {
     database.exec(readingMigration);
     database.exec("INSERT INTO schema_migrations (version) VALUES (2)");
   }
-  if (version !== 3) {
+  if (version === 1 || version === 2) {
     database.exec(`
       CREATE TABLE scoring_keys (
         id TEXT NOT NULL,
@@ -53,6 +53,15 @@ function migrate(database: DatabaseSync) {
         PRIMARY KEY (id, version)
       ) STRICT;
       INSERT INTO schema_migrations (version) VALUES (3);
+    `);
+  }
+  if (version !== 4) {
+    database.exec(`
+      ALTER TABLE step_attempts ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0 CHECK (ordinal >= 0);
+      CREATE UNIQUE INDEX step_attempt_order ON step_attempts (activity_id, ordinal);
+      ALTER TABLE works ADD COLUMN step_attempt_id TEXT REFERENCES step_attempts (id);
+      ALTER TABLE works ADD COLUMN slot_id TEXT CHECK ((slot_id IS NULL) = (step_attempt_id IS NULL));
+      INSERT INTO schema_migrations (version) VALUES (4);
     `);
   }
 }

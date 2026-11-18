@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import reading from "../practices/reading-library.json" with { type: "json" };
 import { createLearningServer } from "../src/host/server.ts";
 import { openDatabase } from "../src/kernel/database.ts";
@@ -139,6 +139,14 @@ const failures: { title: string; input: unknown; path: (string | number)[] }[] =
     path: [...second, "submit", "slots"],
   },
   {
+    title: "拒绝同一步声明多个新交付槽位",
+    input: withSteps({
+      ...evidence,
+      submit: { ...evidence.submit, slots: { ...slots, another: slots.quotes } },
+    }, decide),
+    path: [...first, "submit", "slots"],
+  },
+  {
     title: "复用槽位须指向已交作品输入",
     input: withSteps(evidence, {
       ...decide,
@@ -251,7 +259,7 @@ test("评分键版本冲突时回滚同次发布的材料和练法", t => {
   assert.deepEqual(JSON.parse(String(reopened.prepare("SELECT definition FROM scoring_keys").get()?.definition)), reading.scoringKey);
 });
 
-test("发布批次的两步声明经同一服务装载，学生启动仍封住未接入的流程和评分键", async t => {
+test("发布的两步声明经同一服务装载，学生开练只取得当前步的公开输入", async t => {
   const filename = databasePath(t);
   const server = createLearningServer({
     databasePath: filename, publication: reading, sessions: new Map([["student", "reader"]]),
@@ -266,10 +274,19 @@ test("发布批次的两步声明经同一服务装载，学生启动仍封住�
       headers: { cookie: "learning_session=student", "content-type": "application/json" },
       body: JSON.stringify({ protocolVersion: 1, practiceId: reading.practice.id, operationId: "start" }),
     });
-    assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), { code: "PRACTICE_NOT_RUNNABLE" });
+    assert.equal(response.status, 200);
+    const { activityId } = z.object({ activityId: z.uuid() }).parse(await response.json());
+    const active = await fetch(`http://127.0.0.1:${address.port}/api/activities/${activityId}`, {
+      headers: { cookie: "learning_session=student" },
+    });
+    assert.equal(active.status, 200);
+    const body = await active.text();
+    assert.doesNotMatch(body, /"scoringKey"|"acceptedChoices"|"keyRef"|"questions"|"decide"/);
+    assert.deepEqual(JSON.parse(body).inputs, {
+      passage: { from: "material", positionId: "evidence-passage" },
+    });
     using database = openDatabase(filename);
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM activities").get()?.count, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM activities").get()?.count, 1);
     assert.deepEqual(publicationCounts(database), [1, 1, 1]);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
