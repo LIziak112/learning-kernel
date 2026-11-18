@@ -3,7 +3,7 @@ import { draftReceipt, selectionSchema } from "../contracts/reading.ts";
 import type { ActivityDetail, SaveInput, SubmitInput } from "../contracts/reading.ts";
 import type { ReadingAnswerInput, ReadingSaveInput } from "../contracts/reading-runtime.ts";
 import { selectText } from "../builtins/selection.ts";
-import { loadActivity } from "./activity.ts";
+import { loadStudentActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { confirmReadingDraft, readingActivityView, saveReadingAnswer, saveReadingSelection, studentSubmissionView } from "./reading-progress.ts";
@@ -20,7 +20,7 @@ export function saveDraft(
   input: SaveInput | ReadingSaveInput | ReadingAnswerInput,
 ) {
   return writeTransaction(database, () => {
-    const activity = loadActivity(database, student, activityId);
+    const activity = loadStudentActivity(database, student, activityId);
     if ("ranges" in input && activity.kind === "reading") return saveReadingSelection(database, activity, input);
     if ("choices" in input && activity.kind === "reading") return saveReadingAnswer(database, activity, input);
     if ("range" in input && activity.kind === "single") {
@@ -36,7 +36,7 @@ export function submitDraft(
   database: DatabaseSync, student: string, activityId: string, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
 ) {
   return writeTransaction(database, () => {
-    const activity = loadActivity(database, student, activityId);
+    const activity = loadStudentActivity(database, student, activityId);
     if (activity.kind === "reading") return confirmReadingDraft(database, activity, input, clock, checkpoint);
     if (activity.stepAttemptId !== input.stepAttemptId) throw new LearningError(403, "FORBIDDEN");
     const repeated = recoverReceipt(database, input);
@@ -51,7 +51,7 @@ export function submitDraft(
 }
 
 export function readActivity(database: DatabaseSync, student: string, activityId: string) {
-  const activity = loadActivity(database, student, activityId);
+  const activity = loadStudentActivity(database, student, activityId);
   const submissions = activitySubmissions(database, activityId);
   if (activity.kind === "reading") return readingActivityView(database, activity, submissions);
   const { kind, completed, ...previous } = activity;
@@ -64,7 +64,7 @@ export function readActivity(database: DatabaseSync, student: string, activityId
 }
 
 export function readSubmission(database: DatabaseSync, student: string, activityId: string, submissionId: string) {
-  const activity = loadActivity(database, student, activityId);
+  const activity = loadStudentActivity(database, student, activityId);
   const result = activitySubmissions(database, activityId).find(item => item.receipt.id === submissionId);
   if (!result) throw new LearningError(403, "FORBIDDEN");
   return activity.kind === "reading" ? studentSubmissionView(activity, result) : submissionView(result);
@@ -79,7 +79,7 @@ export function readStudentFragment(database: DatabaseSync, student: string, act
 export function readStudentResults(
   database: DatabaseSync, student: string, activityId: string, resource: "assessment" | "review" | "export",
 ) {
-  const activity = loadActivity(database, student, activityId);
+  const activity = loadStudentActivity(database, student, activityId);
   if (activity.kind !== "reading") throw new LearningError(403, "FORBIDDEN");
   const results = studentResults(database, activity);
   if (resource === "assessment") return { assessment: results.assessment };
@@ -88,7 +88,7 @@ export function readStudentResults(
     return results.review;
   }
   return {
-    activityId, status: activity.completed ? "completed" : "active",
+    activityId, status: activity.completed ? "completed" : "active", redoOf: activity.redoOf,
     submissions: activitySubmissions(database, activityId).map(submitted => studentSubmissionView(activity, submitted)),
     ...results,
   };

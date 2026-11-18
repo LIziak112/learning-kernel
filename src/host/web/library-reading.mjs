@@ -1,4 +1,5 @@
 const root = document.getElementById("library-workspace");
+const storagePrefix = "learning-kernel:library:";
 
 function text(tag, value) {
   const node = document.createElement(tag);
@@ -22,12 +23,8 @@ export function renderLibraryActivity(activity, api, refresh, reportError) {
   const [slotId, slot] = Object.entries(activity.step.submit.slots).find(([, entry]) => entry.type !== "reuse");
   const sources = Object.values(activity.inputs);
   const completed = activity.status === "completed";
-  const storageKey = `learning-kernel:library:${activity.stepAttemptId}`;
+  const storageKey = libraryStorageKey(activity);
   const preview = document.createElement("div");
-  const handleError = problem => {
-    if (permissionDenied(problem)) clearLibraryActivity(storageKey);
-    reportError(problem);
-  };
   const pending = loadPending(storageKey, completed);
   const editor = slot.type === "passageSelection"
     ? selectionEditor(activity, slot, pending, article, preview, completed)
@@ -36,11 +33,11 @@ export function renderLibraryActivity(activity, api, refresh, reportError) {
   if (completed) {
     const selection = activity.submission?.selection;
     if (selection) renderQuotes(preview, selection.ranges);
-    const result = readingResult(activity, refresh, handleError);
+    const result = readingResult(activity, refresh, reportError);
     showUnsubmittedDraft(result, pending);
     side.append(result);
   } else {
-    attachSubmission({ activity, api, refresh, handleError, slotId, storageKey, pending, editor, side });
+    attachSubmission({ activity, api, refresh, handleError: reportError, slotId, storageKey, pending, editor, side });
   }
   root.replaceChildren(article, side);
   root.hidden = false;
@@ -100,10 +97,24 @@ function permissionDenied(problem) {
   return problem.cause === 401 || problem.cause === 403;
 }
 
-function clearLibraryActivity(storageKey) {
+export function clearLibraryActivity(activityId) {
   root.hidden = true;
   root.replaceChildren();
-  sessionStorage.removeItem(storageKey);
+  const scoped = `${storagePrefix}${activityId}:`;
+  for (const key of Object.keys(sessionStorage)) {
+    if (key.startsWith(scoped) || (key.startsWith(storagePrefix) && !key.slice(storagePrefix.length).includes(":"))) {
+      sessionStorage.removeItem(key);
+    }
+  }
+}
+
+function libraryStorageKey({ activityId, stepAttemptId }) {
+  const key = `${storagePrefix}${activityId}:${stepAttemptId}`;
+  const legacy = storagePrefix + stepAttemptId;
+  const stored = sessionStorage.getItem(legacy);
+  if (stored && !sessionStorage.getItem(key)) sessionStorage.setItem(key, stored);
+  sessionStorage.removeItem(legacy);
+  return key;
 }
 
 function loadPending(storageKey, completed) {

@@ -39,6 +39,7 @@ export const publicationSchema = z.strictObject({
 });
 
 export const startInput = z.strictObject({ protocolVersion, operationId: id, practiceId: id });
+export const redoInput = startInput.omit({ practiceId: true });
 export const startReceipt = z.strictObject({
   activityId: z.uuid(),
   stepAttemptId: z.uuid(),

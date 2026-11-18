@@ -26,6 +26,12 @@ const migrations = [
   `
     ALTER TABLE reading_reviews ADD COLUMN review_open INTEGER NOT NULL DEFAULT 0 CHECK (review_open IN (0, 1));
   `,
+  `
+    ALTER TABLE reading_reviews ADD COLUMN reviewer_active INTEGER NOT NULL DEFAULT 1 CHECK (reviewer_active IN (0, 1));
+    ALTER TABLE reading_reviews ADD COLUMN student_active INTEGER NOT NULL DEFAULT 1 CHECK (student_active IN (0, 1));
+    ALTER TABLE reading_reviews ADD COLUMN redo_authorized INTEGER NOT NULL DEFAULT 0 CHECK (redo_authorized IN (0, 1));
+    ALTER TABLE activities ADD COLUMN redo_of TEXT REFERENCES activities (id);
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

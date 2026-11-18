@@ -17,7 +17,7 @@ export const selectionFeedbackInput = z.strictObject({
 });
 
 export function readReview(database: DatabaseSync, reviewer: string, activityId: string) {
-  const { activity, feedback } = assignedReading(database, reviewer, activityId);
+  const { activity, feedback } = assignedReading(database, reviewer, activityId, "reviewer");
   const fields = new Set(activity.practice.policy.reviewer.fields);
   const submissions = activitySubmissions(database, activityId).map(readingSubmissionView).filter(submission =>
     submission.selection ? fields.has("submittedQuotes") : fields.has("studentChoices"));
@@ -69,7 +69,7 @@ export function writeVerdict(
   database: DatabaseSync, reviewer: string, activityId: string, command: VerdictCommand, clock: () => Date,
 ) {
   return writeTransaction(database, () => {
-    const { activity } = assignedReading(database, reviewer, activityId);
+    const { activity } = assignedReading(database, reviewer, activityId, "reviewer");
     if (!activity.practice.policy.reviewer.actions.includes("reviseQuestionVerdict")) {
       throw new LearningError(403, "FORBIDDEN");
     }
@@ -90,7 +90,7 @@ function requireVerdictTarget(database: DatabaseSync, activity: ReadingActivity,
 
 export function writeSelectionFeedback(database: DatabaseSync, reviewer: string, activityId: string, text: string) {
   return writeTransaction(database, () => {
-    const { activity } = assignedReading(database, reviewer, activityId);
+    const { activity } = assignedReading(database, reviewer, activityId, "reviewer");
     if (!activity.practice.policy.reviewer.actions.includes("commentOnQuotes")) throw new LearningError(403, "FORBIDDEN");
     const binding = activity.practice.grading.selectionFeedback;
     if (!binding || !findSource(activitySubmissions(database, activityId), binding.from)) {

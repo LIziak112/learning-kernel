@@ -1,4 +1,4 @@
-import { renderLibraryActivity } from "/library-reading.mjs";
+import { clearLibraryActivity, renderLibraryActivity } from "/library-reading.mjs";
 
 const element = id => document.getElementById(id);
 const start = element("start");
@@ -23,7 +23,7 @@ function api(path, input) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ protocolVersion: 1, ...input }),
   };
-  return fetch(path, request).then(async response => {
+  return fetch(path, { cache: "no-store", ...request }).then(async response => {
     const payload = await response.json();
     if (!response.ok) throw Object.assign(new Error("请求未完成", { cause: response.status }), { code: payload.code });
     return payload;
@@ -182,10 +182,7 @@ async function openActivity() {
 }
 
 function showLoadError(error) {
-  if (error.cause === 401 || error.cause === 403) {
-    title.textContent = "阅读练习";
-    progress.textContent = "";
-  }
+  if (error.cause === 401 || error.cause === 403) clearRestrictedActivity();
   if (error.cause === 403) {
     loadError.textContent = "当前账号无权查看此活动。";
   } else if (error.cause === 401) {
@@ -197,6 +194,29 @@ function showLoadError(error) {
     loadError.textContent = "无法打开活动，请刷新或重试。";
   }
   loadError.hidden = false;
+}
+
+function clearRestrictedActivity() {
+  const activityId = activityIdFromPath();
+  if (activityId) {
+    sessionStorage.removeItem(draftKey(activityId));
+    clearLibraryActivity(activityId);
+  }
+  activity = undefined;
+  pending = undefined;
+  workspace.hidden = true;
+  paragraphs.replaceChildren();
+  renderQuote("");
+  for (const id of ["material-title", "instructions", "material-source", "receipt-id"]) {
+    element(id).textContent = "";
+  }
+  element("receipt").hidden = true;
+  title.textContent = "阅读练习";
+  progress.textContent = "";
+}
+
+function activityIdFromPath() {
+  return location.pathname.match(/^\/activities\/([a-f0-9-]{36})$/)?.[1];
 }
 
 startButton.addEventListener("click", openActivity);
@@ -221,11 +241,6 @@ submitButton.addEventListener("click", async () => {
     showActivity(await api(path));
   } catch (error) {
     if (error.cause === 401 || error.cause === 403) {
-      sessionStorage.removeItem(draftKey(activity.activityId));
-      activity = undefined;
-      pending = undefined;
-      workspace.hidden = true;
-      workspace.replaceChildren();
       showLoadError(error);
     } else {
       submitError.textContent = "未收到确认。可以用同一选区重试。";
@@ -237,7 +252,7 @@ submitButton.addEventListener("click", async () => {
   }
 });
 
-if (location.pathname.startsWith("/activities/")) {
+function readCurrentActivity() {
   start.hidden = true;
   progress.textContent = "正在读取活动…";
   api("/api" + location.pathname).then(showActivity, error => {
@@ -245,3 +260,13 @@ if (location.pathname.startsWith("/activities/")) {
     showLoadError(error);
   });
 }
+
+if (activityIdFromPath()) readCurrentActivity();
+
+window.addEventListener("pageshow", event => {
+  if (!event.persisted || !activityIdFromPath()) return;
+  workspace.hidden = true;
+  element("library-workspace").hidden = true;
+  title.textContent = "阅读练习";
+  readCurrentActivity();
+});

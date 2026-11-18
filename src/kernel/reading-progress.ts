@@ -138,7 +138,7 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
   const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
   return {
     formatVersion: practice.formatVersion,
-    activityId, stepAttemptId, startedAt, material,
+    activityId, stepAttemptId, startedAt, material, redoOf: activity.redoOf,
     title: practice.title,
     step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },
     status: completed ? "completed" : "active",

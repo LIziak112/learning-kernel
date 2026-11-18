@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { selectionSchema } from "../contracts/reading.ts";
+import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
 import { LearningError } from "./learning-error.ts";
 
 const latestDraft = z.object({ latest: z.int() });
@@ -34,6 +36,26 @@ export function loadWorkVersion(database: DatabaseSync, scope: WorkScope, draft:
     .get(draft.id, draft.version);
   if (!row) throw new LearningError(403, "FORBIDDEN");
   return JSON.parse(String(row.selection));
+}
+
+export function readPersonalDraft(database: DatabaseSync, student: string, workId: string) {
+  const row = database.prepare(`
+    SELECT v.version, v.selection FROM works w
+    JOIN activities a ON a.id = w.activity_id JOIN work_versions v ON v.work_id = w.id
+    WHERE w.id = ? AND a.student_id = ? ORDER BY v.version DESC LIMIT 1
+  `).get(workId, student);
+  if (!row) throw new LearningError(403, "FORBIDDEN");
+  const stored = z.object({ version: z.int().positive(), selection: z.string() }).parse(row);
+  const content: unknown = JSON.parse(stored.selection);
+  return { draft: { id: workId, version: stored.version }, content: authorInput(content) };
+}
+
+function authorInput(content: unknown) {
+  const multiple = readingSelection.safeParse(content);
+  if (multiple.success) return { ranges: multiple.data.ranges.map(item => ({ role: item.role, ...item.range })) };
+  const answer = readingAnswer.safeParse(content);
+  if (answer.success) return { choices: answer.data.choices, reason: answer.data.reason };
+  return { range: selectionSchema.parse(content).range };
 }
 
 function requireWorkScope(database: DatabaseSync, scope: WorkScope, id: string) {

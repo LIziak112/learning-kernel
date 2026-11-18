@@ -243,6 +243,14 @@ test("答题确认受阻时恢复原草稿并重试，只保留一次确认", { 
       release.resolve();
     }
     await workspace.getByText("提交未确认，请检查选段或作答后重试。").waitFor();
+    await learner.evaluate(() => {
+      const key = Object.keys(sessionStorage).find(item => item.startsWith("learning-kernel:library:"));
+      if (!key) throw new Error("没有已保存的答题稿");
+      const stored = sessionStorage.getItem(key);
+      if (!stored) throw new Error("没有可迁移的答题稿");
+      sessionStorage.removeItem(key);
+      sessionStorage.setItem("learning-kernel:library:" + key.split(":").at(-1), stored);
+    });
     await savePageCoverage(learner, true);
     await learner.reload();
     const originalAnswer = workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" });
@@ -383,6 +391,38 @@ test("学生页面随复盘开关闭合逐题反馈，整篇成绩保持 2/3", {
     assert.equal(await workspace.getByText("说明同期条件对推断的影响。", { exact: true }).count(), 0);
     assert.equal(await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).isChecked(), true);
   }, { evaluateAutomatically: false, reviewerSessions: new Map([["browser-teacher", "teacher-1"]]) });
+});
+
+test("浏览器获知学生记录权限收回后清除旧视图与活动缓存", { timeout: 25_000 }, async t => {
+  await withDemo(t, async (browser, origin) => {
+    const learner = await openBrowserPage(browser);
+    const workspace = await openLibrary(learner, origin);
+    await selectObservation(workspace);
+    await selectCondition(workspace);
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await answerLibrary(workspace);
+    const pathname = new URL(learner.url()).pathname;
+    await learner.route(origin + "/api" + pathname + "/submissions", route => route.abort());
+    await workspace.getByRole("button", { name: "交卷" }).click();
+    await workspace.getByText("提交未确认，请检查选段或作答后重试。").waitFor();
+    const cached = () => learner.evaluate(() => Object.keys(sessionStorage).filter(key => key.startsWith("learning-kernel:library:")));
+    assert.equal((await cached()).length, 1);
+    const activityId = pathname.split("/").at(-1);
+    const revoked = await fetch(origin + `/api/manage/${activityId}`, {
+      method: "POST",
+      headers: { cookie: "learning_session=browser-teacher", "content-type": "application/json" },
+      body: JSON.stringify({ protocolVersion: 1, action: "revokeStudent" }),
+    });
+    assert.equal(revoked.status, 200, await revoked.text());
+    await learner.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+    await learner.getByText("当前账号无权查看此活动。").waitFor();
+    assert.equal(await workspace.isHidden(), true);
+    assert.doesNotMatch(await learner.locator("main").innerText(), /图书馆延时开放|附近自习室暂时关闭/);
+    assert.deepEqual(await cached(), []);
+    await savePageCoverage(learner, true);
+    await learner.reload();
+    await learner.getByText("当前账号无权查看此活动。").waitFor();
+  }, { reviewerSessions: new Map([["browser-teacher", "teacher-1"]]) });
 });
 
 test("会话失效时清除页面引文，重新进入后可恢复活动", { timeout: 25_000 }, async t => {

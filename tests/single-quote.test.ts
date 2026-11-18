@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { z } from "zod";
 import type { ZodType } from "zod";
 import publication from "../practices/single-quote.json" with { type: "json" };
 import { activityDetail, draftReceipt, startReceipt, submissionDetail, submissionReceipt } from "../src/contracts/reading.ts";
@@ -81,6 +82,9 @@ for (const definition of [publication, renamed]) {
       await denied(post(origin, path + "/drafts", { ...save, range: { ...originalRange, end: 1000 } }), 422, "INVALID_SELECTION");
       const first = await result(post(origin, path + "/drafts", save), draftReceipt);
       assert.equal(first.draft.version, 1);
+      const owned = "/api/drafts/" + first.draft.id;
+      assert.deepEqual(await result(get(origin, owned), z.unknown()), { draft: first.draft, content: { range: originalRange } });
+      await denied(get(origin, owned, "other-session"), 403, "FORBIDDEN");
       assert.deepEqual(first.selection, {
         material: definition.practice.material,
         positionId: step.positionId,
