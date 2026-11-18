@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { loadActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
+import { activityAutomaticVerdicts } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { findSource } from "./reading-answers.ts";
 import { readingSubmissionView } from "./reading-progress.ts";
@@ -31,7 +32,12 @@ export function readReview(database: DatabaseSync, reviewer: string, activityId:
   const fields = new Set(activity.practice.policy.reviewer.fields);
   const submissions = activitySubmissions(database, activityId).map(readingSubmissionView).filter(submission =>
     submission.selection ? fields.has("submittedQuotes") : fields.has("studentChoices"));
-  return { activityId, submissions, selectionFeedback: fields.has("learnerFeedback") ? feedback : undefined };
+  const automaticVerdicts = fields.has("gradingBasis") ? activityAutomaticVerdicts(database, activityId) : [];
+  return {
+    activityId, submissions,
+    automaticVerdicts: automaticVerdicts.length ? automaticVerdicts : undefined,
+    selectionFeedback: fields.has("learnerFeedback") ? feedback : undefined,
+  };
 }
 
 export function writeSelectionFeedback(database: DatabaseSync, reviewer: string, activityId: string, text: string) {

@@ -11,6 +11,7 @@ import { evaluatePending } from "../kernel/evaluation.ts";
 import { LearningError } from "../kernel/learning-error.ts";
 import { registerPublication } from "../kernel/publication.ts";
 import { readReview, selectionFeedbackInput, writeSelectionFeedback } from "../kernel/review.ts";
+import type { RuntimeCheckpoint } from "../kernel/runtime-checkpoint.ts";
 import { readActivity, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
 import { authenticate, readJSON, sendJSON, sendError } from "./http.ts";
 
@@ -27,6 +28,7 @@ type HostOptions = {
   evaluateAutomatically?: boolean;
   clock?: () => Date;
   beforeConfirmation?: (input: SubmitInput) => Promise<void>;
+  checkpoint?: RuntimeCheckpoint;
 };
 type HostContext = {
   database: DatabaseSync;
@@ -34,6 +36,7 @@ type HostContext = {
   scheduleEvaluation: () => void;
   clock: () => Date;
   beforeConfirmation: HostOptions["beforeConfirmation"];
+  checkpoint: RuntimeCheckpoint | undefined;
   assignedReviewer?: string | undefined;
   servePage?: PageHandler | undefined;
 };
@@ -51,7 +54,7 @@ function openHostDatabase(options: HostOptions) {
   return database;
 }
 
-function evaluationSchedule(database: DatabaseSync, enabled = true) {
+function evaluationSchedule(database: DatabaseSync, enabled = true, checkpoint?: RuntimeCheckpoint) {
   let scheduled: NodeJS.Immediate | undefined;
   return {
     schedule() {
@@ -59,7 +62,7 @@ function evaluationSchedule(database: DatabaseSync, enabled = true) {
       scheduled = setImmediate(() => {
         scheduled = undefined;
         try {
-          evaluatePending(database);
+          evaluatePending(database, checkpoint);
         } catch (error) {
           console.error(error);
         }
@@ -80,10 +83,11 @@ function sessionLookup(options: HostOptions, token: string): Identity | undefine
 
 export function createLearningServer(options: HostOptions) {
   const database = openHostDatabase(options);
-  const evaluation = evaluationSchedule(database, options.evaluateAutomatically);
+  const evaluation = evaluationSchedule(database, options.evaluateAutomatically, options.checkpoint);
   const context: HostContext = {
     database, lookup: token => sessionLookup(options, token), scheduleEvaluation: evaluation.schedule,
     clock: options.clock ?? (() => new Date()), beforeConfirmation: options.beforeConfirmation,
+    checkpoint: options.checkpoint,
     assignedReviewer: options.assignedReviewer, servePage: options.servePage,
   };
   const server = createServer((request, response) => {
@@ -177,7 +181,8 @@ async function confirmRequest(request: IncomingMessage, context: HostContext, st
   await context.beforeConfirmation?.(input);
   const actor = authenticate(request, context.lookup);
   if (actor.role !== "student" || actor.id !== student) throw new LearningError(403, "FORBIDDEN");
-  const receipt = submitDraft(context.database, student, activityId, input, context.clock);
+  const receipt = submitDraft(context.database, student, activityId, input, context.clock, context.checkpoint);
+  context.checkpoint?.({ point: "afterConfirmationCommit", operationId: input.operationId });
   context.scheduleEvaluation();
   return receipt;
 }

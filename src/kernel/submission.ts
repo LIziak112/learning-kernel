@@ -7,6 +7,7 @@ import { loadActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { confirmReadingDraft, readingActivityView, saveReadingAnswer, saveReadingSelection, studentSubmissionView } from "./reading-progress.ts";
+import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 import { activitySubmissions, finishActivity, recordSubmission, recoverReceipt } from "./submission-store.ts";
 import type { StoredSubmission } from "./submission-store.ts";
 import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
@@ -30,10 +31,12 @@ export function saveDraft(
   });
 }
 
-export function submitDraft(database: DatabaseSync, student: string, activityId: string, input: SubmitInput, clock: () => Date) {
+export function submitDraft(
+  database: DatabaseSync, student: string, activityId: string, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
+) {
   return writeTransaction(database, () => {
     const activity = loadActivity(database, student, activityId);
-    if (activity.kind === "reading") return confirmReadingDraft(database, activity, input, clock);
+    if (activity.kind === "reading") return confirmReadingDraft(database, activity, input, clock, checkpoint);
     if (activity.stepAttemptId !== input.stepAttemptId) throw new LearningError(403, "FORBIDDEN");
     const repeated = recoverReceipt(database, input);
     if (repeated) return repeated;

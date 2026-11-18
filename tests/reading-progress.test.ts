@@ -438,6 +438,7 @@ test("盲批声明缩小范围后，活动和原提交只交付获准字段", as
   restricted.practice.policy.student.ownSubmission.onFinal = [];
   restricted.practice.policy.student.passageScore.fields = ["questionCount"];
   restricted.practice.policy.reviewer.actions = [];
+  restricted.practice.policy.reviewer.fields = [];
   await runReadingServer(file, restricted, async origin => {
     const { path, binding, references } = await readyToAnswer(origin);
     const review = path.replace("/activities/", "/reviews/");
@@ -456,6 +457,9 @@ test("盲批声明缩小范围后，活动和原提交只交付获准字段", as
     evaluatePending(database);
     const delivered = await readResult(get(origin, path), z.object({ assessment: z.unknown() }));
     assert.deepEqual(delivered.assessment, { status: "complete", questionCount: 3 });
+    const teacher = await get(origin, review, "reviewer");
+    assert.equal(teacher.status, 200);
+    assert.deepEqual(await teacher.json(), { activityId: result.activityId, submissions: [] });
   });
 });
 

@@ -10,6 +10,7 @@ import type { ReadingActivity } from "./activity.ts";
 import { assessmentView, queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { answerObservations, findSource, verifyAnswerReferences } from "./reading-answers.ts";
+import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 import { finishActivity, recordSubmission, recoverReceipt } from "./submission-store.ts";
 import type { StoredSubmission } from "./submission-store.ts";
 import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
@@ -61,7 +62,9 @@ export function saveReadingAnswer(database: DatabaseSync, activity: ReadingActiv
   return { draft: saveWorkVersion(database, workScope(activity, input), answer, input.workId), answer };
 }
 
-export function confirmReadingDraft(database: DatabaseSync, activity: ReadingActivity, input: SubmitInput, clock: () => Date) {
+export function confirmReadingDraft(
+  database: DatabaseSync, activity: ReadingActivity, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
+) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
   const repeated = recoverReceipt(database, input);
   if (repeated) return repeated;
@@ -78,6 +81,7 @@ export function confirmReadingDraft(database: DatabaseSync, activity: ReadingAct
   if (slot.type === "oneChoicePerQuestion") queueEvaluation(database, activity, receipt, slot.targetId);
   if (step.afterConfirmation === "finish") finishActivity(database, activity.activityId, receipt.id);
   else advanceReading(database, activity);
+  checkpoint?.({ point: "beforeConfirmationCommit", operationId: input.operationId });
   return receipt;
 }
 

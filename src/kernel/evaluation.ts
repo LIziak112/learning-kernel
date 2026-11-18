@@ -5,6 +5,7 @@ import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { readingPracticeSchema, scoringKeySchema } from "../contracts/reading-publication.ts";
 import { readingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
+import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 
 const task = z.strictObject({
   submissionId: z.uuid(),
@@ -28,7 +29,7 @@ export function queueEvaluation(
   `).run(receipt.id, assessment.keyRef.id, assessment.keyRef.version, targetId);
 }
 
-export function evaluatePending(database: DatabaseSync) {
+export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeCheckpoint) {
   const pending = database.prepare(`
     SELECT t.submission_id AS submissionId, t.target_id AS targetId, k.definition AS keyJSON,
       p.definition AS practiceJSON, v.selection AS answerJSON
@@ -41,10 +42,11 @@ export function evaluatePending(database: DatabaseSync) {
     JOIN work_versions v ON v.work_id = s.work_id AND v.version = s.work_version
     WHERE t.status = 'pending' ORDER BY s.confirmed_at, s.id
   `).all();
-  for (const row of pending) evaluateTask(database, task.parse(row));
+  for (const row of pending) evaluateTask(database, task.parse(row), checkpoint);
 }
 
-function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>) {
+function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, checkpoint?: RuntimeCheckpoint) {
+  checkpoint?.({ point: "beforeEvaluation", submissionId: input.submissionId });
   const practice = readingPracticeSchema.parse(JSON.parse(input.practiceJSON));
   const evaluator = readingCapability(practice.grading.assessment.evaluator);
   if (evaluator?.audience !== "server") throw new Error("已发布评估器不可用");
@@ -57,8 +59,25 @@ function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>) {
   for (const question of practice.questions) {
     const correct = key.acceptedChoices[question.id] === answer.choices[question.id];
     record.run(input.submissionId, input.targetId, question.id, Number(correct));
+    checkpoint?.({ point: "afterAutomaticVerdict", submissionId: input.submissionId, questionId: question.id });
   }
+  checkpoint?.({ point: "beforeEvaluationComplete", submissionId: input.submissionId });
   database.prepare("UPDATE evaluation_tasks SET status = 'done' WHERE submission_id = ?").run(input.submissionId);
+}
+
+const storedVerdict = z.strictObject({
+  submissionId: z.uuid(), targetId: z.string(), questionId: z.string(), correct: z.literal([0, 1]).transform(Boolean),
+});
+
+export function activityAutomaticVerdicts(database: DatabaseSync, activityId: string) {
+  return database.prepare(`
+    SELECT v.submission_id AS submissionId, v.target_id AS targetId, v.question_id AS questionId, v.correct
+    FROM automatic_verdicts v
+    JOIN submissions s ON s.id = v.submission_id
+    JOIN step_attempts a ON a.id = s.step_attempt_id
+    WHERE a.activity_id = ?
+    ORDER BY a.ordinal, v.target_id, v.question_id
+  `).all(activityId).map(row => storedVerdict.parse(row));
 }
 
 const counts = z.strictObject({ correctCount: z.int().nonnegative(), questionCount: z.int().nonnegative() });
