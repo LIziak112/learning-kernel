@@ -18,7 +18,7 @@ const publishedPractice = z.union([practiceSchema, readingPracticeSchema]);
 
 export type ReadingActivity = Extract<ReturnType<typeof loadActivity>, { kind: "reading" }>;
 
-export function startActivity(database: DatabaseSync, student: string, input: StartInput) {
+export function startActivity(database: DatabaseSync, student: string, input: StartInput, assignedReviewer?: string) {
   return writeTransaction(database, () => {
     const existing = database.prepare(`
       SELECT a.id AS activityId, s.id AS stepAttemptId, a.started_at AS startedAt, a.practice_id AS practiceId
@@ -43,6 +43,10 @@ export function startActivity(database: DatabaseSync, student: string, input: St
     `).run(receipt.activityId, student, practice.id, practice.version, input.operationId, receipt.startedAt);
     database.prepare("INSERT INTO step_attempts (id, activity_id, step_id) VALUES (?, ?, ?)")
       .run(receipt.stepAttemptId, receipt.activityId, practice.steps[0].id);
+    if ("formatVersion" in practice && assignedReviewer) {
+      database.prepare("INSERT INTO reading_reviews (activity_id, reviewer_id) VALUES (?, ?)")
+        .run(receipt.activityId, assignedReviewer);
+    }
     return receipt;
   });
 }

@@ -3,50 +3,123 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { startInput, saveInput, submitInput } from "../contracts/reading.ts";
-import { readingSaveInput } from "../contracts/reading-runtime.ts";
+import { readingAnswerInput, readingSaveInput } from "../contracts/reading-runtime.ts";
 import { startActivity } from "../kernel/activity.ts";
 import { openDatabase } from "../kernel/database.ts";
+import { evaluatePending } from "../kernel/evaluation.ts";
 import { LearningError } from "../kernel/learning-error.ts";
 import { registerPublication } from "../kernel/publication.ts";
+import { readReview, selectionFeedbackInput, writeSelectionFeedback } from "../kernel/review.ts";
 import { readActivity, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
-import { readJSON, sendJSON, sendError, studentFor } from "./http.ts";
+import { authenticate, readJSON, sendJSON, sendError } from "./http.ts";
 
 type PageHandler = (request: IncomingMessage, response: ServerResponse, path: string) => boolean;
-const saveRequest = z.union([saveInput, readingSaveInput]);
-
-export function createLearningServer(options: {
+type Identity = { id: string; role: "student" | "reviewer" };
+type HostOptions = {
   databasePath: string;
   publication: unknown;
   sessions: ReadonlyMap<string, string>;
+  reviewerSessions?: ReadonlyMap<string, string>;
+  assignedReviewer?: string;
+  additionalPublications?: readonly unknown[];
   servePage?: PageHandler;
-}) {
+  evaluateAutomatically?: boolean;
+};
+type HostContext = {
+  database: DatabaseSync;
+  lookup: (token: string) => Identity | undefined;
+  scheduleEvaluation: () => void;
+  assignedReviewer?: string | undefined;
+  servePage?: PageHandler | undefined;
+};
+const saveRequest = z.union([saveInput, readingSaveInput, readingAnswerInput]);
+
+function openHostDatabase(options: HostOptions) {
   const database = openDatabase(options.databasePath);
   try {
     registerPublication(database, options.publication);
+    options.additionalPublications?.forEach(publication => registerPublication(database, publication));
   } catch (error) {
     database.close();
     throw error;
   }
+  return database;
+}
+
+function evaluationSchedule(database: DatabaseSync, enabled = true) {
+  let scheduled: NodeJS.Immediate | undefined;
+  return {
+    schedule() {
+      if (!enabled || scheduled) return;
+      scheduled = setImmediate(() => {
+        scheduled = undefined;
+        try {
+          evaluatePending(database);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+    },
+    cancel() {
+      if (scheduled) clearImmediate(scheduled);
+    },
+  };
+}
+
+function sessionLookup(options: HostOptions, token: string): Identity | undefined {
+  const student = options.sessions.get(token);
+  if (student) return { id: student, role: "student" };
+  const reviewer = options.reviewerSessions?.get(token);
+  return reviewer ? { id: reviewer, role: "reviewer" } : undefined;
+}
+
+export function createLearningServer(options: HostOptions) {
+  const database = openHostDatabase(options);
+  const evaluation = evaluationSchedule(database, options.evaluateAutomatically);
+  const context: HostContext = {
+    database, lookup: token => sessionLookup(options, token), scheduleEvaluation: evaluation.schedule,
+    assignedReviewer: options.assignedReviewer, servePage: options.servePage,
+  };
   const server = createServer((request, response) => {
-    serve(request, response, database, options.sessions, options.servePage).catch(error => sendError(response, error));
+    serve(request, response, context).catch(error => sendError(response, error));
   });
-  server.once("close", () => database.close());
+  server.once("listening", evaluation.schedule);
+  server.once("close", () => {
+    evaluation.cancel();
+    database.close();
+  });
   return server;
 }
 
 async function serve(
   request: IncomingMessage,
   response: ServerResponse,
-  database: DatabaseSync,
-  sessions: ReadonlyMap<string, string>,
-  servePage?: PageHandler,
+  context: HostContext,
 ) {
   const path = new URL(z.string().parse(request.url), "http://localhost").pathname;
-  if (servePage?.(request, response, path)) return;
-  const student = studentFor(request, sessions);
+  if (context.servePage?.(request, response, path)) return;
+  const identity = authenticate(request, context.lookup);
+  const review = path.match(/^\/api\/reviews\/([a-f0-9-]{36})$/);
+  if (review) {
+    if (identity.role !== "reviewer") throw new LearningError(403, "FORBIDDEN");
+    const activityId = z.uuid().parse(review[1]);
+    const data = await reviewRequest(request, context.database, identity.id, activityId);
+    return sendJSON(response, 200, data);
+  }
+  if (identity.role !== "student") throw new LearningError(403, "FORBIDDEN");
+  const data = await studentRequest(request, context, identity.id, path);
+  return sendJSON(response, 200, data);
+}
+
+async function studentRequest(
+  request: IncomingMessage,
+  { database, scheduleEvaluation, assignedReviewer }: HostContext,
+  student: string,
+  path: string,
+) {
   if (request.method === "POST" && path === "/api/activities") {
     const input = startInput.parse(await readJSON(request));
-    return sendJSON(response, 200, startActivity(database, student, input));
+    return startActivity(database, student, input, assignedReviewer);
   }
   const match = path.match(
     /^\/api\/activities\/([a-f0-9-]{36})(?:\/(drafts|submissions)(?:\/([a-f0-9-]{36}))?)?$/,
@@ -54,10 +127,18 @@ async function serve(
   if (!match) throw new LearningError(404, "NOT_FOUND");
   const [, identifier, resource, submissionId] = match;
   const activityId = z.uuid().parse(identifier);
-  const data = request.method === "GET"
+  return request.method === "GET"
     ? get(database, student, activityId, resource, submissionId)
-    : await post(request, database, student, activityId, resource, submissionId);
-  return sendJSON(response, 200, data);
+    : await post(request, database, student, activityId, scheduleEvaluation, resource, submissionId);
+}
+
+async function reviewRequest(request: IncomingMessage, database: DatabaseSync, reviewer: string, activityId: string) {
+  if (request.method === "GET") return readReview(database, reviewer, activityId);
+  if (request.method === "POST") {
+    const feedback = selectionFeedbackInput.parse(await readJSON(request));
+    return writeSelectionFeedback(database, reviewer, activityId, feedback.text);
+  }
+  throw new LearningError(404, "NOT_FOUND");
 }
 
 function get(database: DatabaseSync, student: string, activityId: string, resource?: string, submissionId?: string) {
@@ -71,6 +152,7 @@ async function post(
   database: DatabaseSync,
   student: string,
   activityId: string,
+  scheduleEvaluation: () => void,
   resource?: string,
   submissionId?: string,
 ) {
@@ -81,7 +163,9 @@ async function post(
   }
   if (resource === "submissions") {
     const input = submitInput.parse(await readJSON(request));
-    return submitDraft(database, student, activityId, input);
+    const receipt = submitDraft(database, student, activityId, input);
+    scheduleEvaluation();
+    return receipt;
   }
   throw new LearningError(404, "NOT_FOUND");
 }

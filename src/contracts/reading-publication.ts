@@ -17,7 +17,7 @@ const slot = z.discriminatedUnion("type", [
     distinctParagraphs: z.boolean(),
     evidenceUnit: z.literal("wholeSelection"),
   }),
-  newEvidence.extend({ type: z.literal("oneChoicePerQuestion") }),
+  newEvidence.extend({ type: z.literal("oneChoicePerQuestion"), reasonTargetId: id.optional() }),
   z.strictObject({ type: z.literal("reuse"), source: id }),
 ]);
 
@@ -96,7 +96,7 @@ export const readingPracticeSchema = versionRef.extend({
   policy,
 });
 
-const scoringKey = versionRef.extend({
+export const scoringKeySchema = versionRef.extend({
   acceptedChoices: z.record(id, id).transform(choices =>
     Object.fromEntries(Object.keys(choices).sort().map(question => [question, choices[question]]))),
 });
@@ -104,7 +104,7 @@ const scoringKey = versionRef.extend({
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema,
   practice: readingPracticeSchema,
-  scoringKey,
+  scoringKey: scoringKeySchema,
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

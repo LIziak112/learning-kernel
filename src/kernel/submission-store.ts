@@ -18,7 +18,9 @@ export function recoverReceipt(database: DatabaseSync, input: SubmitInput) {
   return submissionReceipt.parse(receipt);
 }
 
-export function recordSubmission(database: DatabaseSync, input: SubmitInput, targetId: string) {
+export type Observation = { targetId: string; unitId: string };
+
+export function recordSubmission(database: DatabaseSync, input: SubmitInput, observations: readonly Observation[]) {
   const receipt = {
     id: randomUUID(),
     stepAttemptId: input.stepAttemptId,
@@ -30,8 +32,8 @@ export function recordSubmission(database: DatabaseSync, input: SubmitInput, tar
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(receipt.id, receipt.stepAttemptId, receipt.slotId, input.operationId,
     input.draft.id, input.draft.version, receipt.confirmedAt);
-  database.prepare("INSERT INTO performances (id, submission_id, target_id) VALUES (?, ?, ?)")
-    .run(randomUUID(), receipt.id, targetId);
+  const record = database.prepare("INSERT INTO performances (id, submission_id, target_id, unit_id) VALUES (?, ?, ?, ?)");
+  for (const { targetId, unitId } of observations) record.run(randomUUID(), receipt.id, targetId, unitId);
   return receipt;
 }
 

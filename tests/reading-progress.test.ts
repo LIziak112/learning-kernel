@@ -6,12 +6,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { ZodType } from "zod";
 import reading from "../practices/reading-library.json" with { type: "json" };
 import { materialSchema, startReceipt, submissionReceipt, versionRef } from "../src/contracts/reading.ts";
-import { readingDraftReceipt, readingSelection } from "../src/contracts/reading-runtime.ts";
+import { readingAnswer, readingAnswerDraft, readingDraftReceipt, readingSelection } from "../src/contracts/reading-runtime.ts";
 import { createLearningServer } from "../src/host/server.ts";
+import { evaluatePending } from "../src/kernel/evaluation.ts";
 
 const activityView = startReceipt.extend({
   formatVersion: z.literal(1),
@@ -20,6 +22,7 @@ const activityView = startReceipt.extend({
   step: z.strictObject({ id: z.string(), instructions: z.string(), tool: versionRef, submit: z.unknown() }),
   status: z.literal("active"),
   inputs: z.record(z.string(), z.unknown()),
+  submission: z.unknown().optional(),
 });
 
 const ranges = [
@@ -253,6 +256,252 @@ test("写入下一步骤失败时，选据确认及原始表现一起回滚", as
   });
 });
 
+test("交卷事务同时固定原答、活动完成和待评任务", async t => {
+  await withReadingServer(t, async (origin, databasePath) => {
+    const started = await startReading(origin);
+    const path = `/api/activities/${started.activityId}`;
+    const source = await confirmSelection(origin, path, started.stepAttemptId, "quotes");
+    const second = await readResult(get(origin, path), activityView);
+    const binding = { stepAttemptId: second.stepAttemptId, slotId: "choices" };
+    const choices = { q1: "A", q2: "B", q3: "A" };
+    const saved = await readResult(post(origin, path + "/drafts", {
+      ...binding, choices, references: { basis: source.id },
+    }), readingAnswerDraft);
+    const receipt = await readResult(post(origin, path + "/submissions", {
+      ...binding, operationId: "turn-in", draft: saved.draft,
+    }), submissionReceipt);
+    const state = await readResult(get(origin, path), activityView.extend({
+      status: z.literal("completed"), assessment: z.strictObject({ status: z.literal("pending") }),
+    }));
+    assert.deepEqual(state.assessment, { status: "pending" });
+    const detail = z.strictObject({ receipt: submissionReceipt, answer: readingAnswer });
+    assert.deepEqual(detail.parse(state.submission), { receipt, answer: saved.answer });
+    using database = new DatabaseSync(databasePath);
+    assert.equal(database.prepare("SELECT submission_id FROM completions WHERE activity_id = ?").get(started.activityId)?.submission_id, receipt.id);
+    const job = database.prepare("SELECT status, key_id, key_version FROM evaluation_tasks WHERE submission_id = ?").get(receipt.id);
+    assert.deepEqual([job?.status, job?.key_id, job?.key_version], ["pending", "library-key", 1]);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM submissions").get()?.count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM performances").get()?.count, 4);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts").get()?.count, 0);
+    evaluatePending(database);
+    const complete = await readResult(get(origin, path), activityView.extend({
+      status: z.literal("completed"),
+      assessment: z.strictObject({ status: z.literal("complete"), correctCount: z.int(), questionCount: z.int() }),
+    }));
+    assert.deepEqual(complete.assessment, { status: "complete", correctCount: 1, questionCount: 3 });
+    assert.deepEqual(detail.parse(complete.submission).answer.choices, choices);
+    assert.doesNotMatch(JSON.stringify(complete), /"keyRef"|"acceptedChoices"|"correct"|"gradingBasis"/);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts").get()?.count, 3);
+    assert.equal(database.prepare("SELECT status FROM evaluation_tasks").get()?.status, "done");
+  });
+});
+
+test("伪造引文引用被拒绝，非法选项保稿，待评写入失败时整次交卷回滚", async t => {
+  t.mock.method(console, "error", () => undefined);
+  await withReadingServer(t, async (origin, databasePath) => {
+    const ready = await readyToAnswer(origin);
+    const { path, binding, references } = ready;
+    const other = await readyToAnswer(origin, "other-activity");
+    await assertError(post(origin, path + "/drafts", { ...binding, choices: sampleChoices, references: other.references }),
+      403, "FORBIDDEN");
+    const invalid = await readResult(post(origin, path + "/drafts", {
+      ...binding, choices: { ...sampleChoices, q2: "C" }, references,
+    }), readingAnswerDraft);
+    const submission = { ...binding, operationId: "turn-in", draft: invalid.draft };
+    await assertError(post(origin, path + "/submissions", submission), 422, "INVALID_CHOICES");
+    assert.equal((await readResult(get(origin, path), activityView)).step.id, "decide");
+    const valid = await readResult(post(origin, path + "/drafts", {
+      ...binding, workId: invalid.draft.id, choices: sampleChoices, references,
+    }), readingAnswerDraft);
+    assert.equal(valid.draft.version, 2);
+    using database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TRIGGER fail_task BEFORE INSERT ON evaluation_tasks
+      BEGIN SELECT RAISE(ABORT, 'test queue failure'); END;
+    `);
+    const request = { ...submission, draft: valid.draft };
+    await assertError(post(origin, path + "/submissions", request), 500, "INTERNAL_ERROR");
+    for (const table of ["evaluation_tasks", "completions"]) {
+      assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count, 0);
+    }
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM submissions").get()?.count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM performances").get()?.count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM work_versions WHERE work_id = ?").get(valid.draft.id)?.count, 2);
+    database.exec("DROP TRIGGER fail_task");
+    await readResult(post(origin, path + "/submissions", request), submissionReceipt);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evaluation_tasks").get()?.count, 1);
+  });
+});
+
+test("获准评阅者读取原引文和原答，选据评语独立保存且盲批学生不可读", async t => {
+  await withReadingServer(t, async (origin, databasePath) => {
+    const started = await startReading(origin);
+    const review = `/api/reviews/${started.activityId}`;
+    const path = `/api/activities/${started.activityId}`;
+    const feedback = { text: "补充说明同期条件怎样影响解释。" };
+    await assertError(get(origin, review), 403, "FORBIDDEN");
+    await assertError(get(origin, review, "unassigned"), 403, "FORBIDDEN");
+    await assertError(get(origin, path, "reviewer"), 403, "FORBIDDEN");
+    await assertError(post(origin, review, feedback, "reviewer"), 409, "FEEDBACK_NOT_AVAILABLE");
+    const source = await confirmSelection(origin, path, started.stepAttemptId, "quotes");
+    const second = await readResult(get(origin, path), activityView);
+    const binding = { stepAttemptId: second.stepAttemptId, slotId: "choices" };
+    const draft = await readResult(post(origin, path + "/drafts", {
+      ...binding, choices: sampleChoices, references: { basis: source.id },
+    }), readingAnswerDraft);
+    const receipt = await readResult(post(origin, path + "/submissions", {
+      ...binding, operationId: "turn-in", draft: draft.draft,
+    }), submissionReceipt);
+    const quoteDetail = z.strictObject({ receipt: submissionReceipt, selection: readingSelection });
+    const answerDetail = z.strictObject({ receipt: submissionReceipt, answer: readingAnswer });
+    const reviewView = z.strictObject({
+      activityId: z.uuid(),
+      submissions: z.tuple([quoteDetail, answerDetail]),
+      selectionFeedback: z.string().nullable(),
+    });
+    const view = await readResult(get(origin, review, "reviewer"), reviewView);
+    assert.equal(view.selectionFeedback, null);
+    assert.deepEqual(view.submissions[0].receipt, source);
+    assert.deepEqual(view.submissions[1], { receipt, answer: draft.answer });
+    assert.deepEqual(await readResult(post(origin, review, feedback, "reviewer"),
+      z.strictObject({ selectionFeedback: z.string() })), { selectionFeedback: feedback.text });
+    assert.equal((await readResult(get(origin, review, "reviewer"), reviewView)).selectionFeedback, feedback.text);
+    const student = await get(origin, path);
+    assert.equal(student.status, 200);
+    const body = await student.text();
+    assert.ok(!body.includes(feedback.text));
+    assert.doesNotMatch(body, /"selectionFeedback"|"acceptedChoices"|"keyRef"|"correct"/);
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT selection_feedback FROM reading_reviews WHERE activity_id = ?").get(started.activityId)?.selection_feedback, feedback.text);
+    assert.equal(database.prepare("SELECT status FROM evaluation_tasks").get()?.status, "pending");
+  });
+});
+
+test("旧引文沿用原表现，独立理由有新表现，成分不明的理由不另计", async t => {
+  const [first, second] = reading.practice.steps;
+  assert.ok(first && second?.submit.slots.choices);
+  const assessment = {
+    ...second, submit: { ...second.submit, slots: { ...second.submit.slots, choices: {
+      ...second.submit.slots.choices, reasonTargetId: "explain",
+    } } },
+  };
+  const publication = {
+    ...reading, practice: {
+      ...reading.practice, goals: { ...reading.practice.goals, explain: "说明提议的理由" }, steps: [first, assessment],
+    },
+  };
+  const filename = temporaryPath(t);
+  await runReadingServer(filename, publication, async origin => {
+    using database = new DatabaseSync(filename, { readOnly: true });
+    for (const independent of [true, false, undefined]) {
+      const { started, path, binding, references } = await readyToAnswer(origin, String(independent));
+      const sourceId = references.basis;
+      const original = database.prepare("SELECT id FROM performances WHERE submission_id = ?").get(sourceId)?.id;
+      assert.equal(typeof original, "string");
+      const saved = await readResult(post(origin, path + "/drafts", {
+        ...binding, choices: sampleChoices, references,
+        reason: independent === undefined ? undefined : { text: "同时有别的学习地点关闭。", independent },
+      }), readingAnswerDraft);
+      const receipt = await readResult(post(origin, path + "/submissions", {
+        ...binding, operationId: "turn-in", draft: saved.draft,
+      }), submissionReceipt);
+      const observed = database.prepare("SELECT id, target_id FROM performances WHERE submission_id = ?").all(receipt.id);
+      assert.equal(observed.length, independent ? 4 : 3);
+      assert.equal(observed.filter(row => row.target_id === "explain").length, independent ? 1 : 0);
+      assert.deepEqual(database.prepare("SELECT id FROM performances WHERE submission_id = ?").all(sourceId).map(row => row.id), [original]);
+      assert.equal(database.prepare("SELECT submission_id FROM completions WHERE activity_id = ?").get(started.activityId)?.submission_id, receipt.id);
+    }
+  });
+});
+
+test("盲批声明缩小范围后，活动和原提交只交付获准字段", async t => {
+  const file = temporaryPath(t);
+  const restricted = structuredClone(reading);
+  restricted.practice.policy.student.ownSubmission.fields = ["ownChoices"];
+  restricted.practice.policy.student.ownSubmission.onFinal = [];
+  restricted.practice.policy.student.passageScore.fields = ["questionCount"];
+  restricted.practice.policy.reviewer.actions = [];
+  await runReadingServer(file, restricted, async origin => {
+    const { path, binding, references } = await readyToAnswer(origin);
+    const review = path.replace("/activities/", "/reviews/");
+    await assertError(post(origin, review, { text: "未获准提交的评语" }, "reviewer"), 403, "FORBIDDEN");
+    const saved = await readResult(post(origin, path + "/drafts", { ...binding, choices: sampleChoices, references }), readingAnswerDraft);
+    const receipt = await readResult(post(origin, path + "/submissions", {
+      ...binding, operationId: "turn-in", draft: saved.draft,
+    }), submissionReceipt);
+    const result = await readResult(get(origin, path), activityView.extend({ status: z.literal("completed") }));
+    assert.equal(Object.values(result.inputs).map(input => z.object({ from: z.string() }).parse(input).from).includes("submission"), false);
+    assert.deepEqual(result.submission, { answer: { choices: sampleChoices } });
+    assert.equal("assessment" in result, false);
+    assert.deepEqual(await readResult(get(origin, path + "/submissions/" + receipt.id), z.unknown()), result.submission);
+    assert.deepEqual(await readResult(get(origin, path + "/submissions/" + references.basis), z.unknown()), {});
+    using database = new DatabaseSync(file);
+    evaluatePending(database);
+    const delivered = await readResult(get(origin, path), z.object({ assessment: z.unknown() }));
+    assert.deepEqual(delivered.assessment, { status: "complete", questionCount: 3 });
+  });
+});
+
+test("同名槽位的前序原答无需评估，服务只自动领取已绑定的后续交卷", async t => {
+  const [evidence, decide] = reading.practice.steps;
+  assert.ok(evidence && decide);
+  const tentative = {
+    ...decide,
+    id: "tentative",
+    afterConfirmation: "advance",
+    inputs: { ...decide.inputs, passage: { from: "material", positionId: "tentative-position" } },
+  };
+  const publication = {
+    ...reading,
+    practice: { ...reading.practice, steps: [evidence, tentative, { ...decide, requires: tentative.id }] },
+  };
+  const file = temporaryPath(t);
+  await runReadingServer(file, publication, async origin => {
+    const first = await readyToAnswer(origin);
+    const { path, references } = first;
+    async function submitAnswers(binding: typeof first.binding, operationId: string) {
+      const saved = await readResult(post(origin, path + "/drafts", { ...binding, choices: sampleChoices, references }), readingAnswerDraft);
+      return readResult(post(origin, path + "/submissions", { ...binding, operationId, draft: saved.draft }), submissionReceipt);
+    }
+    const earlier = await submitAnswers(first.binding, "first-answers");
+    using database = new DatabaseSync(file, { readOnly: true });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evaluation_tasks").get()?.count, 0);
+    const finalStep = await readResult(get(origin, path), activityView);
+    const final = await submitAnswers({ ...first.binding, stepAttemptId: finalStep.stepAttemptId }, "final-answers");
+    const current = database.prepare("SELECT submission_id, status FROM evaluation_tasks");
+    for (let attempt = 0; attempt < 40 && current.get()?.status !== "done"; attempt++) await delay(25);
+    assert.deepEqual(current.all().map(row => [row.submission_id, row.status]), [[final.id, "done"]]);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts WHERE submission_id = ?").get(earlier.id)?.count, 0);
+    assert.deepEqual((await readResult(get(origin, path), z.object({ assessment: z.unknown() }))).assessment,
+      { status: "complete", correctCount: 1, questionCount: 3 });
+  }, undefined, {});
+});
+
+test("服务启动后会话被移除，原地址再次读取返回 401", async t => {
+  const sessions = new Map([["owner", "student-1"]]);
+  await runReadingServer(temporaryPath(t), reading, async origin => {
+    const activity = await startReading(origin);
+    const path = "/api/activities/" + activity.activityId;
+    await readResult(get(origin, path), activityView);
+    sessions.delete("owner");
+    await assertError(get(origin, path), 401, "UNAUTHENTICATED");
+  }, sessions);
+});
+
+const sampleChoices = { q1: "A", q2: "B", q3: "A" };
+
+async function readyToAnswer(origin: string, operationId = "start") {
+  const started = await startReading(origin, operationId);
+  const path = `/api/activities/${started.activityId}`;
+  const source = await confirmSelection(origin, path, started.stepAttemptId, "quotes");
+  const second = await readResult(get(origin, path), activityView);
+  return {
+    started, path,
+    binding: { stepAttemptId: second.stepAttemptId, slotId: "choices" },
+    references: { basis: source.id },
+  };
+}
+
 async function withReadingServer(t: TestContext, run: (origin: string, path: string) => Promise<void>) {
   const path = temporaryPath(t);
   await runReadingServer(path, reading, origin => run(origin, path));
@@ -264,11 +513,20 @@ function temporaryPath(t: TestContext) {
   return join(directory, "progress.sqlite");
 }
 
-async function runReadingServer<T>(path: string, publication: unknown, run: (origin: string) => Promise<T>) {
+async function runReadingServer<T>(
+  path: string,
+  publication: unknown,
+  run: (origin: string) => Promise<T>,
+  sessions = new Map([["owner", "student-1"], ["other", "student-2"]]),
+  evaluation: { evaluateAutomatically?: boolean } = { evaluateAutomatically: false },
+) {
   const server = createLearningServer({
     databasePath: path,
     publication,
-    sessions: new Map([["owner", "student-1"], ["other", "student-2"]]),
+    sessions,
+    reviewerSessions: new Map([["reviewer", "teacher-1"], ["unassigned", "teacher-2"]]),
+    assignedReviewer: "teacher-1",
+    ...evaluation,
   });
   server.listen(0, "127.0.0.1");
   try {

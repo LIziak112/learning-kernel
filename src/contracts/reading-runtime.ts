@@ -18,5 +18,21 @@ export const readingSelection = z.strictObject({
 
 export const readingDraftReceipt = draftReceipt.extend({ selection: readingSelection });
 
+export const readingAnswer = z.strictObject({
+  choices: z.record(id, id),
+  references: z.record(id, z.uuid()),
+  reason: z.strictObject({ text: z.string().trim().min(1), independent: z.boolean() }).optional(),
+});
+
+export const readingAnswerInput = boundStep.extend({
+  protocolVersion: z.literal(1),
+  workId: z.uuid().optional(),
+  ...readingAnswer.shape,
+});
+
+export const readingAnswerDraft = draftReceipt.omit({ selection: true }).extend({ answer: readingAnswer });
+
 export type ReadingSaveInput = z.infer<typeof readingSaveInput>;
 export type ReadingSelection = z.infer<typeof readingSelection>;
+export type ReadingAnswer = z.infer<typeof readingAnswer>;
+export type ReadingAnswerInput = z.infer<typeof readingAnswerInput>;

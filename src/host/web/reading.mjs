@@ -1,3 +1,5 @@
+import { renderLibraryActivity } from "/library-reading.mjs";
+
 const element = id => document.getElementById(id);
 const start = element("start");
 const startButton = element("open-activity");
@@ -84,6 +86,15 @@ function showSubmission(submission) {
 }
 
 function showActivity(next) {
+  if (next.formatVersion === 1) {
+    start.hidden = true;
+    loadError.hidden = true;
+    title.textContent = next.title;
+    progress.textContent = next.status === "completed" ? "活动已完成" : "进行中";
+    const path = activityURL(next.activityId);
+    renderLibraryActivity(next, api, () => api(path).then(showActivity), showLoadError);
+    return;
+  }
   activity = next;
   const complete = activity.status === "completed";
   start.hidden = true;
@@ -155,9 +166,10 @@ document.addEventListener("selectionchange", () => {
 async function openActivity() {
   startButton.disabled = true;
   try {
-    const { practiceId } = await api("/demo/entry");
-    const operationId = sessionStorage.getItem(startKey) || crypto.randomUUID();
-    sessionStorage.setItem(startKey, operationId);
+    const { practiceId } = await api("/demo/entry" + location.search);
+    const practiceStart = location.search ? `${startKey}:${practiceId}` : startKey;
+    const operationId = sessionStorage.getItem(practiceStart) || crypto.randomUUID();
+    sessionStorage.setItem(practiceStart, operationId);
     const { activityId } = await api("/api/activities", { operationId, practiceId });
     const next = await api(activityURL(activityId));
     history.replaceState(null, "", `/activities/${activityId}`);

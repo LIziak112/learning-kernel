@@ -97,6 +97,9 @@ function validateSlots(
     if (slot.type !== "reuse" && !Object.hasOwn(goals, slot.targetId)) {
       issue([...path, "targetId"], "槽位引用的目标不存在");
     }
+    if (slot.type === "oneChoicePerQuestion" && slot.reasonTargetId && !Object.hasOwn(goals, slot.reasonTargetId)) {
+      issue([...path, "reasonTargetId"], "理由引用的目标不存在");
+    }
   }
 }
 

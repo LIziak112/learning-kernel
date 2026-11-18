@@ -3,11 +3,13 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { chromium } from "playwright";
 import type { Browser, Page } from "playwright";
 import { createDemoServer } from "../../src/host/demo.ts";
+import { evaluatePending } from "../../src/kernel/evaluation.ts";
 import publication from "../../practices/single-quote.json" with { type: "json" };
 
 let coverageSequence = 0;
@@ -157,6 +159,51 @@ test("提交已确认但浏览器丢失回执时，保留引文并重发原操�
   });
 });
 
+test("浏览器完成两步阅读并仅显示整篇初判和原答", { timeout: 25_000 }, async t => {
+  await withDemo(t, async (browser, origin, databasePath) => {
+    const learner = await openBrowserPage(browser);
+    const response = await learner.goto(origin + "/demo/reading");
+    assert.equal(response?.status(), 200);
+    await learner.getByRole("button", { name: "打开活动" }).click();
+    const workspace = learner.locator("#library-workspace");
+    await workspace.getByRole("heading", { name: "图书馆延时开放" }).waitFor();
+    await workspace.locator(".paragraph").filter({ hasText: "每晚平均有三十人" })
+      .getByRole("button", { name: "选为客流观察" }).click();
+    await workspace.locator(".paragraph").filter({ hasText: "每晚平均有三十人" })
+      .getByRole("button", { name: "选为同期条件" }).click();
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await workspace.getByRole("alert").waitFor();
+    assert.match(await workspace.getByRole("alert").innerText(), /提交未确认/);
+    await workspace.locator(".paragraph").filter({ hasText: "自习室因维修" })
+      .getByRole("button", { name: "选为同期条件" }).click();
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await workspace.getByRole("heading", { name: "已交引文" }).waitFor();
+    await workspace.getByRole("radio", { name: "A 延时时段有人到馆" }).check();
+    await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).check();
+    await workspace.getByRole("radio", { name: "A 立即全年延时" }).check();
+    await workspace.getByRole("button", { name: "交卷" }).click();
+    await learner.getByText("活动已完成", { exact: true }).waitFor();
+    await workspace.getByText("已交，待评", { exact: true }).waitFor();
+    using database = new DatabaseSync(databasePath);
+    evaluatePending(database);
+    await workspace.getByRole("button", { name: "刷新成绩" }).click();
+    await workspace.getByText("1/3", { exact: true }).waitFor();
+    assert.doesNotMatch(await workspace.innerText(), /第[一二三]题[对错]|评分键/);
+    await savePageCoverage(learner, true);
+    await learner.reload();
+    await workspace.getByText("1/3", { exact: true }).waitFor();
+    assert.equal(await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).isChecked(), true);
+    for (const pathname of ["/reading.mjs", "/library-reading.mjs", "/reading.css", "/"]) {
+      const asset = await learner.request.get(origin + pathname);
+      assert.equal(asset.status(), 200);
+      assert.doesNotMatch(await asset.text(), /acceptedChoices|library-key|gradingBasis/);
+    }
+    const privateFile = await learner.request.get(origin + "/practices/reading-library.json");
+    assert.equal(privateFile.status(), 404);
+    assert.deepEqual(await privateFile.json(), { code: "NOT_FOUND" });
+  }, false);
+});
+
 test("会话失效时清除页面引文，重新进入后可恢复活动", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {
     const student = await openBrowserPage(browser);
@@ -182,10 +229,14 @@ test("会话失效时清除页面引文，重新进入后可恢复活动", { tim
   });
 });
 
-async function withDemo(t: TestContext, run: (browser: Browser, origin: string) => Promise<void>) {
+async function withDemo(
+  t: TestContext, run: (browser: Browser, origin: string, databasePath: string) => Promise<void>,
+  evaluateAutomatically = true,
+) {
   const directory = mkdtempSync(join(tmpdir(), "learning-kernel-browser-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const server = createDemoServer(join(directory, "test.sqlite"));
+  const databasePath = join(directory, "test.sqlite");
+  const server = createDemoServer(databasePath, evaluateAutomatically);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   try {
@@ -193,7 +244,7 @@ async function withDemo(t: TestContext, run: (browser: Browser, origin: string) 
     assert.ok(address && typeof address !== "string");
     const browser = await chromium.launch();
     try {
-      await run(browser, `http://127.0.0.1:${address.port}`);
+      await run(browser, `http://127.0.0.1:${address.port}`, databasePath);
     } finally {
       try {
         for (const context of browser.contexts()) {
@@ -218,12 +269,13 @@ async function openBrowserPage(browser: Browser, viewport = { width: 1200, heigh
 async function savePageCoverage(page: Page, restart = false) {
   const directory = process.env.NODE_V8_COVERAGE;
   if (!directory) return;
-  const file = new URL("../../src/host/web/reading.mjs", import.meta.url);
+  const scripts = new Set(["/reading.mjs", "/library-reading.mjs"]);
   const entries = (await page.coverage.stopJSCoverage())
-    .filter(entry => new URL(entry.url).pathname === "/reading.mjs");
+    .filter(entry => scripts.has(new URL(entry.url).pathname));
   assert.ok(entries.length > 0, "Chromium 未记录阅读页脚本覆盖率");
   for (const entry of entries) {
     coverageSequence += 1;
+    const file = new URL("../../src/host/web" + new URL(entry.url).pathname, import.meta.url);
     const result = [{ scriptId: String(coverageSequence), url: file.href, functions: entry.functions }];
     writeFileSync(join(directory, `coverage-${process.pid}-${Date.now()}-${coverageSequence}.json`),
       JSON.stringify({ result }));

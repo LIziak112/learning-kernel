@@ -4,11 +4,13 @@ import { studentTool } from "../builtins/reading-capabilities.ts";
 import { selectedText } from "../builtins/selection.ts";
 import type { SubmitInput } from "../contracts/reading.ts";
 import type { ReadingStep } from "../contracts/reading-publication.ts";
-import { readingSelection } from "../contracts/reading-runtime.ts";
-import type { ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
+import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
+import type { ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
+import { assessmentView, queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
-import { recordSubmission, recoverReceipt } from "./submission-store.ts";
+import { answerObservations, findSource, verifyAnswerReferences } from "./reading-answers.ts";
+import { finishActivity, recordSubmission, recoverReceipt } from "./submission-store.ts";
 import type { StoredSubmission } from "./submission-store.ts";
 import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
 
@@ -20,14 +22,12 @@ function stepForAttempt(database: DatabaseSync, activity: ReadingActivity, attem
   return step;
 }
 
-function passageSlot(step: ReadingStep, slotId: string) {
+function boundOutput(step: ReadingStep, slotId: string) {
   const slot = step.submit.slots[slotId];
-  if (slot?.type !== "passageSelection" || !studentTool(step.tool)?.outputs.includes(slot.type)) {
+  if (!slot || slot.type === "reuse" || !studentTool(step.tool)?.outputs.includes(slot.type)) {
     throw new LearningError(422, "INVALID_SLOT");
   }
-  const source = step.inputs[slot.source];
-  if (source?.from !== "material") throw new LearningError(409, "PRACTICE_NOT_RUNNABLE");
-  return { slot, source };
+  return slot;
 }
 
 function workScope(activity: ReadingActivity, input: { stepAttemptId: string; slotId: string }) {
@@ -36,7 +36,10 @@ function workScope(activity: ReadingActivity, input: { stepAttemptId: string; sl
 
 export function saveReadingSelection(database: DatabaseSync, activity: ReadingActivity, input: ReadingSaveInput) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
-  const { slot, source } = passageSlot(step, input.slotId);
+  const slot = boundOutput(step, input.slotId);
+  if (slot.type !== "passageSelection") throw new LearningError(422, "INVALID_SLOT");
+  const source = step.inputs[slot.source];
+  if (source?.from !== "material") throw new LearningError(409, "PRACTICE_NOT_RUNNABLE");
   const selection = {
     material: activity.practice.material,
     positionId: source.positionId,
@@ -49,19 +52,46 @@ export function saveReadingSelection(database: DatabaseSync, activity: ReadingAc
   return { draft, selection };
 }
 
-export function confirmReadingSelection(database: DatabaseSync, activity: ReadingActivity, input: SubmitInput) {
+export function saveReadingAnswer(database: DatabaseSync, activity: ReadingActivity, input: ReadingAnswerInput) {
+  const step = stepForAttempt(database, activity, input.stepAttemptId);
+  if (boundOutput(step, input.slotId).type !== "oneChoicePerQuestion") throw new LearningError(422, "INVALID_SLOT");
+  const { choices, references, reason } = input;
+  const answer = readingAnswer.parse({ choices, references, reason });
+  verifyAnswerReferences(database, activity.activityId, step, answer);
+  return { draft: saveWorkVersion(database, workScope(activity, input), answer, input.workId), answer };
+}
+
+export function confirmReadingDraft(database: DatabaseSync, activity: ReadingActivity, input: SubmitInput) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
   const repeated = recoverReceipt(database, input);
   if (repeated) return repeated;
-  if (activity.stepAttemptId !== input.stepAttemptId) {
+  if (activity.completed || activity.stepAttemptId !== input.stepAttemptId) {
     throw new LearningError(409, "ALREADY_SUBMITTED");
   }
-  const { slot } = passageSlot(step, input.slotId);
-  const selection = readingSelection.parse(loadWorkVersion(database, workScope(activity, input), input.draft));
-  validateSelection(selection, Object.keys(slot.oneRangePerRole), slot.distinctParagraphs);
-  const receipt = recordSubmission(database, input, slot.targetId);
-  advanceReading(database, activity);
+  const slot = boundOutput(step, input.slotId);
+  const content = loadWorkVersion(database, workScope(activity, input), input.draft);
+  const observations = readingObservations(database, activity, slot, content);
+  const receipt = recordSubmission(database, input, observations);
+  if (slot.type === "oneChoicePerQuestion") queueEvaluation(database, activity, receipt, slot.targetId);
+  if (step.afterConfirmation === "finish") finishActivity(database, activity.activityId, receipt.id);
+  else advanceReading(database, activity);
   return receipt;
+}
+
+function readingObservations(
+  database: DatabaseSync,
+  activity: ReadingActivity,
+  slot: ReturnType<typeof boundOutput>,
+  content: unknown,
+) {
+  if (slot.type === "oneChoicePerQuestion") {
+    const answer = readingAnswer.parse(content);
+    verifyAnswerReferences(database, activity.activityId, activity.step, answer);
+    return answerObservations(activity, slot, answer);
+  }
+  const selection = readingSelection.parse(content);
+  validateSelection(selection, Object.keys(slot.oneRangePerRole), slot.distinctParagraphs);
+  return [{ targetId: slot.targetId, unitId: slot.evidenceUnit }];
 }
 
 function validateSelection(selection: ReadingSelection, requiredRoles: string[], distinctParagraphs: boolean) {
@@ -83,19 +113,21 @@ function advanceReading(database: DatabaseSync, activity: ReadingActivity) {
     .run(randomUUID(), activity.activityId, next.id, ordinal);
 }
 
-export function readingActivityView(activity: ReadingActivity, submissions: StoredSubmission[]) {
+export function readingActivityView(database: DatabaseSync, activity: ReadingActivity, submissions: StoredSubmission[]) {
   const { activityId, stepAttemptId, startedAt, material, step, practice, completed } = activity;
-  const inputs = Object.fromEntries(Object.entries(step.inputs).map(([name, input]) => {
+  const inputs = Object.fromEntries(Object.entries(step.inputs).flatMap<[string, object]>(([name, input]) => {
     switch (input.from) {
-      case "material": return [name, { from: input.from, positionId: input.positionId }];
-      case "questions": return [name, { from: input.from, questions: practice.questions }];
+      case "material": return [[name, { from: input.from, positionId: input.positionId }]];
+      case "questions": return [[name, { from: input.from, questions: practice.questions }]];
       case "submission": {
-        const submitted = submissions.find(item => item.stepId === input.stepId && item.receipt.slotId === input.slotId);
+        const submitted = findSource(submissions, input);
         if (!submitted) throw new Error("前序步骤缺少已确认的输入");
-        return [name, { from: input.from, ...readingSubmissionView(submitted) }];
+        const view = completed ? studentSubmissionView(activity, submitted) : readingSubmissionView(submitted);
+        return Object.keys(view).length ? [[name, { from: input.from, ...view }]] : [];
       }
     }
   }));
+  const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
   return {
     formatVersion: practice.formatVersion,
     activityId, stepAttemptId, startedAt, material,
@@ -103,9 +135,23 @@ export function readingActivityView(activity: ReadingActivity, submissions: Stor
     step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },
     status: completed ? "completed" : "active",
     inputs,
+    submission: submitted ? studentSubmissionView(activity, submitted) : undefined,
+    assessment: assessmentView(database, activity),
   };
 }
 
+export function studentSubmissionView(activity: ReadingActivity, submitted: StoredSubmission) {
+  const fields = new Set(activity.practice.policy.student.ownSubmission.fields);
+  const view = readingSubmissionView(submitted);
+  const receipt = fields.has("receipt") ? { receipt: view.receipt } : {};
+  if (view.selection && fields.has("submittedQuotes")) return { ...receipt, selection: view.selection };
+  if (!view.answer || !fields.has("ownChoices")) return receipt;
+  const { references, ...answer } = view.answer;
+  return { ...receipt, answer: fields.has("receipt") ? { ...answer, references } : answer };
+}
+
 export function readingSubmissionView(submitted: StoredSubmission) {
-  return { receipt: submitted.receipt, selection: readingSelection.parse(submitted.content) };
+  const selection = readingSelection.safeParse(submitted.content);
+  if (selection.success) return { receipt: submitted.receipt, selection: selection.data };
+  return { receipt: submitted.receipt, answer: readingAnswer.parse(submitted.content) };
 }

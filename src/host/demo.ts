@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import publication from "../../practices/single-quote.json" with { type: "json" };
+import library from "../../practices/reading-library.json" with { type: "json" };
 import { sendJSON } from "./http.ts";
 import { createLearningServer } from "./server.ts";
 
@@ -10,24 +11,31 @@ const assets = new Map([
   ["/", { file: "index.html", type: "text/html" }],
   ["/reading.css", { file: "reading.css", type: "text/css" }],
   ["/reading.mjs", { file: "reading.mjs", type: "text/javascript" }],
+  ["/library-reading.mjs", { file: "library-reading.mjs", type: "text/javascript" }],
 ]);
 
-export function createDemoServer(databasePath: string) {
-  const profiles = [
-    { path: "/demo/student", student: "student-1", token: randomUUID() },
-    { path: "/demo/other", student: "student-2", token: randomUUID() },
-  ];
-  const sessions = new Map(profiles.map(profile => [profile.token, profile.student]));
+export function createDemoServer(databasePath: string, evaluateAutomatically = true) {
+  const student = randomUUID();
+  const other = randomUUID();
+  const libraryEntry = `/?practice=${library.practice.id}`;
+  const profiles = new Map([
+    ["/demo/student", { token: student, location: "/" }],
+    ["/demo/other", { token: other, location: "/" }],
+    ["/demo/reading", { token: student, location: libraryEntry }],
+  ]);
   return createLearningServer({
     databasePath,
     publication,
-    sessions,
+    additionalPublications: [library],
+    sessions: new Map([[student, "student-1"], [other, "student-2"]]),
+    assignedReviewer: "teacher-1",
+    evaluateAutomatically,
     servePage(request, response, path) {
       if (request.method !== "GET") return false;
-      const profile = profiles.find(entry => entry.path === path);
+      const profile = profiles.get(path);
       if (profile) {
         response.writeHead(303, {
-          Location: "/",
+          Location: profile.location,
           "Cache-Control": "no-store",
           "Set-Cookie": `learning_session=${profile.token}; Path=/; HttpOnly; SameSite=Strict`,
         });
@@ -35,7 +43,9 @@ export function createDemoServer(databasePath: string) {
         return true;
       }
       if (path === "/demo/entry") {
-        sendJSON(response, 200, { practiceId: publication.practice.id });
+        const requested = new URL(request.url ?? "/", "http://localhost").searchParams.get("practice");
+        const practiceId = requested === library.practice.id ? library.practice.id : publication.practice.id;
+        sendJSON(response, 200, { practiceId });
         return true;
       }
       return sendAsset(response, pagePath.test(path) ? "/" : path);

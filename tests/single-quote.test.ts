@@ -126,6 +126,7 @@ for (const definition of [publication, renamed]) {
       assert.deepEqual(database.prepare("SELECT submission_id FROM completions WHERE activity_id = ?")
         .all(activity.activityId).map(row => row.submission_id), [receipt.id]);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM completions").get()?.count, 1);
+      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evaluation_tasks").get()?.count, 0);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM activities").get()?.count, 1);
     } finally {
       await close(server);

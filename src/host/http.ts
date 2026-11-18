@@ -5,11 +5,11 @@ import { LearningError } from "../kernel/learning-error.ts";
 const httpChunk = z.instanceof(Buffer);
 const maximumBodyBytes = 64 * 1024;
 
-export function studentFor(request: IncomingMessage, sessions: ReadonlyMap<string, string>) {
+export function authenticate<Identity>(request: IncomingMessage, lookup: (token: string) => Identity | undefined) {
   const token = request.headers.cookie?.match(/(?:^|;\s*)learning_session=([^;]+)/)?.[1];
-  const student = token && sessions.get(token);
-  if (!student) throw new LearningError(401, "UNAUTHENTICATED");
-  return student;
+  const identity = token && lookup(token);
+  if (!identity) throw new LearningError(401, "UNAUTHENTICATED");
+  return identity;
 }
 
 export async function readJSON(request: IncomingMessage): Promise<unknown> {

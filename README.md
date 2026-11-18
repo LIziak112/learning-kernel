@@ -21,6 +21,8 @@ pnpm run verify
 
 安装依赖后，运行 `pnpm run dev`，打开[演示学生入口](http://127.0.0.1:3000/demo/student)。点击「打开活动」，在《晚一点关门》中拖选一句话，核对「引文预览」，再点「提交引文」。页面显示「活动已完成」和提交回执。刷新活动页，核对同一引文与同一回执。
 
+打开[两步阅读演示](http://127.0.0.1:3000/demo/reading)，分别从不同段落选出客流观察和同期条件并提交。第二步对照已交引文作答。按 A、B、A 交卷，盲批初判显示整篇 1/3，可刷新活动回看原答。
+
 演示服务监听本机 `127.0.0.1:3000`，数据保存在 `data/demo.sqlite`。关闭服务会保留该文件。重启后从演示入口恢复会话，再在同一标签页打开活动或访问已保存的活动链接。
 
 浏览器测试由锁定的 Playwright 1.64.1 运行 Chromium，使用独立的临时文件库。单独运行 `node --test tests/browser/reading.test.ts`。Linux 上可用 `pnpm exec playwright install --with-deps --only-shell chromium` 同时准备系统依赖和浏览器。累计验收要求浏览器组实际通过。
