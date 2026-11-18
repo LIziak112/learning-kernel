@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>阅读练习 · 学习平台内核</title>
+    <link rel="stylesheet" href="/reading.css">
+    <script type="module" src="/reading.mjs"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="frame masthead">
+        <span class="product">学习平台内核</span>
+        <a href="/">活动入口</a>
+      </div>
+    </header>
+    <main class="frame">
+      <header class="activity-header">
+        <h1 id="title">阅读练习</h1>
+        <p id="progress" class="progress" role="status"></p>
+      </header>
+      <div id="start" class="panel">
+        <button type="button" id="open-activity">打开活动</button>
+      </div>
+      <p id="load-error" role="alert" hidden></p>
+      <div id="workspace" class="workspace" hidden>
+        <article class="panel material" aria-labelledby="material-title">
+          <h2 id="material-title"></h2>
+          <p id="instructions" class="instructions"></p>
+          <div id="paragraphs"></div>
+          <p id="material-source" class="source"></p>
+        </article>
+        <section class="panel quote-panel" id="quote-preview" aria-labelledby="preview-title">
+          <h2 id="preview-title">引文预览</h2>
+          <p id="empty-preview" class="secondary">拖选同一段中的文字，也可以选用整段。</p>
+          <blockquote id="quote" hidden></blockquote>
+          <dl id="receipt" hidden>
+            <dt>提交回执</dt>
+            <dd id="receipt-id"></dd>
+          </dl>
+          <p id="submit-error" role="alert" hidden></p>
+          <button type="button" id="submit-quote" disabled>提交引文</button>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

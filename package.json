@@ -10,12 +10,13 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node scripts/run-tests.mjs --require tests/database.test.ts --require tests/single-quote.test.ts",
+    "test": "node scripts/run-tests.mjs --require tests/database.test.ts --require tests/single-quote.test.ts --require tests/browser/reading.test.ts",
     "coverage": "pnpm test --coverage",
     "check:size": "node scripts/check-size.mjs",
     "lint": "node scripts/lint.mjs",
     "verify": "pnpm run lint && pnpm run typecheck && pnpm run check:size && pnpm test",
-    "hooks:install": "git config --local core.hooksPath .githooks"
+    "hooks:install": "git config --local core.hooksPath .githooks",
+    "dev": "node src/host/dev.ts"
   },
   "dependencies": {
     "zod": "4.6.5"
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@babel/parser": "7.28.5",
     "@types/node": "24.19.0",
+    "playwright": "1.64.1",
     "typescript": "7.0.2"
   }
 }

@@ -9,12 +9,21 @@
 ```sh
 pnpm install --frozen-lockfile
 pnpm run hooks:install
+pnpm exec playwright install --only-shell chromium
 pnpm run verify
 ```
 
 `verify` 顺序执行 `lint`、strict 类型检查、源码规模检查和真实测试。`node --test tests/database.test.ts` 单独验证首次建库、重复初始化、关闭后只读重开及初始化失败后的恢复。`openDatabase(path)` 在事务内应用迁移，`schema_migrations` 记录已应用的版本。数据库测试在系统临时目录中创建独立文件，结束后清理。
 
 `node --test tests/single-quote.test.ts` 通过真实本地 HTTP 服务验收单步引文。用例由服务端注入学生会话，覆盖启动和提交重发、草稿升版、文件库重开和跨学生拒绝。累计验收要求数据库组和单步服务组都实际执行。
+
+## 浏览器演示
+
+安装依赖后，运行 `pnpm run dev`，打开[演示学生入口](http://127.0.0.1:3000/demo/student)。点击「打开活动」，在《晚一点关门》中拖选一句话，核对「引文预览」，再点「提交引文」。页面显示「活动已完成」和提交回执。刷新活动页，核对同一引文与同一回执。
+
+演示服务监听本机 `127.0.0.1:3000`，数据保存在 `data/demo.sqlite`。关闭服务会保留该文件。重启后从演示入口恢复会话，再在同一标签页打开活动或访问已保存的活动链接。
+
+浏览器测试由锁定的 Playwright 1.64.1 运行 Chromium，使用独立的临时文件库。单独运行 `node --test tests/browser/reading.test.ts`。Linux 上可用 `pnpm exec playwright install --with-deps --only-shell chromium` 同时准备系统依赖和浏览器。累计验收要求浏览器组实际通过。
 
 ## 源码规模与持续集成
 

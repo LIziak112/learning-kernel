@@ -10,10 +10,13 @@ import { registerPublication } from "../kernel/publication.ts";
 import { readActivity, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
 import { readJSON, sendJSON, sendError, studentFor } from "./http.ts";
 
+type PageHandler = (request: IncomingMessage, response: ServerResponse, path: string) => boolean;
+
 export function createLearningServer(options: {
   databasePath: string;
   publication: unknown;
   sessions: ReadonlyMap<string, string>;
+  servePage?: PageHandler;
 }) {
   const database = openDatabase(options.databasePath);
   try {
@@ -23,7 +26,7 @@ export function createLearningServer(options: {
     throw error;
   }
   const server = createServer((request, response) => {
-    serve(request, response, database, options.sessions).catch(error => sendError(response, error));
+    serve(request, response, database, options.sessions, options.servePage).catch(error => sendError(response, error));
   });
   server.once("close", () => database.close());
   return server;
@@ -34,8 +37,10 @@ async function serve(
   response: ServerResponse,
   database: DatabaseSync,
   sessions: ReadonlyMap<string, string>,
+  servePage?: PageHandler,
 ) {
   const path = new URL(z.string().parse(request.url), "http://localhost").pathname;
+  if (servePage?.(request, response, path)) return;
   const student = studentFor(request, sessions);
   if (request.method === "POST" && path === "/api/activities") {
     const input = startInput.parse(await readJSON(request));
