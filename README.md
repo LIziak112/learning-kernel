@@ -1,6 +1,6 @@
 # 学习平台内核
 
-本仓是学习平台内核的开发起点，当前内容为开发环境、Agent 规则和三份设计文档。T01–T10 等待实施。执行 Agent 从 [AGENTS.md](AGENTS.md) 和[仓库级 ub-mode 技能](.agents/skills/ub-mode/SKILL.md)开始。产品任务见[首版实施清单](docs/学习平台内核首版实施清单.md)，领域分层见[参考架构](docs/学习平台内核参考架构.md)，练法验收见[在线两步阅读实施规格](docs/在线两步阅读实施规格.md)。移入的设计文档保留[原许可](docs/LICENSE)。
+本仓实现可复用的在线学习活动内核。执行 Agent 从 [AGENTS.md](AGENTS.md) 和[仓库级 ub-mode 技能](.agents/skills/ub-mode/SKILL.md)开始。产品进度见[首版实施清单](docs/学习平台内核首版实施清单.md)，领域分层见[参考架构](docs/学习平台内核参考架构.md)，练法验收见[在线两步阅读实施规格](docs/在线两步阅读实施规格.md)。移入的设计文档保留[原许可](docs/LICENSE)。
 
 ## 本地开发
 
@@ -12,7 +12,7 @@ pnpm run hooks:install
 pnpm run verify
 ```
 
-`verify` 顺序执行 `lint`、strict 类型检查、源码规模检查和真实测试。日常先运行 `node --test tests/目标.test.ts`，按项运行累计验收。SQLite 冒烟只检查内存驱动，项目数据库的首次迁移仍由 T01 实施。
+`verify` 顺序执行 `lint`、strict 类型检查、源码规模检查和真实测试。`node --test tests/database.test.ts` 单独验证首次建库、重复初始化、关闭后只读重开及初始化失败后的恢复。`openDatabase(path)` 在事务内应用迁移，`schema_migrations` 记录已应用的版本。数据库测试在系统临时目录中创建独立文件，结束后清理。
 
 ## 源码规模与持续集成
 
