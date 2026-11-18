@@ -30,7 +30,9 @@ export function startActivity(database: DatabaseSync, student: string, input: St
       SELECT definition FROM practices WHERE id = ? ORDER BY version DESC LIMIT 1
     `).get(input.practiceId);
     if (!published) throw new LearningError(404, "PRACTICE_NOT_FOUND");
-    const practice = practiceSchema.parse(JSON.parse(String(published.definition)));
+    const definition = practiceSchema.safeParse(JSON.parse(String(published.definition)));
+    if (!definition.success) throw new LearningError(409, "PRACTICE_NOT_RUNNABLE");
+    const practice = definition.data;
     const receipt = { activityId: randomUUID(), stepAttemptId: randomUUID(), startedAt: new Date().toISOString() };
     database.prepare(`
       INSERT INTO activities (id, student_id, practice_id, practice_version, start_operation_id, started_at)

@@ -1,0 +1,121 @@
+{
+  "material": {
+    "id": "library-hours",
+    "version": 1,
+    "title": "图书馆延时开放",
+    "source": "学习平台内核参考架构",
+    "paragraphs": [
+      { "id": "p1", "text": "学校图书馆试行每周三延长开放两小时。" },
+      { "id": "p2", "text": "前两周，延长开放的时段每晚平均有三十人到馆。" },
+      { "id": "p3", "text": "同期，附近一间自习室因维修暂时关闭。" },
+      { "id": "p4", "text": "馆员建议等自习室重新开放，再观察两周才决定是否长期延时。" }
+    ]
+  },
+  "practice": {
+    "formatVersion": 1,
+    "id": "reading-library",
+    "version": 1,
+    "title": "两步阅读",
+    "material": { "id": "library-hours", "version": 1 },
+    "goals": {
+      "cite": "选出一组能支持解释的原文证据",
+      "interpret": "区分已观察到的事实和仍需验证的解释"
+    },
+    "questions": [
+      { "id": "q1", "prompt": "记录直接支持什么说法？", "options": { "A": "延时时段有人到馆", "B": "全校学生的阅读量增加了" } },
+      { "id": "q2", "prompt": "哪项同期变化可能影响到馆人数？", "options": { "A": "图书馆新增座位", "B": "附近自习室暂时关闭" } },
+      { "id": "q3", "prompt": "馆员建议下一步怎样做？", "options": { "A": "立即全年延时", "B": "自习室重开后再观察" } }
+    ],
+    "steps": [
+      {
+        "id": "evidence",
+        "instructions": "各选一段原文，分别标为「客流观察」和「同期条件」。",
+        "tool": { "id": "passage-select", "version": 1 },
+        "inputs": { "passage": { "from": "material", "positionId": "evidence-passage" } },
+        "submit": {
+          "purpose": "stepEvidence",
+          "slots": {
+            "quotes": {
+              "type": "passageSelection",
+              "source": "passage",
+              "targetId": "cite",
+              "oneRangePerRole": { "observation": "客流观察", "condition": "同期条件" },
+              "distinctParagraphs": true,
+              "evidenceUnit": "wholeSelection"
+            }
+          }
+        },
+        "afterConfirmation": "advance"
+      },
+      {
+        "id": "decide",
+        "requires": "evidence",
+        "instructions": "对照原文和已交的两段引文，每题选一项，再一起提交。",
+        "tool": { "id": "single-choice-group", "version": 1 },
+        "inputs": {
+          "passage": { "from": "material", "positionId": "decide-passage" },
+          "items": { "from": "questions" },
+          "quotes": { "from": "submission", "stepId": "evidence", "slotId": "quotes", "readOnly": true }
+        },
+        "submit": {
+          "purpose": "finalAnswer",
+          "slots": {
+            "basis": { "type": "reuse", "source": "quotes" },
+            "choices": { "type": "oneChoicePerQuestion", "source": "items", "targetId": "interpret" }
+          }
+        },
+        "afterConfirmation": "finish"
+      }
+    ],
+    "grading": {
+      "selectionFeedback": {
+        "from": { "stepId": "evidence", "slotId": "quotes" },
+        "criterion": "两段是否分别给出了客流记录和可能影响客流的同期条件"
+      },
+      "assessment": {
+        "from": { "stepId": "decide", "slotId": "choices" },
+        "evaluator": { "id": "choice-key", "version": 1 },
+        "keyRef": { "id": "library-key", "version": 1 },
+        "unit": "question",
+        "effectiveVerdictOrder": ["teacherReview", "automatic"]
+      }
+    },
+    "policy": {
+      "timeLimit": { "minutes": 8, "startsAt": "instanceStarted", "onDeadline": "keepDraftAndClose" },
+      "offline": "onlineOnly",
+      "redo": "newInstanceOnAuthorization",
+      "student": {
+        "ownSubmission": {
+          "scope": "ownConfirmedSubmissions",
+          "fields": ["receipt", "submittedQuotes", "ownChoices"],
+          "onFinal": ["passageGradingStatus"]
+        },
+        "passageScore": {
+          "whenAll": ["finalConfirmed", "allQuestionsJudged"],
+          "group": "wholePassage",
+          "fields": ["correctCount", "questionCount"],
+          "allowSubsets": false,
+          "drilldown": false
+        },
+        "review": {
+          "requires": "passageScore",
+          "while": "reviewOpen",
+          "byQuestion": ["effectiveVerdict"],
+          "byQuoteSet": ["learnerFeedback"]
+        }
+      },
+      "reviewer": {
+        "scope": "assignedReviewer",
+        "fields": ["submittedQuotes", "studentChoices", "learnerFeedback", "verdictHistory", "gradingBasis"],
+        "actions": ["commentOnQuotes", "reviseQuestionVerdict"]
+      },
+      "manager": { "scope": "assigningTeacher", "actions": ["openReview", "closeReview", "authorizeRedo"] },
+      "externalAi": "disabled"
+    }
+  },
+  "scoringKey": {
+    "id": "library-key",
+    "version": 1,
+    "acceptedChoices": { "q1": "A", "q2": "A", "q3": "B" }
+  }
+}

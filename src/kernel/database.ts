@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readingMigration } from "./reading-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
+const migrationVersions = new Set<number | null>([1, 2, 3]);
 
 export function openDatabase(path: string): DatabaseSync {
   const database = new DatabaseSync(path, { timeout: 5000 });
@@ -38,10 +39,20 @@ function migrate(database: DatabaseSync) {
     `);
   }
   const { version } = migrationVersion.parse(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get());
+  if (!migrationVersions.has(version)) throw new Error(`不支持的数据库版本：${String(version)}`);
   if (version === 1) {
     database.exec(readingMigration);
     database.exec("INSERT INTO schema_migrations (version) VALUES (2)");
-  } else if (version !== 2) {
-    throw new Error(`不支持的数据库版本：${String(version)}`);
+  }
+  if (version !== 3) {
+    database.exec(`
+      CREATE TABLE scoring_keys (
+        id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        definition TEXT NOT NULL,
+        PRIMARY KEY (id, version)
+      ) STRICT;
+      INSERT INTO schema_migrations (version) VALUES (3);
+    `);
   }
 }

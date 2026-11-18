@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { textSelectionCapability } from "../builtins/reading-capabilities.ts";
 
-const id = z.string().min(1).max(128);
+export const id = z.string().min(1).max(128);
 const version = z.int().positive();
 const protocolVersion = z.literal(1);
 
-const versionRef = z.strictObject({ id, version });
+export const versionRef = z.strictObject({ id, version });
+export type VersionRef = z.infer<typeof versionRef>;
 const paragraph = z.strictObject({ id, text: z.string().min(1) });
 
 export const materialSchema = versionRef.extend({
@@ -16,7 +18,10 @@ export const materialSchema = versionRef.extend({
 export const stepSchema = z.strictObject({
   id,
   instructions: z.string().min(1),
-  tool: z.strictObject({ id: z.literal("text-selection"), version: z.literal(1) }),
+  tool: z.strictObject({
+    id: z.literal(textSelectionCapability.id),
+    version: z.literal(textSelectionCapability.version),
+  }),
   positionId: id,
   slotId: id,
   targetId: id,
