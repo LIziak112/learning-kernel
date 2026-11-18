@@ -14,7 +14,9 @@ const assets = new Map([
   ["/library-reading.mjs", { file: "library-reading.mjs", type: "text/javascript" }],
 ]);
 
-export function createDemoServer(databasePath: string, evaluateAutomatically = true) {
+type DemoOptions = Pick<Parameters<typeof createLearningServer>[0], "evaluateAutomatically" | "clock">;
+
+export function createDemoServer(databasePath: string, options: DemoOptions = {}) {
   const student = randomUUID();
   const other = randomUUID();
   const libraryEntry = `/?practice=${library.practice.id}`;
@@ -29,7 +31,7 @@ export function createDemoServer(databasePath: string, evaluateAutomatically = t
     additionalPublications: [library],
     sessions: new Map([[student, "student-1"], [other, "student-2"]]),
     assignedReviewer: "teacher-1",
-    evaluateAutomatically,
+    ...options,
     servePage(request, response, path) {
       if (request.method !== "GET") return false;
       const profile = profiles.get(path);

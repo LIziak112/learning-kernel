@@ -20,12 +20,14 @@ export function recoverReceipt(database: DatabaseSync, input: SubmitInput) {
 
 export type Observation = { targetId: string; unitId: string };
 
-export function recordSubmission(database: DatabaseSync, input: SubmitInput, observations: readonly Observation[]) {
+export function recordSubmission(
+  database: DatabaseSync, input: SubmitInput, observations: readonly Observation[], confirmedAt: Date,
+) {
   const receipt = {
     id: randomUUID(),
     stepAttemptId: input.stepAttemptId,
     slotId: input.slotId,
-    confirmedAt: new Date().toISOString(),
+    confirmedAt: confirmedAt.toISOString(),
   };
   database.prepare(`
     INSERT INTO submissions (id, step_attempt_id, slot_id, operation_id, work_id, work_version, confirmed_at)

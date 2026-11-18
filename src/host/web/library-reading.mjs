@@ -36,7 +36,9 @@ export function renderLibraryActivity(activity, api, refresh, reportError) {
   if (completed) {
     const selection = activity.submission?.selection;
     if (selection) renderQuotes(preview, selection.ranges);
-    side.append(readingResult(activity, refresh, handleError));
+    const result = readingResult(activity, refresh, handleError);
+    showUnsubmittedDraft(result, pending);
+    side.append(result);
   } else {
     attachSubmission({ activity, api, refresh, handleError, slotId, storageKey, pending, editor, side });
   }
@@ -45,9 +47,8 @@ export function renderLibraryActivity(activity, api, refresh, reportError) {
 }
 
 function attachSubmission({ activity, api, refresh, handleError, slotId, storageKey, pending, editor, side }) {
-  const error = text("p", "");
-  error.setAttribute("role", "alert");
-  error.hidden = true;
+  const expired = () => pending?.failure === "DEADLINE_PASSED";
+  const error = submissionAlert(pending);
   const confirm = button(editor.submitLabel, submit);
   let busy = false;
   editor.onChange(() => {
@@ -61,7 +62,7 @@ function attachSubmission({ activity, api, refresh, handleError, slotId, storage
 
   function update() {
     editor.lock(busy || Boolean(pending?.draft));
-    confirm.disabled = busy || !editor.ready();
+    confirm.disabled = busy || expired() || !editor.ready();
   }
 
   async function submit() {
@@ -72,22 +73,27 @@ function attachSubmission({ activity, api, refresh, handleError, slotId, storage
     const binding = { stepAttemptId: activity.stepAttemptId, slotId };
     try {
       pending ??= { payload: editor.payload(), operationId: crypto.randomUUID() };
-      await submitReading(api, path, binding, pending, storageKey);
-      sessionStorage.removeItem(storageKey);
-      await refresh();
+      await confirmWithRefresh(api, path, binding, pending, storageKey, refresh);
     } catch (problem) {
       if (permissionDenied(problem)) return handleError(problem);
       if (problem.cause === 422) {
         pending = undefined;
         sessionStorage.removeItem(storageKey);
       }
-      error.textContent = "提交未确认，请检查选段或作答后重试。";
+      error.textContent = turnInMessage(problem.code);
       error.hidden = false;
     } finally {
       busy = false;
       update();
     }
   }
+}
+
+function submissionAlert(pending) {
+  const error = text("p", turnInMessage(pending?.failure));
+  error.setAttribute("role", "alert");
+  error.hidden = pending?.failure !== "DEADLINE_PASSED";
+  return error;
 }
 
 function permissionDenied(problem) {
@@ -101,11 +107,25 @@ function clearLibraryActivity(storageKey) {
 }
 
 function loadPending(storageKey, completed) {
-  if (completed) {
+  const pending = JSON.parse(sessionStorage.getItem(storageKey));
+  if (completed && pending?.failure !== "ALREADY_SUBMITTED") {
     sessionStorage.removeItem(storageKey);
     return null;
   }
-  return JSON.parse(sessionStorage.getItem(storageKey));
+  return pending;
+}
+
+function showUnsubmittedDraft(result, pending) {
+  if (!pending) return;
+  const choices = Object.values(pending.payload.choices ?? {});
+  result.append(text("h3", "本窗口未交出的草稿"));
+  if (choices.length) result.append(text("p", choices.join("、")));
+}
+
+function turnInMessage(code) {
+  return code === "DEADLINE_PASSED"
+    ? "已到截止，草稿已保留。"
+    : "提交未确认，请检查选段或作答后重试。";
 }
 
 function choiceEditor(values, required, completed) {
@@ -220,6 +240,20 @@ async function submitReading(api, path, binding, pending, storageKey) {
     sessionStorage.setItem(storageKey, JSON.stringify(pending));
   }
   return api(path + "/submissions", { ...binding, draft: pending.draft, operationId: pending.operationId });
+}
+
+async function confirmWithRefresh(api, path, binding, pending, storageKey, refresh) {
+  try {
+    await submitReading(api, path, binding, pending, storageKey);
+    sessionStorage.removeItem(storageKey);
+  } catch (problem) {
+    if (problem.code === "DEADLINE_PASSED" || problem.code === "ALREADY_SUBMITTED") {
+      pending.failure = problem.code;
+      sessionStorage.setItem(storageKey, JSON.stringify(pending));
+    }
+    if (problem.code !== "ALREADY_SUBMITTED") throw problem;
+  }
+  await refresh();
 }
 
 function readingResult(activity, refresh, reportError) {

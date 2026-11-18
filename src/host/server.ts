@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { startInput, saveInput, submitInput } from "../contracts/reading.ts";
+import type { SubmitInput } from "../contracts/reading.ts";
 import { readingAnswerInput, readingSaveInput } from "../contracts/reading-runtime.ts";
 import { startActivity } from "../kernel/activity.ts";
 import { openDatabase } from "../kernel/database.ts";
@@ -24,11 +25,15 @@ type HostOptions = {
   additionalPublications?: readonly unknown[];
   servePage?: PageHandler;
   evaluateAutomatically?: boolean;
+  clock?: () => Date;
+  beforeConfirmation?: (input: SubmitInput) => Promise<void>;
 };
 type HostContext = {
   database: DatabaseSync;
   lookup: (token: string) => Identity | undefined;
   scheduleEvaluation: () => void;
+  clock: () => Date;
+  beforeConfirmation: HostOptions["beforeConfirmation"];
   assignedReviewer?: string | undefined;
   servePage?: PageHandler | undefined;
 };
@@ -78,6 +83,7 @@ export function createLearningServer(options: HostOptions) {
   const evaluation = evaluationSchedule(database, options.evaluateAutomatically);
   const context: HostContext = {
     database, lookup: token => sessionLookup(options, token), scheduleEvaluation: evaluation.schedule,
+    clock: options.clock ?? (() => new Date()), beforeConfirmation: options.beforeConfirmation,
     assignedReviewer: options.assignedReviewer, servePage: options.servePage,
   };
   const server = createServer((request, response) => {
@@ -113,13 +119,13 @@ async function serve(
 
 async function studentRequest(
   request: IncomingMessage,
-  { database, scheduleEvaluation, assignedReviewer }: HostContext,
+  context: HostContext,
   student: string,
   path: string,
 ) {
   if (request.method === "POST" && path === "/api/activities") {
     const input = startInput.parse(await readJSON(request));
-    return startActivity(database, student, input, assignedReviewer);
+    return startActivity(context.database, student, input, context.clock, context.assignedReviewer);
   }
   const match = path.match(
     /^\/api\/activities\/([a-f0-9-]{36})(?:\/(drafts|submissions)(?:\/([a-f0-9-]{36}))?)?$/,
@@ -128,8 +134,8 @@ async function studentRequest(
   const [, identifier, resource, submissionId] = match;
   const activityId = z.uuid().parse(identifier);
   return request.method === "GET"
-    ? get(database, student, activityId, resource, submissionId)
-    : await post(request, database, student, activityId, scheduleEvaluation, resource, submissionId);
+    ? get(context.database, student, activityId, resource, submissionId)
+    : await post(request, context, student, activityId, resource, submissionId);
 }
 
 async function reviewRequest(request: IncomingMessage, database: DatabaseSync, reviewer: string, activityId: string) {
@@ -149,23 +155,29 @@ function get(database: DatabaseSync, student: string, activityId: string, resour
 
 async function post(
   request: IncomingMessage,
-  database: DatabaseSync,
+  context: HostContext,
   student: string,
   activityId: string,
-  scheduleEvaluation: () => void,
   resource?: string,
   submissionId?: string,
 ) {
   if (request.method !== "POST" || submissionId) throw new LearningError(404, "NOT_FOUND");
   if (resource === "drafts") {
     const input = saveRequest.parse(await readJSON(request));
-    return saveDraft(database, student, activityId, input);
+    return saveDraft(context.database, student, activityId, input);
   }
   if (resource === "submissions") {
     const input = submitInput.parse(await readJSON(request));
-    const receipt = submitDraft(database, student, activityId, input);
-    scheduleEvaluation();
-    return receipt;
+    return confirmRequest(request, context, student, activityId, input);
   }
   throw new LearningError(404, "NOT_FOUND");
+}
+
+async function confirmRequest(request: IncomingMessage, context: HostContext, student: string, activityId: string, input: SubmitInput) {
+  await context.beforeConfirmation?.(input);
+  const actor = authenticate(request, context.lookup);
+  if (actor.role !== "student" || actor.id !== student) throw new LearningError(403, "FORBIDDEN");
+  const receipt = submitDraft(context.database, student, activityId, input, context.clock);
+  context.scheduleEvaluation();
+  return receipt;
 }

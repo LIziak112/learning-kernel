@@ -210,7 +210,7 @@ test("浏览器完成两步阅读并仅显示整篇初判和原答", { timeout: 
     const privateFile = await learner.request.get(origin + "/practices/reading-library.json");
     assert.equal(privateFile.status(), 404);
     assert.deepEqual(await privateFile.json(), { code: "NOT_FOUND" });
-  }, false);
+  }, { evaluateAutomatically: false });
 });
 
 test("答题确认受阻时恢复原草稿并重试，只保留一次确认", { timeout: 25_000 }, async t => {
@@ -284,6 +284,59 @@ async function answerLibrary(workspace: ReturnType<Page["locator"]>) {
   await workspace.getByRole("radio", { name: "A 立即全年延时" }).check();
 }
 
+test("浏览器显示另一窗口的正式答卷，同时保留本窗口未交草稿", { timeout: 25_000 }, async t => {
+  await withDemo(t, async (browser, origin) => {
+    const first = await openBrowserPage(browser);
+    const workspace = await openLibrary(first, origin);
+    await selectObservation(workspace);
+    await selectCondition(workspace);
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await answerLibrary(workspace);
+    const other = await openBrowserPage(browser);
+    await other.goto(origin + "/demo/reading");
+    await other.goto(first.url());
+    const otherWorkspace = other.locator("#library-workspace");
+    await otherWorkspace.getByRole("heading", { name: "已交引文" }).waitFor();
+    for (const [index, choice] of [1, 0, 1].entries()) {
+      await otherWorkspace.locator(".reading-question").nth(index).getByRole("radio").nth(choice).check();
+    }
+    await workspace.getByRole("button", { name: "交卷" }).click();
+    await first.getByText("活动已完成", { exact: true }).waitFor();
+    await otherWorkspace.getByRole("button", { name: "交卷" }).click();
+    await other.getByText("活动已完成", { exact: true }).waitFor();
+    await otherWorkspace.getByRole("heading", { name: "本窗口未交出的草稿" }).waitFor();
+    await otherWorkspace.getByText("B、A、B", { exact: true }).waitFor();
+    const winning = otherWorkspace.getByRole("radio", { name: "B 附近自习室暂时关闭" });
+    assert.equal(await winning.isChecked(), true);
+    assert.equal(await winning.isDisabled(), true);
+    await other.reload();
+    await otherWorkspace.getByRole("heading", { name: "本窗口未交出的草稿" }).waitFor();
+    assert.equal(await winning.isChecked(), true);
+  });
+});
+
+test("浏览器到达截止后禁用交卷，刷新仍保留原草稿", { timeout: 25_000 }, async t => {
+  let now = Date.parse("2026-11-19T08:00:00Z");
+  await withDemo(t, async (browser, origin) => {
+    const learner = await openBrowserPage(browser);
+    const workspace = await openLibrary(learner, origin);
+    await selectObservation(workspace);
+    await selectCondition(workspace);
+    await workspace.getByRole("button", { name: "提交选据" }).click();
+    await answerLibrary(workspace);
+    now += 8 * 60_000;
+    const submit = workspace.getByRole("button", { name: "交卷" });
+    await submit.click();
+    await workspace.getByText("已到截止，草稿已保留。", { exact: true }).waitFor();
+    assert.equal(await submit.isDisabled(), true);
+    await learner.reload();
+    await workspace.getByText("已到截止，草稿已保留。", { exact: true }).waitFor();
+    assert.equal(await workspace.getByRole("radio", { name: "B 附近自习室暂时关闭" }).isChecked(), true);
+    assert.equal(await submit.isDisabled(), true);
+    assert.equal(await learner.getByText("活动已完成", { exact: true }).count(), 0);
+  }, { clock: () => new Date(now) });
+});
+
 test("会话失效时清除页面引文，重新进入后可恢复活动", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {
     const student = await openBrowserPage(browser);
@@ -311,12 +364,12 @@ test("会话失效时清除页面引文，重新进入后可恢复活动", { tim
 
 async function withDemo(
   t: TestContext, run: (browser: Browser, origin: string, databasePath: string) => Promise<void>,
-  evaluateAutomatically = true,
+  options?: Parameters<typeof createDemoServer>[1],
 ) {
   const directory = mkdtempSync(join(tmpdir(), "learning-kernel-browser-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const databasePath = join(directory, "test.sqlite");
-  const server = createDemoServer(databasePath, evaluateAutomatically);
+  const server = createDemoServer(databasePath, options);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   try {

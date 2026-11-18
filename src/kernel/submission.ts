@@ -30,17 +30,17 @@ export function saveDraft(
   });
 }
 
-export function submitDraft(database: DatabaseSync, student: string, activityId: string, input: SubmitInput) {
+export function submitDraft(database: DatabaseSync, student: string, activityId: string, input: SubmitInput, clock: () => Date) {
   return writeTransaction(database, () => {
     const activity = loadActivity(database, student, activityId);
-    if (activity.kind === "reading") return confirmReadingDraft(database, activity, input);
+    if (activity.kind === "reading") return confirmReadingDraft(database, activity, input, clock);
     if (activity.stepAttemptId !== input.stepAttemptId) throw new LearningError(403, "FORBIDDEN");
     const repeated = recoverReceipt(database, input);
     if (repeated) return repeated;
     if (input.slotId !== activity.step.slotId) throw new LearningError(422, "INVALID_SLOT");
     if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
     loadWorkVersion(database, { activityId }, input.draft);
-    const receipt = recordSubmission(database, input, [{ targetId: activity.step.targetId, unitId: "wholeSelection" }]);
+    const receipt = recordSubmission(database, input, [{ targetId: activity.step.targetId, unitId: "wholeSelection" }], clock());
     finishActivity(database, activityId, receipt.id);
     return receipt;
   });

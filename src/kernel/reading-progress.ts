@@ -61,17 +61,20 @@ export function saveReadingAnswer(database: DatabaseSync, activity: ReadingActiv
   return { draft: saveWorkVersion(database, workScope(activity, input), answer, input.workId), answer };
 }
 
-export function confirmReadingDraft(database: DatabaseSync, activity: ReadingActivity, input: SubmitInput) {
+export function confirmReadingDraft(database: DatabaseSync, activity: ReadingActivity, input: SubmitInput, clock: () => Date) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
   const repeated = recoverReceipt(database, input);
   if (repeated) return repeated;
   if (activity.completed || activity.stepAttemptId !== input.stepAttemptId) {
     throw new LearningError(409, "ALREADY_SUBMITTED");
   }
+  const confirmedAt = clock();
+  const deadline = Date.parse(activity.startedAt) + activity.practice.policy.timeLimit.minutes * 60_000;
+  if (confirmedAt.getTime() >= deadline) throw new LearningError(409, "DEADLINE_PASSED");
   const slot = boundOutput(step, input.slotId);
   const content = loadWorkVersion(database, workScope(activity, input), input.draft);
   const observations = readingObservations(database, activity, slot, content);
-  const receipt = recordSubmission(database, input, observations);
+  const receipt = recordSubmission(database, input, observations, confirmedAt);
   if (slot.type === "oneChoicePerQuestion") queueEvaluation(database, activity, receipt, slot.targetId);
   if (step.afterConfirmation === "finish") finishActivity(database, activity.activityId, receipt.id);
   else advanceReading(database, activity);

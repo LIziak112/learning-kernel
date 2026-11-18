@@ -18,7 +18,9 @@ const publishedPractice = z.union([practiceSchema, readingPracticeSchema]);
 
 export type ReadingActivity = Extract<ReturnType<typeof loadActivity>, { kind: "reading" }>;
 
-export function startActivity(database: DatabaseSync, student: string, input: StartInput, assignedReviewer?: string) {
+export function startActivity(
+  database: DatabaseSync, student: string, input: StartInput, clock: () => Date, assignedReviewer?: string,
+) {
   return writeTransaction(database, () => {
     const existing = database.prepare(`
       SELECT a.id AS activityId, s.id AS stepAttemptId, a.started_at AS startedAt, a.practice_id AS practiceId
@@ -36,7 +38,7 @@ export function startActivity(database: DatabaseSync, student: string, input: St
     `).get(input.practiceId);
     if (!published) throw new LearningError(404, "PRACTICE_NOT_FOUND");
     const practice = publishedPractice.parse(JSON.parse(String(published.definition)));
-    const receipt = { activityId: randomUUID(), stepAttemptId: randomUUID(), startedAt: new Date().toISOString() };
+    const receipt = { activityId: randomUUID(), stepAttemptId: randomUUID(), startedAt: clock().toISOString() };
     database.prepare(`
       INSERT INTO activities (id, student_id, practice_id, practice_version, start_operation_id, started_at)
       VALUES (?, ?, ?, ?, ?, ?)

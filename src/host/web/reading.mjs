@@ -25,7 +25,7 @@ function api(path, input) {
   };
   return fetch(path, request).then(async response => {
     const payload = await response.json();
-    if (!response.ok) throw new Error("请求未完成", { cause: response.status });
+    if (!response.ok) throw Object.assign(new Error("请求未完成", { cause: response.status }), { code: payload.code });
     return payload;
   });
 }
