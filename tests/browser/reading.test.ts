@@ -16,11 +16,32 @@ test("浏览器拖选原文并提交，刷新可回看，另一学生读不到",
   await withDemo(t, async (browser, origin) => {
     const student = await openBrowserPage(browser, { width: 1200, height: 850 });
     await openActivity(student, origin, true);
+    assert.equal(await student.locator("#load-error").isVisible(), false);
+    assert.notEqual(await student.locator("#submit-error").getAttribute("hidden"), null);
     assert.equal(await student.getByRole("button", { name: "打开活动" }).isVisible(), false);
     assert.equal(await student.getByRole("button", { name: "提交引文" }).isDisabled(), true);
     const paragraph = publication.material.paragraphs[0];
     assert.ok(paragraph);
     const selected = paragraph.text.slice(0, 10);
+    const outside = await student.evaluate(async () => {
+      const selection = document.getSelection();
+      if (!selection) throw new Error("浏览器缺少选区");
+      const errors: string[] = [];
+      const onError = (error: ErrorEvent) => errors.push(error.message);
+      window.addEventListener("error", onError);
+      const range = document.createRange();
+      range.selectNodeContents(document);
+      const changed = new Promise<void>(resolve => {
+        document.addEventListener("selectionchange", () => resolve(), { once: true });
+      });
+      selection.addRange(range);
+      await changed;
+      const startsAtDocument = selection.getRangeAt(0).startContainer === document;
+      selection.removeAllRanges();
+      window.removeEventListener("error", onError);
+      return { startsAtDocument, errors };
+    });
+    assert.deepEqual(outside, { startsAtDocument: true, errors: [] });
     await student.evaluate(async () => {
       const paragraphs = document.querySelectorAll("[data-paragraph]");
       const first = paragraphs.item(0);
@@ -38,10 +59,14 @@ test("浏览器拖选原文并提交，刷新可回看，另一学生读不到",
     });
     assert.equal(await student.getByRole("button", { name: "提交引文" }).isDisabled(), true);
     await student.evaluate(() => document.getSelection()?.removeAllRanges());
+    await dragSelection(student, paragraph.text, 1);
+    await student.locator("#quote-preview").getByText(paragraph.text.slice(0, 1), { exact: true }).waitFor();
+    await student.evaluate(() => document.getSelection()?.removeAllRanges());
     await dragSelection(student, paragraph.text, selected.length);
     await student.locator("#quote-preview").getByText(selected, { exact: true }).waitFor();
     await student.getByRole("button", { name: "提交引文" }).click();
     await student.getByText("活动已完成", { exact: true }).waitFor();
+    await student.getByText("提交回执", { exact: true }).waitFor();
     const receipt = await student.locator("#receipt-id").textContent();
     assert.match(receipt ?? "", /^[0-9a-f-]{36}$/);
 
@@ -82,7 +107,13 @@ test("提交已确认但浏览器丢失回执时，保留引文并重发原操�
     const paragraph = publication.material.paragraphs[0];
     const nextParagraph = publication.material.paragraphs[1];
     assert.ok(paragraph && nextParagraph);
+    await student.getByRole("button", { name: "选用本段" }).last().click();
+    await student.route("**/api/activities/*/drafts", route => route.abort("connectionfailed"), { times: 1 });
+    await student.getByRole("button", { name: "提交引文" }).click();
+    await student.getByText("未收到确认。可以用同一选区重试。", { exact: true }).waitFor();
+    await student.locator("#quote-preview").getByText(nextParagraph.text, { exact: true }).waitFor();
     await student.getByRole("button", { name: "选用本段" }).first().click();
+    assert.equal(await student.locator("#submit-error").isVisible(), false);
     const submissions: unknown[] = [];
     let committed: unknown;
     const release = Promise.withResolvers<void>();
@@ -104,6 +135,7 @@ test("提交已确认但浏览器丢失回执时，保留引文并重发原操�
     try {
       await student.getByRole("button", { name: "提交中…" }).waitFor();
       assert.equal(await student.getByRole("button", { name: "提交中…" }).isDisabled(), true);
+      assert.equal(await student.getByRole("button", { name: "选用本段" }).last().isDisabled(), true);
       await student.getByRole("button", { name: "提交中…" }).dispatchEvent("click");
       await dragSelection(student, nextParagraph.text, 8);
       await student.locator("#quote-preview").getByText(paragraph.text, { exact: true }).waitFor();
@@ -111,10 +143,13 @@ test("提交已确认但浏览器丢失回执时，保留引文并重发原操�
       release.resolve();
     }
     await student.getByText("未收到确认。可以用同一选区重试。", { exact: true }).waitFor();
+    assert.equal(await student.getByRole("button", { name: "选用本段" }).last().isDisabled(), true);
+    await student.evaluate(() => document.getSelection()?.removeAllRanges());
     await dragSelection(student, nextParagraph.text, 8);
     await student.locator("#quote-preview").getByText(paragraph.text, { exact: true }).waitFor();
     await student.getByRole("button", { name: "重试提交" }).click();
     await student.getByText("活动已完成", { exact: true }).waitFor();
+    assert.notEqual(await student.locator("#submit-error").getAttribute("hidden"), null);
     assert.equal(submissions.length, 2);
     assert.deepEqual(submissions[1], submissions[0]);
     assert.match(await student.locator("#receipt-id").innerText(), /^[0-9a-f-]{36}$/);
@@ -201,8 +236,17 @@ async function openActivity(page: Page, origin: string, failFirst = false) {
   assert.equal(response?.status(), 200, await response?.text());
   const button = page.getByRole("button", { name: "打开活动" });
   if (failFirst) {
-    await page.route("**/demo/entry", route => route.abort("connectionfailed"), { times: 1 });
-    await button.click();
+    const release = Promise.withResolvers<void>();
+    await page.route("**/demo/entry", async route => {
+      await release.promise;
+      await route.abort("connectionfailed");
+    }, { times: 1 });
+    try {
+      await button.click();
+      assert.equal(await button.isDisabled(), true);
+    } finally {
+      release.resolve();
+    }
     await page.getByText("无法打开活动，请刷新或重试。", { exact: true }).waitFor();
   }
   await button.click({ timeout: 3000 });

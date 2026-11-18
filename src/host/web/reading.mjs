@@ -42,18 +42,22 @@ function storePending(next) {
 }
 
 function chooseRange(range) {
-  if (busy || pending?.draft || !selectedText(range)?.trim()) return;
+  if (selectionLocked() || !selectedText(range).trim()) return;
   storePending({ range, operationId: crypto.randomUUID() });
   submitError.hidden = true;
   showDraft();
 }
 
-function selectedText(range) {
-  return activity.material.paragraphs
-    .find(paragraph => paragraph.id === range.paragraphId)?.text.slice(range.start, range.end);
+function selectionLocked() {
+  return busy || Boolean(pending?.draft);
 }
 
-function renderQuote(text = "") {
+function selectedText(range) {
+  const paragraph = activity.material.paragraphs.find(item => item.id === range.paragraphId);
+  return paragraph ? paragraph.text.slice(range.start, range.end) : "";
+}
+
+function renderQuote(text) {
   preview.textContent = text;
   const visible = text.length > 0;
   preview.hidden = !visible;
@@ -63,10 +67,11 @@ function renderQuote(text = "") {
 function showDraft() {
   renderQuote(pending ? selectedText(pending.range) : "");
   const retrying = Boolean(pending?.draft);
+  const locked = selectionLocked();
   submitButton.disabled = busy || !pending;
   submitButton.textContent = busy ? "提交中…" : retrying ? "重试提交" : "提交引文";
   for (const choice of paragraphs.querySelectorAll("button")) {
-    choice.disabled = busy || retrying;
+    choice.disabled = locked;
   }
 }
 
@@ -124,7 +129,7 @@ function renderParagraph(paragraph, selectable) {
 
 function containingParagraph(node) {
   const element = node instanceof Element ? node : node.parentElement;
-  return element?.closest("[data-paragraph]");
+  return element && element.closest("[data-paragraph]");
 }
 
 function textOffset(paragraph, node, offset) {
@@ -151,7 +156,7 @@ async function openActivity() {
   startButton.disabled = true;
   try {
     const { practiceId } = await api("/demo/entry");
-    const operationId = sessionStorage.getItem(startKey) ?? crypto.randomUUID();
+    const operationId = sessionStorage.getItem(startKey) || crypto.randomUUID();
     sessionStorage.setItem(startKey, operationId);
     const { activityId } = await api("/api/activities", { operationId, practiceId });
     const next = await api(activityURL(activityId));
