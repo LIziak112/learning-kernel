@@ -1,0 +1,32 @@
+# 学习平台内核
+
+本仓是学习平台内核的开发起点，当前内容为开发环境、Agent 规则和三份设计文档。T01–T10 等待实施。执行 Agent 从 [AGENTS.md](AGENTS.md) 和[仓库级 ub-mode 技能](.agents/skills/ub-mode/SKILL.md)开始。产品任务见[首版实施清单](docs/学习平台内核首版实施清单.md)，领域分层见[参考架构](docs/学习平台内核参考架构.md)，练法验收见[在线两步阅读实施规格](docs/在线两步阅读实施规格.md)。移入的设计文档保留[原许可](docs/LICENSE)。
+
+## 本地开发
+
+使用 Node 24.19.0、pnpm 12.6.0。SQLite 使用该 Node 版自带的 `node:sqlite`，无需数据库服务。请在独立检出的 Git 仓库根目录运行：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run hooks:install
+pnpm run verify
+```
+
+`verify` 顺序执行 strict 类型检查、源码规模检查和已登记的测试。目前用例只检查工具链、测试执行器与行数门禁。SQLite 冒烟测试使用内存查询读取驱动版本，项目数据库的首次迁移由 T01 实施。
+
+## 源码规模与持续集成
+
+`pnpm run check:size` 读取工作区，包括未跟踪并且未被忽略的源码。Git 提交钩子检查实际暂存的版本。克隆后执行一次 `pnpm run hooks:install` 启用钩子；GitHub Actions 在 push 和 pull request 时重新执行 `verify`。规模阈值与例外见[开发约定](AGENTS.md)。
+
+## 质量审计
+
+当首个产品源码和对应测试进入 `src` 后，运行下面的审计命令。三个独立的 ub-mode 命令需要已安装并在 PATH 内。日常 `verify` 在干净机器上仅依赖本仓锁定的工具。
+
+```sh
+pnpm run coverage
+crapper --use-existing-coverage --threshold 9.99 src
+dryer --threshold 0.8 src
+mutator --use-existing-coverage --max-workers 1 --test-command "pnpm test" src
+```
+
+覆盖模式需要真实的产品源码。覆盖数据位于 `coverage/lcov.info`，审计工具报告位于 `.metrics/`。比较复杂度时确认每个函数有覆盖数据，重复检测需阅读候选，变异检测需核对实际执行、杀死、存活和未覆盖数。运行完变异测试后再跑一次 `pnpm run verify`。
