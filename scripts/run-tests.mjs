@@ -3,12 +3,14 @@ import { relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { run } from "node:test";
 import { lcov, spec } from "node:test/reporters";
+import { parseArgs } from "node:util";
 
-const args = process.argv.slice(2);
-if (args.some(arg => arg !== "--coverage")) {
-  throw new Error("用法：node scripts/run-tests.mjs [--coverage]");
-}
-const coverage = args.includes("--coverage");
+const { values: { coverage, require: required } } = parseArgs({
+  options: {
+    coverage: { type: "boolean", default: false },
+    require: { type: "string", multiple: true, default: [] },
+  },
+});
 const report = resolve("coverage/lcov.info");
 if (coverage) rmSync(report, { force: true });
 
@@ -17,7 +19,11 @@ if (files.length === 0) {
   console.error("未发现测试文件：tests/**/*.test.ts");
   process.exitCode = 1;
 } else {
-  await verify(files);
+  const discovered = new Set(files.map(file => resolve(file)));
+  const absent = required.filter(file => !discovered.has(resolve(file)));
+  for (const file of absent) console.error(`缺少已交付验收组：${file}`);
+  if (absent.length > 0) process.exitCode = 1;
+  else await verify(files);
 }
 
 async function verify(files) {

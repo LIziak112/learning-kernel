@@ -82,3 +82,15 @@ test("失败、跳过和待办用例都会令验收失败", (t) => {
     assert.match(result.output, /真实用例 1/);
   }
 });
+
+test("指定的验收组缺失时返回失败，其他通过的用例不能替代", (t) => {
+  const root = fixture(t, {
+    "tests/present.test.ts": "import { test } from 'node:test'; test('已交付组', () => {});",
+  });
+  const missing = execute(root, "--require", "tests/missing.test.ts");
+  assert.equal(missing.status, 1);
+  assert.match(missing.output, /缺少已交付验收组.*missing\.test\.ts/);
+  const present = execute(root, "--require", "tests/present.test.ts");
+  assert.equal(present.status, 0, present.output);
+  assert.match(present.output, /真实用例 1/);
+});

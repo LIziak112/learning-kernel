@@ -10,8 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node scripts/run-tests.mjs",
-    "coverage": "node scripts/run-tests.mjs --coverage",
+    "test": "node scripts/run-tests.mjs --require tests/database.test.ts --require tests/single-quote.test.ts",
+    "coverage": "pnpm test --coverage",
     "check:size": "node scripts/check-size.mjs",
     "lint": "node scripts/lint.mjs",
     "verify": "pnpm run lint && pnpm run typecheck && pnpm run check:size && pnpm test",

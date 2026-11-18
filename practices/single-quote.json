@@ -1,0 +1,28 @@
+{
+  "material": {
+    "id": "neighborhood-library",
+    "version": 1,
+    "source": "学习平台内核自编材料",
+    "title": "晚一点关门",
+    "paragraphs": [
+      { "id": "p1", "text": "社区图书室原先六点关门。每到傍晚，放学较晚的孩子常常只能在门口还书。" },
+      { "id": "p2", "text": "试行延长开放时间后，孩子们可以留在图书室读书。有志愿者值班的日子，图书室才会延长开放。" }
+    ]
+  },
+  "practice": {
+    "id": "single-quote",
+    "version": 1,
+    "title": "交一段引文",
+    "material": { "id": "neighborhood-library", "version": 1 },
+    "steps": [
+      {
+        "id": "choose-evidence",
+        "instructions": "从原文选一句能说明图书室为何需要晚一点关门的话。",
+        "tool": { "id": "text-selection", "version": 1 },
+        "positionId": "source-for-selection",
+        "slotId": "quote",
+        "targetId": "cite-evidence"
+      }
+    ]
+  }
+}

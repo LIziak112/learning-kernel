@@ -14,7 +14,7 @@ test("同一文件库重复初始化只应用一次首迁移，关闭重开仍�
   {
     using database = openDatabase(path);
     initial = migrationState(database);
-    assert.deepEqual(initial.versions, [1]);
+    assert.deepEqual(initial.versions, [1, 2]);
     assert.equal(typeof initial.schemaVersion, "number");
 
     using repeated = openDatabase(path);
@@ -35,7 +35,27 @@ test("首迁移遇到同名视图时保留原有内容并释放写锁", t => {
   existing.exec("DROP VIEW schema_migrations");
 
   using recovered = openDatabase(path);
-  assert.deepEqual(migrationState(recovered).versions, [1]);
+  assert.deepEqual(migrationState(recovered).versions, [1, 2]);
+});
+
+test("保留 T01 已应用的迁移记录并拒绝比程序新的数据库版本", t => {
+  const path = temporaryDatabasePath(t);
+  {
+    using original = new DatabaseSync(path);
+    original.exec(`
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY) STRICT;
+      INSERT INTO schema_migrations (version) VALUES (1);
+    `);
+  }
+  {
+    using upgraded = openDatabase(path);
+    assert.deepEqual(migrationState(upgraded).versions, [1, 2]);
+    assert.equal(upgraded.prepare("SELECT COUNT(*) AS count FROM submissions").get()?.count, 0);
+    upgraded.exec("INSERT INTO schema_migrations (version) VALUES (3)");
+  }
+  assert.throws(() => openDatabase(path), /不支持的数据库版本：3/);
+  using reopened = new DatabaseSync(path, { readOnly: true });
+  assert.deepEqual(migrationState(reopened).versions, [1, 2, 3]);
 });
 
 function temporaryDatabasePath(t: TestContext) {
