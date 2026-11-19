@@ -5,6 +5,7 @@ import type { ChoiceDraftInput, ChoiceDraftScope, CurrentChoiceDraftMode, Unvers
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { recordChoiceDraftChange } from "./choice-draft-activity.ts";
+import { choiceRevisionBeforeAnswers } from "./choice-snapshot-store.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { boundOutput } from "./reading-progress.ts";
@@ -20,11 +21,13 @@ export class ChoiceDraftConflict extends LearningError {
 }
 
 const storedVersion = z.object({
-  workId: z.uuid(), slotId: z.string(), questionId: z.string(), revision: z.int().positive(), changeCount: z.int().nonnegative(), content: z.string(),
+  workId: z.uuid(), slotId: z.string(), questionId: z.string(), workVersion: z.int().positive(), revision: z.int().positive(), changeCount: z.int().nonnegative(), content: z.string(),
 });
 const storedOperation = storedVersion.extend({ baseRevision: z.int().nonnegative() });
 const versionColumns = `
-  w.id AS workId, w.slot_id AS slotId, w.question_id AS questionId, v.version AS revision, v.selection AS content,
+  w.id AS workId, w.slot_id AS slotId, w.question_id AS questionId, v.version AS workVersion, v.selection AS content,
+  v.version + COALESCE((SELECT MAX(s.revision) FROM choice_snapshot_revisions s
+    WHERE s.step_attempt_id = w.step_attempt_id AND s.slot_id = w.slot_id AND s.question_id = w.question_id), 0) AS revision,
   v.version - (SELECT COUNT(*) FROM choice_draft_amendments a WHERE a.work_id = w.id AND a.revision <= v.version) AS changeCount
 `;
 const currentDrafts = `
@@ -38,7 +41,7 @@ function decodeChoice({ content, ...version }: z.infer<typeof storedVersion>) {
   return { ...version, ...choiceDraftValue.parse(JSON.parse(content)) };
 }
 
-export function draftReceipt({ workId, ...draft }: ReturnType<typeof decodeChoice>) {
+export function draftReceipt({ workId, workVersion, ...draft }: ReturnType<typeof decodeChoice>) {
   return draft;
 }
 
@@ -114,7 +117,7 @@ function rememberVersionedChoice(database: DatabaseSync, input: ChoiceDraftInput
   database.prepare(`
     INSERT INTO choice_draft_operations (work_id, operation_id, base_revision, revision)
     VALUES (?, ?, ?, ?) ON CONFLICT (work_id, operation_id) DO NOTHING
-  `).run(head.workId, input.operationId, input.baseRevision, head.revision);
+  `).run(head.workId, input.operationId, input.baseRevision, head.workVersion);
   database.prepare(`
     INSERT INTO choice_draft_latest_operations (work_id, operation_id) VALUES (?, ?)
     ON CONFLICT (work_id) DO UPDATE SET operation_id = excluded.operation_id
@@ -125,8 +128,9 @@ function saveUnversionedChoice(
   database: DatabaseSync, activityId: string, input: UnversionedChoiceDraftInput, clock: () => Date,
 ) {
   const current = readChoiceHead(database, activityId, input);
-  if (current && (current.revision !== current.changeCount || hasVersionedOperation(database, current.workId))) {
-    throw new ChoiceDraftConflict({ revision: current.revision, choice: current.choice });
+  const { revision, choice } = choiceState(database, input, current);
+  if (revision !== (current?.changeCount ?? 0) || (current && hasVersionedOperation(database, current.workId))) {
+    throw new ChoiceDraftConflict({ revision, choice });
   }
   return appendChoiceVersion(database, activityId, input, current, clock);
 }
@@ -189,9 +193,13 @@ function writeAtRevision(
   database: DatabaseSync, activityId: string, input: ChoiceDraftInput, current: ReturnType<typeof readChoiceHead>, clock: () => Date,
 ) {
   if (current?.choice === input.choice) return current;
-  const { revision, choice } = current ?? { revision: 0, choice: null };
+  const { revision, choice } = choiceState(database, input, current);
   if (revision !== input.baseRevision) throw new ChoiceDraftConflict({ revision, choice });
   return appendChoiceVersion(database, activityId, input, current, clock);
+}
+
+export function choiceState(database: DatabaseSync, scope: ChoiceDraftScope, current: ReturnType<typeof readChoiceHead>) {
+  return current ?? { revision: choiceRevisionBeforeAnswers(database, scope), choice: null };
 }
 
 export function appendChoiceVersion(
@@ -202,6 +210,7 @@ export function appendChoiceVersion(
   if (actor === "student" && current?.choice !== choice) recordChoiceDraftChange(database, activityId, clock());
   const scope = { activityId, step: { id: stepAttemptId, slotId, questionId } };
   const draft = saveWorkVersion(database, scope, { questionVersion, choice }, current?.workId);
-  return { workId: draft.id, slotId, questionId, revision: draft.version, questionVersion, choice,
+  const { revision } = choiceState(database, input, current);
+  return { workId: draft.id, workVersion: draft.version, slotId, questionId, revision: revision + 1, questionVersion, choice,
     changeCount: (current?.changeCount ?? 0) + Number(actor === "student") };
 }

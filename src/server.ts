@@ -6,6 +6,8 @@ import type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDr
 import { choiceDraftScope, choiceDraftInput, currentChoiceDraftMode } from "./contracts/choice-draft.ts";
 import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftInput } from "./contracts/choice-draft.ts";
 import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
+import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
+import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
@@ -15,6 +17,7 @@ import { amendChoiceDraft, readChoiceDraftForAmendment } from "./kernel/choice-a
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
 import { readChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 import { saveChoiceDraft, saveCurrentChoiceDraft } from "./kernel/choice-drafts.ts";
+import { reviseChoiceSnapshot } from "./kernel/choice-snapshot.ts";
 import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
@@ -25,6 +28,8 @@ const runtimeOptions = z.strictObject({
   databasePath: z.string().min(1),
   choiceEvaluators: choiceEvaluators.default([]),
   authorizeChoiceDraftAmendment: z.custom<AuthorizeChoiceDraftAmendment>(value => typeof value === "function").optional(),
+  authorizeChoiceSnapshotRevision: z.custom<AuthorizeChoiceSnapshotRevision>(value => typeof value === "function").optional(),
+  hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
   verifyOriginal: z.custom<VerifyOriginal>(value => typeof value === "function").optional(),
   authorizeConfirmationRecovery: z.custom<AuthorizeConfirmationRecovery>(value => typeof value === "function").optional(),
 });
@@ -36,6 +41,7 @@ const clock = () => new Date();
 
 export { LearningError };
 export { verifyActivityBindings } from "./kernel/activity-bindings.ts";
+export type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence };
 export type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDraftAmendmentScope };
 export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
 export type { ActivityBindingClaims } from "./contracts/activity-bindings.ts";
@@ -43,6 +49,7 @@ export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
+export { ChoiceSnapshotRevisionConflict } from "./kernel/choice-snapshot.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
@@ -96,6 +103,12 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     amendChoiceDraft(principal: ReviewerPrincipal, activityId: string, input: ChoiceDraftAmendmentInput) {
       return amendChoiceDraft(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId), choiceDraftAmendmentInput.parse(input),
         clock, settings.authorizeChoiceDraftAmendment);
+    },
+    reviseChoiceSnapshot(principal: ReviewerPrincipal, activityId: string, input: ChoiceSnapshotRevisionInput) {
+      return reviseChoiceSnapshot(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
+        choiceSnapshotRevisionInput.parse(input), clock, {
+          authorize: settings.authorizeChoiceSnapshotRevision, hasEvidence: settings.hasChoiceSnapshotEvidence,
+        });
     },
     confirmChoices(principal: StudentPrincipal, activityId: string, input: ChoiceConfirmationInput) {
       return confirmChoices(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),

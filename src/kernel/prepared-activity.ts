@@ -54,12 +54,16 @@ function requireNoLearningFacts(database: DatabaseSync, activityId: string) {
     SELECT 1
     WHERE EXISTS (SELECT 1 FROM works WHERE activity_id = ?)
        OR EXISTS (SELECT 1 FROM completions WHERE activity_id = ?)
+       OR EXISTS (
+         SELECT 1 FROM choice_snapshot_revisions r JOIN step_attempts s ON s.id = r.step_attempt_id
+         WHERE s.activity_id = ?
+       )
        OR EXISTS (SELECT 1 FROM step_attempts WHERE activity_id = ? AND ordinal > 0)
        OR EXISTS (
          SELECT 1 FROM submissions JOIN step_attempts ON submissions.step_attempt_id = step_attempts.id
          WHERE step_attempts.activity_id = ?
        )
-  `).get(activityId, activityId, activityId, activityId);
+  `).get(activityId, activityId, activityId, activityId, activityId);
   if (used) throw new LearningError(409, "ACTIVITY_ALREADY_STARTED");
 }
 

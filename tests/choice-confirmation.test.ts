@@ -230,6 +230,7 @@ test("重启按稳定操作找回同一事实，学生受限投影和宿主授�
     allowed = true;
     const recovered = restarted.recoverChoiceConfirmation(student, activityId, key);
     assert.deepEqual(recovered, { receipt, practice: { id: practiceId, version: 1 },
+      choiceDraftChangeCounts: [{ questionId: firstId, changeCount: 1 }, { questionId: secondId, changeCount: 0 }],
       confirmation: { kind: "choiceConfirmation", questions: input.questions.map(question => ({ ...question,
         choice: question.questionId === firstId ? "0" : null,
       })) },

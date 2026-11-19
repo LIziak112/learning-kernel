@@ -64,8 +64,9 @@ test("旧库仅恢复当前修订可证的最近操作，歧义由后续普通�
       DROP TABLE prepared_activity_version_changes;
       ALTER TABLE activities DROP COLUMN initial_prepared_step_attempt_id;
       ALTER TABLE activities DROP COLUMN initial_prepared_practice_version;
+      DROP TABLE choice_snapshot_revisions;
       DROP TABLE choice_draft_amendments;
-      DELETE FROM schema_migrations WHERE version IN (12, 13, 14);
+      DELETE FROM schema_migrations WHERE version IN (12, 13, 14, 15);
     `);
   }
   const reopened = openLearningRuntime({ databasePath: path });

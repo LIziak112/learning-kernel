@@ -55,6 +55,12 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         execFileSync(process.execPath, ["consumer.mts", host, phase], { cwd: directory, stdio: "inherit" });
       }
       const inputs = ["consumer.mts"];
+      const snapshot = "choice-snapshot-consumer.mts";
+      cpSync(new URL("./fixtures/choice-snapshot-consumer.mts", import.meta.url), join(directory, snapshot));
+      inputs.push(snapshot);
+      for (const phase of ["write", "recover"]) {
+        execFileSync(process.execPath, [snapshot, phase], { cwd: directory, stdio: "inherit" });
+      }
       const bindings = "activity-binding-consumer.mts";
       cpSync(new URL("./fixtures/activity-binding-consumer.mts", import.meta.url), join(directory, bindings));
       inputs.push(bindings);
@@ -67,6 +73,19 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
       }
       if (host === "library-club") {
         const run = promisify(execFile);
+        for (const contender of ["save", "confirm"]) {
+          execFileSync(process.execPath, [snapshot, "race-prepare", contender], { cwd: directory, stdio: "inherit" });
+          const outcomes = await Promise.allSettled(["race-revise", "race-contend"].map(phase =>
+            run(process.execPath, [snapshot, phase, contender], { cwd: directory })));
+          const [revision, contenderStatus] = outcomes.map(result => {
+            if (result.status === "rejected") throw result.reason;
+            return result.value.stdout.trim();
+          });
+          const cancelled = contender === "save" ? "ANSWER_REVISION_CONFLICT" : "ALREADY_SUBMITTED";
+          assert.ok((revision === "revised" && contenderStatus === "QUESTION_REVISION_STALE")
+            || (revision === cancelled && contenderStatus === "accepted"));
+          execFileSync(process.execPath, [snapshot, "race-recover", contender, revision], { cwd: directory, stdio: "inherit" });
+        }
         execFileSync(process.execPath, [prepare, host, "race-prepare"], { cwd: directory, stdio: "inherit" });
         const competed = await Promise.allSettled(["race-change", "race-save"].map(phase =>
           run(process.execPath, [prepare, host, phase], { cwd: directory })));

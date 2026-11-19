@@ -42,6 +42,7 @@ try {
     });
     assert.equal(recovered?.receipt.id, receipt.id);
     assert.deepEqual(recovered?.confirmation.questions.map(q => [q.revision, q.choice]), [[expectation, expectation ? "1" : null], [0, null]]);
+    assert.deepEqual(recovered?.choiceDraftChangeCounts, [{ questionId: "q1", changeCount: 0 }, { questionId: "q2", changeCount: 0 }]);
   } else if (phase === "write") {
     assert.equal("choiceDrafts" in runtime.read(student, opened.activityId), false);
     assert.deepEqual(amend(amendment), reply);

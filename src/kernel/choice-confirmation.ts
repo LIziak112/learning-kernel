@@ -3,6 +3,7 @@ import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
   ConfirmationScope, VerifyOriginal } from "../contracts/choice-confirmation.ts";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
+import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { ChoiceDraftConflict, readChoiceDrafts } from "./choice-drafts.ts";
@@ -64,7 +65,11 @@ export function recoverChoiceConfirmation(
     const { receipt, confirmation } = recovered;
     const { id, version } = activity.practice;
     const evaluation = recoverChoiceEvaluation(database, activity, receipt, confirmation, registered);
-    return { receipt, practice: { id, version }, confirmation, ...(evaluation ? { evaluation } : {}) };
+    const drafts = draftsByQuestion(database, activityId, receipt);
+    const choiceDraftChangeCounts = confirmation.questions.map(question => ({
+      questionId: question.questionId, changeCount: confirmedChangeCount(question, drafts.get(question.questionId)),
+    }));
+    return { receipt, practice: { id, version }, confirmation, choiceDraftChangeCounts, ...(evaluation ? { evaluation } : {}) };
   });
 }
 
@@ -81,19 +86,42 @@ function freezeAnswers(database: DatabaseSync, activity: ReadingActivity, input:
   if (selected.size !== frozen.length || selected.size !== input.questions.length) {
     throw new LearningError(422, "INVALID_QUESTION_SET");
   }
-  const drafts = new Map(readChoiceDrafts(database, activity.activityId, activity.stepAttemptId)
-    .filter(draft => draft.slotId === input.slotId).map(draft => [draft.questionId, draft]));
+  const heads = confirmationHeads(database, activity, input);
   return frozen.map(question => {
     const requested = selected.get(question.id);
     if (!requested) throw new LearningError(422, "INVALID_QUESTION_SET");
     if (requested.questionVersion !== question.version) throw new LearningError(409, "QUESTION_REVISION_STALE");
-    const current = drafts.get(question.id) ?? { revision: 0, choice: null };
+    const current = heads.get(question.id) ?? { revision: 0, choice: null };
     if (requested.revision !== current.revision) {
       throw new ChoiceConfirmationConflict(question.id, { revision: current.revision, choice: current.choice });
     }
     if (current.choice === null && !allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
     return { ...requested, choice: current.choice };
   });
+}
+
+function confirmationHeads(database: DatabaseSync, activity: ReadingActivity, input: ChoiceConfirmationInput) {
+  const heads = new Map<string, ChoiceDraftConflict["current"]>();
+  for (const { slotId, questionId, revision } of activity.choiceSnapshotRevisions) {
+    if (slotId === input.slotId) heads.set(questionId, { revision, choice: null });
+  }
+  for (const [questionId, draft] of draftsByQuestion(database, activity.activityId, input)) {
+    heads.set(questionId, draft);
+  }
+  return heads;
+}
+
+function draftsByQuestion(database: DatabaseSync, activityId: string, { stepAttemptId, slotId }: Pick<SubmissionReceipt, "stepAttemptId" | "slotId">) {
+  return new Map(readChoiceDrafts(database, activityId, stepAttemptId)
+    .filter(draft => draft.slotId === slotId).map(draft => [draft.questionId, draft]));
+}
+
+function confirmedChangeCount(question: ConfirmedQuestion, draft: ReturnType<typeof readChoiceDrafts>[number] | undefined) {
+  if (question.choice === null) return 0;
+  if (draft?.revision !== question.revision || draft.choice !== question.choice || draft.questionVersion !== question.questionVersion) {
+    throw new Error("已确认作答缺少对应的草稿版本");
+  }
+  return draft.changeCount;
 }
 
 function verifyOriginals(questions: ConfirmedQuestion[], scope: ConfirmationScope, slotId: string, verify?: VerifyOriginal) {

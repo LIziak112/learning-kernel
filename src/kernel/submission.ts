@@ -57,8 +57,10 @@ export function readActivity(database: DatabaseSync, student: string, activityId
   if (activity.kind === "reading") {
     const view = readingActivityView(database, activity, submissions);
     if (activity.completed) return view;
+    const { choiceSnapshotRevisions } = activity;
+    const active = choiceSnapshotRevisions.length > 0 ? { ...view, choiceSnapshotRevisions } : view;
     const choiceDrafts = readChoiceDrafts(database, activityId, activity.stepAttemptId);
-    return choiceDrafts.length > 0 ? { ...view, choiceDrafts } : view;
+    return choiceDrafts.length > 0 ? { ...active, choiceDrafts } : active;
   }
   const { kind, completed, ...previous } = activity;
   const view: ActivityDetail = {

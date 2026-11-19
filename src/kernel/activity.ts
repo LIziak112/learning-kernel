@@ -4,6 +4,7 @@ import { z } from "zod";
 import { materialSchema, practiceSchema, startReceipt } from "../contracts/reading.ts";
 import { readingPracticeSchema } from "../contracts/reading-publication.ts";
 import type { StartInput } from "../contracts/reading.ts";
+import { effectiveChoiceQuestions } from "./choice-snapshot-store.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 
@@ -140,7 +141,9 @@ export function loadActivity(database: DatabaseSync, student: string, activityId
     const step = practice.steps.find(step => step.id === stepId);
     if (!step) throw new Error("活动的步骤尝试找不到已发布步骤");
     const material = practice.material ? parseFrozenMaterial(materialJSON) : undefined;
-    return { kind: "reading" as const, ...common, material, practice, step, redoOf: redoOf ?? undefined,
+    const { questions, choiceSnapshotRevisions } = effectiveChoiceQuestions(database, receipt.stepAttemptId, practice.questions);
+    return { kind: "reading" as const, ...common, material, practice: { ...practice, questions }, step, choiceSnapshotRevisions,
+      redoOf: redoOf ?? undefined,
       practiceVersion: preparedPracticeVersion ?? undefined };
   }
   return { kind: "single" as const, ...common, material: parseFrozenMaterial(materialJSON), title: practice.title, step: practice.steps[0] };

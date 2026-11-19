@@ -77,14 +77,16 @@ const policy = z.strictObject({
   externalAi: z.literal("disabled"),
 });
 
+export const readingQuestion = z.strictObject({
+  id, version: versionRef.shape.version.optional(), prompt: nonempty, options: descriptions,
+});
+
 export const readingPracticeSchema = versionRef.extend({
   formatVersion: z.literal(1),
   title: nonempty,
   material: versionRef.optional(),
   goals: descriptions,
-  questions: z.array(z.strictObject({
-    id, version: versionRef.shape.version.optional(), prompt: nonempty, options: descriptions,
-  })).default([]),
+  questions: z.array(readingQuestion).default([]),
   steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
     selectionFeedback: z.strictObject({ from: slotReference, criterion: nonempty }).optional(),

@@ -6,6 +6,7 @@ import type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistratio
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { scoringKeySchema } from "../contracts/reading-publication.ts";
 import type { ReadingActivity } from "./activity.ts";
+import { revisedChoiceKey } from "./choice-snapshot-store.ts";
 import { recordEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { assessmentTarget, readAutomaticVerdicts } from "./verdict-state.ts";
@@ -30,7 +31,7 @@ export function recoverChoiceEvaluation(
       practice: { id: activity.practice.id, version: activity.practice.version },
     };
     const key = evaluationKey(database, receipt.id);
-    recordEvaluation(database, target, evaluateConfirmedChoices(evaluate, context, key, confirmation));
+    recordEvaluation(database, target, evaluateConfirmedChoices(database, evaluate, context, key, confirmation));
   }
   const automatic = new Map(readAutomaticVerdicts(database, target).map(({ questionId, correct }) => [questionId, correct]));
   const questions = confirmation.questions.map(({ questionId, questionVersion }) => ({
@@ -40,11 +41,11 @@ export function recoverChoiceEvaluation(
 }
 
 function evaluateConfirmedChoices(
-  evaluate: ChoiceEvaluator, context: Pick<ChoiceEvaluationInput, "activityId" | "stepAttemptId" | "slotId" | "practice">,
+  database: DatabaseSync, evaluate: ChoiceEvaluator, context: Pick<ChoiceEvaluationInput, "activityId" | "stepAttemptId" | "slotId" | "practice">,
   key: z.infer<typeof scoringKeySchema>, confirmation: ChoiceConfirmation,
 ) {
   return confirmation.questions.map(({ questionId, questionVersion, choice }) => {
-    const acceptedChoice = key.acceptedChoices[questionId];
+    const acceptedChoice = revisedChoiceKey(database, { ...context, questionId }, questionVersion) ?? key.acceptedChoices[questionId];
     if (acceptedChoice === undefined) throw new Error("冻结的评分键缺少题目");
     const correct = verdict.parse(evaluate({ ...context, practice: { ...context.practice }, questionId, questionVersion, choice, acceptedChoice }));
     return { questionId, correct };
