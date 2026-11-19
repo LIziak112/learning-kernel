@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { studentTool } from "../builtins/reading-capabilities.ts";
 import { selectedText } from "../builtins/selection.ts";
-import type { SubmitInput } from "../contracts/reading.ts";
+import type { ActivityDetail, SubmitInput } from "../contracts/reading.ts";
 import type { ReadingStep } from "../contracts/reading-publication.ts";
 import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
-import type { ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
+import type { ReadingAnswer, ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
@@ -131,21 +131,33 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
   const { activityId, stepAttemptId, startedAt, step, practice, completed } = activity;
   const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
   const materialBound = Object.values(step.inputs).some(input => input.from === "material");
+  const status: ActivityDetail["status"] = completed ? "completed" : "active";
   return {
     formatVersion: practice.formatVersion,
     activityId, stepAttemptId, startedAt, material: materialBound ? activity.material : undefined, redoOf: activity.redoOf,
     title: practice.title,
     step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },
-    status: completed ? "completed" : "active",
+    status,
     inputs: readingInputs(activity, submissions),
     submission: submitted ? studentSubmissionView(activity, submitted) : undefined,
     ...studentResults(database, activity),
   };
 }
 
+type StudentSubmissionView = {
+  receipt?: StoredSubmission["receipt"];
+  selection?: ReadingSelection;
+  answer?: Omit<ReadingAnswer, "references"> & { references?: ReadingAnswer["references"] };
+};
+
+type ReadingInputView =
+  | { from: "material"; positionId: string }
+  | { from: "questions"; questions: ReadingActivity["practice"]["questions"] }
+  | ({ from: "submission" } & StudentSubmissionView);
+
 function readingInputs(activity: ReadingActivity, submissions: StoredSubmission[]) {
   const { completed, practice, step } = activity;
-  return Object.fromEntries(Object.entries(step.inputs).flatMap<[string, object]>(([name, input]) => {
+  return Object.fromEntries(Object.entries(step.inputs).flatMap<[string, ReadingInputView]>(([name, input]) => {
     switch (input.from) {
       case "material": return [[name, { from: input.from, positionId: input.positionId }]];
       case "questions": return [[name, { from: input.from, questions: practice.questions }]];
@@ -159,7 +171,7 @@ function readingInputs(activity: ReadingActivity, submissions: StoredSubmission[
   }));
 }
 
-export function studentSubmissionView(activity: ReadingActivity, submitted: StoredSubmission) {
+export function studentSubmissionView(activity: ReadingActivity, submitted: StoredSubmission): StudentSubmissionView {
   const fields = new Set(activity.practice.policy.student.ownSubmission.fields);
   const view = readingSubmissionView(submitted);
   const receipt = fields.has("receipt") ? { receipt: view.receipt } : {};

@@ -31,6 +31,32 @@ pnpm run verify
 
 `pnpm run build` 编译服务端并将演示资源写入 `target/runtime/`。`node --test tests/reading-contrasts.test.ts` 一次构建后在同一产物上验证三个声明。仅运行该文件时使用开发段落安装的 Chromium。
 
+## 接入外部宿主
+
+在内核仓构建并打包服务端入口。交接时记录源码提交号和 `.tgz` 的 SHA-256。
+
+```sh
+pnpm run build target/host-package
+npm pack ./target/host-package --ignore-scripts --pack-destination ./target
+```
+
+宿主把同一份 `.tgz` 放入自己的受控交付目录，并将文件依赖及锁文件纳入交付。例如依赖放在 `vendor/` 时，可运行 `pnpm add ./vendor/learning-kernel-0.1.0.tgz`。宿主服务使用 Node 24.19.x，从包名导入公开入口，TypeScript 使用 `NodeNext` 模块解析。
+
+```ts
+import { openLearningRuntime } from "learning-kernel";
+
+const runtime = openLearningRuntime({ databasePath: "data/learning.sqlite" });
+runtime.publish(frozenPublication);
+
+const principal = { role: "student", id: currentStudentId } as const;
+const receipt = runtime.start(principal, { protocolVersion: 1, operationId, practiceId, practiceVersion });
+const activity = runtime.read(principal, receipt.activityId);
+```
+
+宿主在服务端确定发布内容，并在每次开卷和读取前验证当前身份及作业访问资格。`principal` 由通过验证的学生身份映射，开卷命令须指定已发布的练法版本。相同学生和操作标识重发同一开卷命令时取回原回执。以同一操作标识改用另一练法或版本会得到 `OPERATION_CONFLICT`。内核按活动归属及当前内核访问规则读取学生视图。宿主进程退出时调用 `runtime.close()`，重启后以同一文件库打开并通过原活动 ID 读取。
+
+`node --test tests/installed-runtime.test.ts` 在两个独立临时项目安装同一个固定包，通过包名开卷和读取，在新进程打开原库，并验证严格类型检查、冻结版本和学生隔离。
+
 ## 浏览器演示
 
 安装依赖后运行 `pnpm run dev`。学生和教师使用不同的浏览器配置，例如普通窗口与无痕窗口，以便同时保留两种会话。

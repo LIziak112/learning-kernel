@@ -7,7 +7,7 @@ import type { StartInput } from "../contracts/reading.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 
-const storedStart = startReceipt.extend({ practiceId: z.string(), redoOf: z.uuid().nullable() });
+const storedStart = startReceipt.extend({ practiceId: z.string(), practiceVersion: z.int(), redoOf: z.uuid().nullable() });
 const storedActivity = startReceipt.extend({
   stepId: z.string(),
   materialJSON: z.string(),
@@ -20,21 +20,25 @@ const publishedPractice = z.union([practiceSchema, readingPracticeSchema]);
 export type ReadingActivity = Extract<ReturnType<typeof loadActivity>, { kind: "reading" }>;
 
 export function startActivity(
-  database: DatabaseSync, student: string, input: StartInput, clock: () => Date, assignedReviewer?: string,
+  database: DatabaseSync, student: string, input: StartInput & { practiceVersion?: number }, clock: () => Date, assignedReviewer?: string,
 ) {
   return writeTransaction(database, () => {
-    const existing = recoverStart(database, student, input.operationId);
+    const { practiceId, practiceVersion, operationId } = input;
+    const existing = recoverStart(database, student, operationId);
     if (existing) {
-      if (existing.practiceId !== input.practiceId || existing.redoOf) throw new LearningError(409, "OPERATION_CONFLICT");
+      if (existing.practiceId !== practiceId || existing.redoOf
+        || (practiceVersion !== undefined && existing.practiceVersion !== practiceVersion)) {
+        throw new LearningError(409, "OPERATION_CONFLICT");
+      }
       return existing.receipt;
     }
 
     const published = database.prepare(`
-      SELECT definition FROM practices WHERE id = ? ORDER BY version DESC LIMIT 1
-    `).get(input.practiceId);
+      SELECT definition FROM practices WHERE id = ? AND version = COALESCE(?, version) ORDER BY version DESC LIMIT 1
+    `).get(practiceId, practiceVersion ?? null);
     if (!published) throw new LearningError(404, "PRACTICE_NOT_FOUND");
     const practice = publishedPractice.parse(JSON.parse(String(published.definition)));
-    return createActivity(database, student, practice, input.operationId, clock(), assignedReviewer);
+    return createActivity(database, student, practice, operationId, clock(), assignedReviewer);
   });
 }
 
@@ -58,14 +62,15 @@ export function redoActivity(database: DatabaseSync, student: string, sourceId: 
 
 function recoverStart(database: DatabaseSync, student: string, operationId: string) {
   const row = database.prepare(`
-    SELECT a.id AS activityId, s.id AS stepAttemptId, a.started_at AS startedAt, a.practice_id AS practiceId, a.redo_of AS redoOf
+    SELECT a.id AS activityId, s.id AS stepAttemptId, a.started_at AS startedAt, a.practice_id AS practiceId,
+      a.practice_version AS practiceVersion, a.redo_of AS redoOf
     FROM activities a JOIN step_attempts s ON s.activity_id = a.id
     WHERE a.student_id = ? AND a.start_operation_id = ? ORDER BY s.ordinal LIMIT 1
   `).get(student, operationId);
   if (!row) return undefined;
-  const { practiceId, redoOf, ...receipt } = storedStart.parse(row);
+  const { practiceId, practiceVersion, redoOf, ...receipt } = storedStart.parse(row);
   requireStudentRecord(database, receipt.activityId);
-  return { practiceId, redoOf, receipt };
+  return { practiceId, practiceVersion, redoOf, receipt };
 }
 
 function createActivity(

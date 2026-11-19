@@ -3,6 +3,7 @@
   "compilerOptions": {
     "noEmit": false,
     "noEmitOnError": true,
+    "declaration": true,
     "rewriteRelativeImportExtensions": true,
     "rootDir": "."
   },
