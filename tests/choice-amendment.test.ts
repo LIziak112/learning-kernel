@@ -23,8 +23,8 @@ const secondId = second.id;
 const originalTime = "2026-11-18T00:00:01.000Z";
 const studentTime = "2026-11-18T00:00:02.000Z";
 
-function withoutCurrent(code: string) {
-  return (error: unknown) => error instanceof LearningError && error.status === 409 && error.code === code && !("current" in error);
+function withoutCurrent(code: string, status = 409) {
+  return (error: unknown) => error instanceof LearningError && error.status === status && error.code === code && !("current" in error);
 }
 
 test("授权教师修正冻结题，独立计量学生操作，失败一起回滚", t => {
@@ -45,12 +45,15 @@ test("授权教师修正冻结题，独立计量学生操作，失败一起回�
     const command: ChoiceDraftAmendmentInput = { ...scope, choice: "1", operationId: "teacher-first", baseRevision: 0, reason: "修正记录" };
     const read = () => runtime.readChoiceDraftForAmendment(teacher, activityId, scope);
     const amend = (input: ChoiceDraftAmendmentInput) => runtime.amendChoiceDraft(teacher, activityId, input);
-    const forbidden = { status: 403, code: "FORBIDDEN" };
+    const forbidden = withoutCurrent("FORBIDDEN", 403);
+    assert.doesNotThrow(read);
     assert.deepEqual(read(), { slotId: "answers", questionId: firstId, questionVersion: 1, choice: null, revision: 0, changeCount: 0 });
     assert.deepEqual(checked[0], { ...frozenScope, action: "read", activityId, reviewerId: teacher.id, studentId: student.id });
     assert.throws(() => runtime.readChoiceDraftForAmendment({ ...teacher, id: "another-teacher" }, activityId, scope), forbidden);
     assert.throws(() => Reflect.apply(runtime.amendChoiceDraft, runtime, [student, activityId, command]), forbidden);
-    assert.throws(() => runtime.readChoiceDraftForAmendment(teacher, "44013db3-a699-4c33-ba0f-9cb8e0c239dd", scope), forbidden);
+    const nonexistent = "44013db3-a699-4c33-ba0f-9cb8e0c239dd";
+    assert.throws(() => runtime.readChoiceDraftForAmendment(teacher, nonexistent, scope), forbidden);
+    assert.throws(() => amend({ ...command, stepAttemptId: nonexistent }), forbidden);
     assert.throws(() => amend({ ...command, reason: " " }), ZodError);
     assert.throws(() => amend({ ...command, choice: "invalid" }), { status: 422, code: "INVALID_CHOICE" });
     assert.throws(() => amend({ ...command, questionVersion: 2 }), withoutCurrent("QUESTION_REVISION_STALE"));
@@ -61,6 +64,7 @@ test("授权教师修正冻结题，独立计量学生操作，失败一起回�
       denied.close();
     }
 
+    assert.doesNotThrow(() => amend(command));
     const first = amend(command);
     assert.deepEqual(checked.at(-1), { ...frozenScope, action: "amend", activityId, reviewerId: teacher.id, studentId: student.id });
     assert.deepEqual(read(), first);
@@ -103,6 +107,22 @@ test("授权教师修正冻结题，独立计量学生操作，失败一起回�
       [teacher.id, "teacher-first", "修正记录", originalTime],
       [teacher.id, "teacher-same", "修正记录", originalTime],
     ]);
+
+    const amendmentAfterStudent = amend({ ...command, operationId: "teacher-after-student", baseRevision: 3 });
+    assert.deepEqual([amendmentAfterStudent.choice, amendmentAfterStudent.revision, amendmentAfterStudent.changeCount], ["1", 4, 1]);
+    assert.deepEqual(runtime.saveChoiceDraft(student, activityId, studentWrite), saved);
+    assert.throws(() => runtime.saveCurrentChoiceDraft(student, activityId, { ...studentWrite, choice: "1" }, "replayLatestOnly"),
+      { code: "DRAFT_REPLAY_REQUIRED" });
+    assert.deepEqual(runtime.readChoiceDraftActivity(student, activityId), times);
+
+    const studentRevoked = startActivity(database, student.id, { ...open, operationId: "revoked" }, () => new Date(), teacher.id);
+    const beforeRevocation = { ...command, stepAttemptId: studentRevoked.stepAttemptId };
+    runtime.amendChoiceDraft(teacher, studentRevoked.activityId, beforeRevocation);
+    assert.deepEqual(manageReading(database, teacher.id, studentRevoked.activityId, "revokeStudent"), { studentActive: false });
+    assert.throws(() => runtime.readChoiceDraftForAmendment(teacher, studentRevoked.activityId, {
+      ...scope, stepAttemptId: studentRevoked.stepAttemptId,
+    }), forbidden);
+    assert.throws(() => runtime.amendChoiceDraft(teacher, studentRevoked.activityId, beforeRevocation), forbidden);
 
     allow = false;
     assert.throws(read, forbidden);
