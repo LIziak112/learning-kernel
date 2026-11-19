@@ -30,6 +30,8 @@ const uuid = z.uuid();
 const clock = () => new Date();
 
 export { LearningError };
+export { verifyActivityBindings } from "./kernel/activity-bindings.ts";
+export type { ActivityBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";

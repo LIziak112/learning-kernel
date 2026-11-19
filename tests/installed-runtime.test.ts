@@ -55,6 +55,10 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         execFileSync(process.execPath, ["consumer.mts", host, phase], { cwd: directory, stdio: "inherit" });
       }
       const inputs = ["consumer.mts"];
+      const bindings = "activity-binding-consumer.mts";
+      cpSync(new URL("./fixtures/activity-binding-consumer.mts", import.meta.url), join(directory, bindings));
+      inputs.push(bindings);
+      execFileSync(process.execPath, [bindings], { cwd: directory, stdio: "inherit" });
       const prepare = "prepared-version-consumer.mts";
       cpSync(new URL("./fixtures/prepared-version-consumer.mts", import.meta.url), join(directory, prepare));
       inputs.push(prepare);
