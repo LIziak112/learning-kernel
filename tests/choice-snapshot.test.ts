@@ -47,7 +47,7 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
     const { activityId, stepAttemptId } = runtime.prepare(student, opening);
     const scope = { protocolVersion: 1, stepAttemptId, slotId: "answers", questionId: firstId, questionVersion: 1 } as const;
     const correction: ChoiceSnapshotRevisionInput = { ...scope, operationId: "amend", baseRevision: 0,
-      prompt: "勘误后的题面", options: { "0": "错误项", "1": "正确项" }, acceptedChoice: "1", reason: "勘误公开题面与私钥",
+      prompt: "勘误后的题面", options: { "0": "正确项", "1": "错误项" }, acceptedChoice: "0", reason: "勘误公开题面与私钥",
     };
     const revise = (input: ChoiceSnapshotRevisionInput) => runtime.reviseChoiceSnapshot(teacher, activityId, input);
     const denied = (error: unknown) => error instanceof LearningError && error.status === 403 && !("current" in error);
@@ -62,6 +62,11 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
     }
     assert.throws(() => revise({ ...correction, slotId: "different" }), { code: "INVALID_SLOT" });
     assert.throws(() => revise({ ...correction, acceptedChoice: "unknown" }), { code: "INVALID_CHOICE" });
+    const unscored = "unscored-choices";
+    runtime.publish({ practice: { ...publication.practice, id: unscored, grading: {} } });
+    const otherSlot = runtime.start(student, { ...opening, practiceId: unscored, operationId: "unscored" });
+    assert.throws(() => runtime.reviseChoiceSnapshot(teacher, otherSlot.activityId, { ...correction, stepAttemptId: otherSlot.stepAttemptId }),
+      { code: "INVALID_SLOT" });
     external = true;
     assert.throws(() => revise(correction), { code: "RESPONSE_EVIDENCE_EXISTS" });
     external = false;
@@ -90,7 +95,7 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
     const revisedScope = { ...scope, questionVersion: 2 };
     const empty = runtime.readChoiceDraftForAmendment(teacher, activityId, revisedScope);
     assert.deepEqual([empty.revision, empty.choice, empty.changeCount], [1, null, 0]);
-    const teacherAnswer = { ...revisedScope, choice: "1", baseRevision: 1, operationId: "answer", reason: "修正录入" };
+    const teacherAnswer = { ...revisedScope, choice: "0", baseRevision: 1, operationId: "answer", reason: "修正录入" };
     const answered = runtime.amendChoiceDraft(teacher, activityId, teacherAnswer);
     assert.deepEqual([answered.revision, answered.changeCount], [2, 0]);
     assert.deepEqual(runtime.amendChoiceDraft(teacher, activityId, teacherAnswer), answered);

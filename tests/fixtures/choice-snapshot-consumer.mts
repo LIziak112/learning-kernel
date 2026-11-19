@@ -76,7 +76,7 @@ function execute() {
     }
     if (phase === "race-contend") {
       const contend = race === "save"
-        ? () => runtime.saveChoiceDraft(author, mine.activityId, selection(mine.stepAttemptId))
+        ? () => runtime.saveCurrentChoiceDraft(author, mine.activityId, selection(mine.stepAttemptId))
         : () => confirm(author, mine, 4, 0);
       console.log(compete(contend, "accepted", "QUESTION_REVISION_STALE"));
       return;
@@ -119,8 +119,10 @@ function execute() {
     assert.deepEqual(mineView.choiceSnapshotRevisions, [{ slotId: "choices", questionId: "first", questionVersion: 6, revision: 2 }]);
     assert.doesNotMatch(JSON.stringify(mineView), /acceptedChoice|scoringKey|Correct a typo/);
     assert.throws(() => runtime.saveChoiceDraft(author, mine.activityId, selection(mine.stepAttemptId)), { code: "QUESTION_REVISION_STALE" });
-    const chosen = runtime.saveChoiceDraft(author, mine.activityId, { ...selection(mine.stepAttemptId), questionVersion: 6, baseRevision: 2 });
+    const intent = { ...selection(mine.stepAttemptId), questionVersion: 6, baseRevision: 2 };
+    const chosen = runtime.saveCurrentChoiceDraft(author, mine.activityId, intent);
     assert.deepEqual([chosen.revision, chosen.changeCount], [3, 1]);
+    assert.deepEqual(runtime.saveChoiceDraft(author, mine.activityId, intent), chosen);
 
     runtime.saveChoiceDraft(peer, other.activityId, selection(other.stepAttemptId, "second"));
     runtime.saveChoiceDraft(peer, other.activityId, selection(other.stepAttemptId));
