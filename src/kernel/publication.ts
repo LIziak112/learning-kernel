@@ -17,9 +17,7 @@ export function registerPublication(database: DatabaseSync, input: unknown) {
   const { material, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
     ? validatedReading.parse(input)
     : { ...publicationSchema.parse(input), scoringKey: undefined };
-  if (practice.material?.id !== material?.id || practice.material?.version !== material?.version) {
-    throw new Error("练法引用的材料版本与发布材料不一致");
-  }
+  requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);
   writeTransaction(database, () => {
     if (material) {
@@ -44,6 +42,12 @@ export function registerPublication(database: DatabaseSync, input: unknown) {
       requireUnchanged(database, "scoring_keys", scoringKey, definition);
     }
   });
+}
+
+function requireMatchingMaterial(reference: VersionRef | undefined, material: VersionRef | undefined) {
+  if (reference?.id !== material?.id || reference?.version !== material?.version) {
+    throw new Error("练法引用的材料版本与发布材料不一致");
+  }
 }
 
 function requireUnchanged(

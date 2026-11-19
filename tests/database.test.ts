@@ -63,6 +63,18 @@ test("保留 T01 已应用的迁移记录并拒绝比程序新的数据库版本
   assert.deepEqual(migrationState(reopened).versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
 
+test("空迁移记录与版本 0 均拒绝升级且保留原记录", t => {
+  for (const version of [null, 0]) {
+    const path = temporaryDatabasePath(t);
+    using original = new DatabaseSync(path);
+    original.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY) STRICT");
+    if (version !== null) original.prepare("INSERT INTO schema_migrations (version) VALUES (?)").run(version);
+    assert.throws(() => openDatabase(path), { message: `不支持的数据库版本：${version}` });
+    assert.deepEqual(migrationState(original).versions, version === null ? [] : [version]);
+    assert.equal(original.prepare("SELECT name FROM sqlite_schema WHERE name = 'practices'").get(), undefined);
+  }
+});
+
 test("从 T03 版本迁移时原样保留发布、活动和已有表现标识", t => {
   const path = temporaryDatabasePath(t);
   const activityId = randomUUID();

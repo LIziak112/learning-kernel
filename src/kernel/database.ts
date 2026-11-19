@@ -71,9 +71,11 @@ function migrate(database: DatabaseSync) {
     `);
   }
   const { version } = migrationVersion.parse(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get());
-  if (version === null || version < 1 || version > migrations.length + 1) {
+  const latestVersion = migrations.length + 1;
+  if (version === null || version < 1 || version > latestVersion) {
     throw new Error(`不支持的数据库版本：${String(version)}`);
   }
+  if (version === latestVersion) return;
   const record = database.prepare("INSERT INTO schema_migrations (version) VALUES (?)");
   for (const [index, sql] of migrations.entries()) {
     const nextVersion = index + 2;
@@ -81,7 +83,5 @@ function migrate(database: DatabaseSync) {
     database.exec(sql);
     record.run(nextVersion);
   }
-  if (version < migrations.length + 1 && database.prepare("PRAGMA foreign_key_check").get()) {
-    throw new Error("数据库迁移后的外键检查失败");
-  }
+  if (database.prepare("PRAGMA foreign_key_check").get()) throw new Error("数据库迁移后的外键检查失败");
 }

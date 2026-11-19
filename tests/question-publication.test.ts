@@ -108,3 +108,27 @@ test("材料依赖和发布定义必须成对且版本一致，失败不留下�
     runtime.close();
   }
 });
+
+test("活动的真实材料记录断开时公开读入口拒绝返回题面", t => {
+  const path = scenarioDatabase(t);
+  let activityId: string;
+  const runtime = openLearningRuntime({ databasePath: path });
+  try {
+    runtime.publish({ ...candidate, material: reading.material,
+      practice: { ...candidate.practice, material: reading.practice.material },
+    });
+    activityId = runtime.start(student, open).activityId;
+  } finally {
+    runtime.close();
+  }
+  {
+    using broken = new DatabaseSync(path, { enableForeignKeyConstraints: false });
+    broken.prepare("DELETE FROM materials WHERE id = ? AND version = ?").run(reading.material.id, reading.material.version);
+  }
+  const reopened = openLearningRuntime({ databasePath: path });
+  try {
+    assert.throws(() => reopened.read(student, activityId), /活动引用的已发布材料不存在/);
+  } finally {
+    reopened.close();
+  }
+});
