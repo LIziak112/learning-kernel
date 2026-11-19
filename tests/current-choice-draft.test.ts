@@ -71,7 +71,7 @@ test("旧库仅恢复当前修订可证的最近操作，歧义由后续普通�
     const replay = (input: ChoiceDraftInput) => reopened.saveCurrentChoiceDraft(owner, activityId, input, "replayLatestOnly");
     const times = reopened.readChoiceDraftActivity(owner, activityId);
     assert.throws(() => replay(a), deny("DRAFT_REPLAY_REQUIRED"));
-    assert.equal(replay({ ...b, baseRevision: 99 }).revision, 2);
+    assert.doesNotThrow(() => assert.equal(replay({ ...b, baseRevision: 99 }).revision, 2));
     assert.throws(() => replay(otherA), deny("DRAFT_REPLAY_REQUIRED"));
     assert.throws(() => replay(otherB), deny("DRAFT_REPLAY_REQUIRED"));
     const exact = reopened.saveChoiceDraft(owner, activityId, otherA);
@@ -118,14 +118,14 @@ test("混用保留盲写接管和原回执，写入最近操作失败时稿、�
     assert.deepEqual(runtime.readChoiceDraftActivity(owner, activityId), { firstChangedAt: time(1), lastChangedAt: time(1) });
     const second = runtime.saveChoiceDraft(owner, activityId, b);
     assert.equal(second.revision, 3);
-    assert.deepEqual(replay(b), second);
-    assert.deepEqual(runtime.saveChoiceDraft(owner, activityId, a), first);
+    assert.doesNotThrow(() => assert.deepEqual(replay(b), second));
+    assert.doesNotThrow(() => assert.deepEqual(runtime.saveChoiceDraft(owner, activityId, a), first));
     assert.throws(() => replay(a), deny("DRAFT_REPLAY_REQUIRED"));
     at(3);
     database.exec(`CREATE TRIGGER reject_latest_operation BEFORE UPDATE ON choice_draft_latest_operations
       BEGIN SELECT RAISE(ABORT, 'latest operation unavailable'); END`);
     assert.throws(() => runtime.saveCurrentChoiceDraft(owner, activityId, c), /latest operation unavailable/);
-    assert.deepEqual(replay(b), second);
+    assert.doesNotThrow(() => assert.deepEqual(replay(b), second));
     assert.throws(() => replay(c), deny("DRAFT_REPLAY_REQUIRED"));
     const view = runtime.read(owner, activityId);
     assert.ok("choiceDrafts" in view);
@@ -140,7 +140,7 @@ test("混用保留盲写接管和原回执，写入最近操作失败时稿、�
     assert.deepEqual([third.revision, third.choice], [4, "2"]);
     assert.deepEqual(replay(c), third);
     assert.throws(() => replay({ ...c, choice: "1" }), conflict(4, "2"));
-    assert.deepEqual(runtime.saveChoiceDraft(owner, activityId, a), first);
+    assert.doesNotThrow(() => assert.deepEqual(runtime.saveChoiceDraft(owner, activityId, a), first));
     assert.throws(() => runtime.saveChoiceDraft(owner, activityId, c), { code: "OPERATION_CONFLICT" });
     assert.deepEqual(runtime.readChoiceDraftActivity(owner, activityId), { firstChangedAt: time(1), lastChangedAt: time(4) });
     assert.deepEqual(manageReading(database, "teacher", activityId, "revokeStudent"), { studentActive: false });
