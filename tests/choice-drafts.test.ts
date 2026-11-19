@@ -35,9 +35,9 @@ function denial(status: number, code: string) {
   return (error: unknown) => error instanceof LearningError && error.status === status && error.code === code && !("current" in error);
 }
 
-function conflict(revision: number, choice: string | null) {
+function conflict(revision: number, choice: string | null, code = "ANSWER_REVISION_CONFLICT") {
   return (error: unknown) => {
-    assert.ok(error instanceof ChoiceDraftConflict && error.status === 409 && error.code === "ANSWER_REVISION_CONFLICT");
+    assert.ok(error instanceof ChoiceDraftConflict && error.status === 409 && error.code === code);
     assert.deepEqual(error.current, { revision, choice });
     return true;
   };
@@ -73,16 +73,19 @@ test("分题改稿、陈旧相同答案收敛与原操作重发共享同一冻�
 
     const revision1 = save(first);
     assert.deepEqual(revision1, { slotId: first.slotId, questionId, questionVersion, choice: "0", revision: 1, changeCount: 1 });
+    assert.throws(() => save({ ...first, choice: "2" }), conflict(1, "0", "OPERATION_CONFLICT"));
     const revision2 = save({ ...first, operationId: "second", baseRevision: 1, choice: "1" });
     assert.deepEqual(revision2, { ...revision1, choice: "1", revision: 2, changeCount: 2 });
     assert.deepEqual(save(first), revision1);
-    assert.throws(() => save({ ...first, choice: "1" }), denial(409, "OPERATION_CONFLICT"));
-    assert.throws(() => save({ ...first, baseRevision: 2 }), denial(409, "OPERATION_CONFLICT"));
+    assert.throws(() => runtime.saveChoiceDraft(other, activityId, { ...first, choice: "2" }), denial(403, "FORBIDDEN"));
+    assert.throws(() => save({ ...first, choice: "1" }), conflict(2, "1", "OPERATION_CONFLICT"));
+    assert.throws(() => save({ ...first, baseRevision: 2 }), conflict(2, "1", "OPERATION_CONFLICT"));
     assert.throws(() => save({ ...first, questionVersion: first.questionVersion + 1 }), denial(409, "OPERATION_CONFLICT"));
     assert.throws(() => save({ ...first, operationId: "stale", choice: "2" }), conflict(2, "1"));
     const converging = { ...first, operationId: "converging", choice: "1" };
     assert.deepEqual(save(converging), revision2);
     assert.deepEqual(save(converging), revision2);
+    assert.throws(() => save({ ...converging, choice: "0" }), conflict(2, "1", "OPERATION_CONFLICT"));
     const revisionOther = save({ ...first, questionId: otherQuestionId, questionVersion: otherQuestionVersion });
     assert.deepEqual(revisionOther, { ...revision1, questionId: otherQuestionId, questionVersion: otherQuestionVersion });
     assert.deepEqual(counts(database), [2, 3, 4, 0, 0, 0]);

@@ -147,6 +147,12 @@ try {
     } else {
       assert.equal(phase, "parallel-recover");
       assert.equal(runtime.saveChoiceDraft(owner, receipt.activityId, { ...first, operationId: "convergence", choice: "1" }).revision, 2);
+      assert.throws(() => runtime.saveChoiceDraft(owner, receipt.activityId, { ...first, operationId: "draft-1", choice: "1" }), error => {
+        assert.ok(error instanceof ChoiceDraftConflict);
+        assert.equal(error.code, "OPERATION_CONFLICT");
+        assert.deepEqual(error.current, { revision: 3, choice: "2" });
+        return true;
+      });
       assert.deepEqual(readDrafts(receipt.activityId).map(({ questionId, revision, choice }) => [questionId, revision, choice]),
         [["q1", 3, "2"], ["q2", 1, "0"]]);
     }

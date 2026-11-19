@@ -12,8 +12,8 @@ import { saveWorkVersion } from "./work-versions.ts";
 export class ChoiceDraftConflict extends LearningError {
   readonly current: Readonly<{ revision: number; choice: string | null }>;
 
-  constructor(current: ChoiceDraftConflict["current"]) {
-    super(409, "ANSWER_REVISION_CONFLICT");
+  constructor(current: ChoiceDraftConflict["current"], code: "ANSWER_REVISION_CONFLICT" | "OPERATION_CONFLICT" = "ANSWER_REVISION_CONFLICT") {
+    super(409, code);
     this.current = current;
   }
 }
@@ -70,8 +70,11 @@ function recoverOperation(database: DatabaseSync, activityId: string, input: Cho
   if (!row) return undefined;
   const { baseRevision, ...stored } = storedOperation.parse(row);
   const draft = decodeChoice(stored);
-  if (baseRevision !== input.baseRevision || draft.questionVersion !== input.questionVersion || draft.choice !== input.choice) {
-    throw new LearningError(409, "OPERATION_CONFLICT");
+  if (draft.questionVersion !== input.questionVersion) throw new LearningError(409, "OPERATION_CONFLICT");
+  if (baseRevision !== input.baseRevision || draft.choice !== input.choice) {
+    const current = readChoiceHead(database, activityId, input);
+    if (current?.questionVersion !== input.questionVersion) throw new LearningError(409, "OPERATION_CONFLICT");
+    throw new ChoiceDraftConflict({ revision: current.revision, choice: current.choice }, "OPERATION_CONFLICT");
   }
   return draft;
 }
@@ -88,11 +91,15 @@ function requireWritableQuestion(activity: ReadingActivity, input: ChoiceDraftIn
   if (!Object.hasOwn(question.options, input.choice)) throw new LearningError(422, "INVALID_CHOICE");
 }
 
-function writeChoice(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
-  const { stepAttemptId, slotId, questionId, questionVersion, choice } = input;
+function readChoiceHead(database: DatabaseSync, activityId: string, { stepAttemptId, slotId, questionId }: ChoiceDraftInput) {
   const row = database.prepare(currentDrafts + "AND w.slot_id = ? AND w.question_id = ?")
     .get(activityId, stepAttemptId, slotId, questionId);
-  const current = row && decodeChoice(storedVersion.parse(row));
+  return row && decodeChoice(storedVersion.parse(row));
+}
+
+function writeChoice(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
+  const { stepAttemptId, slotId, questionId, questionVersion, choice } = input;
+  const current = readChoiceHead(database, activityId, input);
   if (current?.choice === choice) return current;
   const state = current ?? { revision: 0, choice: null };
   const { revision, choice: currentChoice } = state;
