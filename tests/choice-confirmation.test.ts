@@ -4,8 +4,10 @@ import { test } from "node:test";
 import { ZodError } from "zod";
 import { startActivity } from "../src/kernel/activity.ts";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { readReview } from "../src/kernel/review.ts";
 import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
+import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { ChoiceConfirmationConflict, LearningError, openLearningRuntime } from "../src/server.ts";
 import type { ChoiceConfirmationInput, PublicationInput, VerifyOriginal } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
@@ -88,6 +90,7 @@ test("确认有答、部分答、全空三卷并保留全题分母、四类原�
       { choices: ["1", null], states: [originals.missing, originals.uncollected] },
       { choices: [null, null], states: [originals.none, originals.none] },
     ] as const;
+    using database = new DatabaseSync(path);
     for (const [i, sample] of samples.entries()) {
       const { activityId, stepAttemptId } = runtime.start(student, { ...open, operationId: `open-${i}` });
       const revisions = sample.choices.map((choice, index) => choice === null ? 0 :
@@ -108,8 +111,10 @@ test("确认有答、部分答、全空三卷并保留全题分母、四类原�
         kind: "choiceConfirmation", questions: input.questions.map((question, index) => ({ ...question, choice: sample.choices[index] })),
       } });
       assert.doesNotMatch(JSON.stringify(view), /acceptedChoices|scoringKey|gradingBasis/);
+      const units = database.prepare("SELECT unit_id FROM performances WHERE submission_id = ? ORDER BY unit_id").all(receipt.id);
+      assert.deepEqual(units.map(row => row.unit_id), input.questions.flatMap(({ questionId }, index) =>
+        sample.choices[index] === null ? [] : [`question:${questionId}`]).toSorted());
     }
-    using database = new DatabaseSync(path);
     evaluatePending(database);
     assert.deepEqual(facts(database), [6, 6, 3, 3, 3, 3, 0, 0]);
   } finally {
@@ -135,13 +140,14 @@ test("版本、题集合或原稿失配时整单回滚，旧整步写和内置�
     assert.equal(save(runtime, activityId, stepAttemptId, firstId, "1").revision, 1);
     using database = new DatabaseSync(path);
     const baseline = facts(database);
-    for (const questions of [[intent(stepAttemptId, [1, 0]).questions[0]], [intent(stepAttemptId, [1, 0]).questions[0],
-      intent(stepAttemptId, [1, 0]).questions[0]]]) {
-      const request = intent(stepAttemptId, [1, 0]);
-      assert.throws(() => Reflect.apply(runtime.confirmChoices, runtime, [student, activityId, { ...request, questions }]),
-        denial(422, "INVALID_QUESTION_SET"));
-    }
     const request = intent(stepAttemptId, [1, 0]);
+    const sibling = runtime.start(student, { ...open, operationId: "sibling" });
+    assert.throws(() => runtime.confirmChoices(student, activityId, { ...request, stepAttemptId: sibling.stepAttemptId }), denial(403, "FORBIDDEN"));
+    const [first, second] = request.questions;
+    assert.ok(first && second);
+    for (const questions of [[first], [first, first], [first, second, first]]) {
+      assert.throws(() => runtime.confirmChoices(student, activityId, { ...request, questions }), denial(422, "INVALID_QUESTION_SET"));
+    }
     assert.throws(() => runtime.confirmChoices(student, activityId, { ...request,
       questions: request.questions.map(question => question.questionId === firstId ? { ...question, questionId: "unrelated" } : question),
     }), denial(422, "INVALID_QUESTION_SET"));
@@ -186,7 +192,11 @@ test("重启按稳定操作找回同一事实，学生受限投影和宿主授�
   let receipt: ReturnType<ReturnType<typeof openLearningRuntime>["confirmChoices"]>;
   const runtime = openLearningRuntime({ databasePath: path, verifyOriginal: () => true });
   try {
-    runtime.publish(declaration(true, false));
+    const restrictedPublication = declaration(true, false);
+    const { practice } = restrictedPublication;
+    runtime.publish({ practice: { ...practice, policy: { ...practice.policy,
+      reviewer: { ...practice.policy.reviewer, fields: ["studentChoices"] },
+    } } });
     using database = new DatabaseSync(path);
     const started = startActivity(database, student.id, open, () => new Date(), "teacher");
     activityId = started.activityId;
@@ -200,6 +210,11 @@ test("重启按稳定操作找回同一事实，学生受限投影和宿主授�
     assert.deepEqual(restricted.submission, { receipt });
     assert.equal("choiceDrafts" in restricted, false);
     assert.doesNotMatch(JSON.stringify(restricted), /choiceDrafts|confirmation|sealed-first|paper-snapshot|acceptedChoices/);
+    assert.deepEqual(readReview(database, "teacher", activityId).submissions,
+      [{ receipt, answer: { choices: { [firstId]: "0" }, references: {} } }]);
+    const confirmedWork = database.prepare("SELECT work_id FROM submissions WHERE id = ?").get(receipt.id)?.work_id;
+    assert.ok(typeof confirmedWork === "string");
+    assert.throws(() => readPersonalDraft(database, student.id, confirmedWork), denial(403, "FORBIDDEN"));
     assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, inputKey(input)), denial(403, "FORBIDDEN"));
   } finally {
     runtime.close();
@@ -224,6 +239,7 @@ test("重启按稳定操作找回同一事实，学生受限投影和宿主授�
         questions: input.questions.map(question => question.questionId === secondId ? { ...question, original } : question),
       }), denial(409, "OPERATION_CONFLICT"));
     }
+    assert.throws(() => restarted.confirmChoices(student, activityId, { ...input, slotId: "other" }), denial(409, "OPERATION_CONFLICT"));
     assert.throws(() => restarted.confirmChoices(student, activityId, { ...input, operationId: "duplicate" }), denial(409, "ALREADY_SUBMITTED"));
     assert.throws(() => restarted.recoverChoiceConfirmation(other, activityId, key), denial(403, "FORBIDDEN"));
     using database = new DatabaseSync(path);
@@ -248,6 +264,15 @@ test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐�
     runtime.publish(frozenChoicePublication);
     const old = runtime.start(student, open);
     assert.throws(() => runtime.confirmChoices(student, old.activityId, intent(old.stepAttemptId, [0, 0])), denial(422, "INVALID_SLOT"));
+    using database = new DatabaseSync(path);
+    const legacy = saveDraft(database, student.id, old.activityId, {
+      protocolVersion: 1, stepAttemptId: old.stepAttemptId, slotId: "answers", choices: { [firstId]: "1", [secondId]: "0" }, references: {},
+    });
+    submitDraft(database, student.id, old.activityId, {
+      protocolVersion: 1, stepAttemptId: old.stepAttemptId, operationId: "confirm", slotId: "answers", draft: legacy.draft,
+    }, () => new Date());
+    assert.throws(() => runtime.confirmChoices(student, old.activityId, intent(old.stepAttemptId, [0, 0])), denial(409, "OPERATION_CONFLICT"));
+    assert.deepEqual(facts(database).slice(6), [1, 0]);
     const strict = declaration(false);
     runtime.publish({ practice: { ...strict.practice, version: 2 } });
     const answerRequired = runtime.start(student, { ...open, practiceVersion: 2, operationId: "strict-open" });
@@ -268,7 +293,9 @@ test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐�
 
 test("收尾写入失败保留个人草稿，重发后仅确认一次", t => {
   const path = scenarioDatabase(t);
-  const runtime = openLearningRuntime({ databasePath: path, verifyOriginal: () => true });
+  const runtime = openLearningRuntime({ databasePath: path, verifyOriginal: () => true,
+    authorizeConfirmationRecovery: scope => scope.studentId === student.id,
+  });
   try {
     runtime.publish(declaration());
     const { activityId, stepAttemptId } = runtime.start(student, open);
@@ -279,6 +306,7 @@ test("收尾写入失败保留个人草稿，重发后仅确认一次", t => {
       BEGIN SELECT RAISE(ABORT, 'completion unavailable'); END`);
     assert.throws(() => runtime.confirmChoices(student, activityId, request), /completion unavailable/);
     assert.deepEqual(facts(database), [1, 1, 1, 0, 0, 0, 0, 0]);
+    assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, inputKey(request)), denial(404, "CONFIRMATION_NOT_FOUND"));
     assert.equal(runtime.read(student, activityId).status, "active");
     database.exec("DROP TRIGGER reject_completion");
     const receipt = runtime.confirmChoices(student, activityId, request);
