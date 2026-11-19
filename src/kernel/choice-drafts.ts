@@ -4,6 +4,7 @@ import { choiceDraftValue } from "../contracts/choice-draft.ts";
 import type { ChoiceDraftInput, UnversionedChoiceDraftInput } from "../contracts/choice-draft.ts";
 import { loadStudentActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
+import { recordChoiceDraftChange } from "./choice-draft-activity.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { boundOutput } from "./reading-progress.ts";
@@ -44,23 +45,25 @@ export function readChoiceDrafts(database: DatabaseSync, activityId: string, ste
 
 type DraftInput = ChoiceDraftInput | UnversionedChoiceDraftInput;
 
-export function saveChoiceDraft(database: DatabaseSync, student: string, activityId: string, input: DraftInput) {
+export function saveChoiceDraft(
+  database: DatabaseSync, student: string, activityId: string, input: DraftInput, clock: () => Date,
+) {
   return writeTransaction(database, () => {
     const activity = loadStudentActivity(database, student, activityId);
     if (activity.kind !== "reading" || activity.stepAttemptId !== input.stepAttemptId) throw new LearningError(403, "FORBIDDEN");
     const written = input.operationId === undefined
-      ? saveUnversionedChoice(database, activity, input)
-      : saveVersionedChoice(database, activity, input);
+      ? saveUnversionedChoice(database, activity, input, clock)
+      : saveVersionedChoice(database, activity, input, clock);
     return draftReceipt(written);
   });
 }
 
-function saveVersionedChoice(database: DatabaseSync, activity: ReadingActivity, input: ChoiceDraftInput) {
+function saveVersionedChoice(database: DatabaseSync, activity: ReadingActivity, input: ChoiceDraftInput, clock: () => Date) {
   const { activityId } = activity;
   const previous = recoverOperation(database, activityId, input);
   if (previous) return previous;
   requireWritableQuestion(activity, input);
-  const head = writeAtRevision(database, activityId, input);
+  const head = writeAtRevision(database, activityId, input, clock);
   database.prepare(`
     INSERT INTO choice_draft_operations (work_id, operation_id, base_revision, revision)
     VALUES (?, ?, ?, ?)
@@ -68,14 +71,16 @@ function saveVersionedChoice(database: DatabaseSync, activity: ReadingActivity, 
   return head;
 }
 
-function saveUnversionedChoice(database: DatabaseSync, activity: ReadingActivity, input: UnversionedChoiceDraftInput) {
+function saveUnversionedChoice(
+  database: DatabaseSync, activity: ReadingActivity, input: UnversionedChoiceDraftInput, clock: () => Date,
+) {
   requireWritableQuestion(activity, input);
   const { activityId } = activity;
   const current = readChoiceHead(database, activityId, input);
   if (current && database.prepare("SELECT 1 FROM choice_draft_operations WHERE work_id = ? LIMIT 1").get(current.workId)) {
     throw new ChoiceDraftConflict({ revision: current.revision, choice: current.choice });
   }
-  return appendChoiceVersion(database, activityId, input, current?.workId);
+  return appendChoiceVersion(database, activityId, input, current, clock);
 }
 
 function recoverOperation(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
@@ -117,17 +122,20 @@ function readChoiceHead(database: DatabaseSync, activityId: string, { stepAttemp
   return row && decodeChoice(storedVersion.parse(row));
 }
 
-function writeAtRevision(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
+function writeAtRevision(database: DatabaseSync, activityId: string, input: ChoiceDraftInput, clock: () => Date) {
   const current = readChoiceHead(database, activityId, input);
   if (current?.choice === input.choice) return current;
   const { revision, choice } = current ?? { revision: 0, choice: null };
   if (revision !== input.baseRevision) throw new ChoiceDraftConflict({ revision, choice });
-  return appendChoiceVersion(database, activityId, input, current?.workId);
+  return appendChoiceVersion(database, activityId, input, current, clock);
 }
 
-function appendChoiceVersion(database: DatabaseSync, activityId: string, input: DraftInput, workId?: string) {
+function appendChoiceVersion(
+  database: DatabaseSync, activityId: string, input: DraftInput, current: ReturnType<typeof readChoiceHead>, clock: () => Date,
+) {
   const { stepAttemptId, slotId, questionId, questionVersion, choice } = input;
+  if (current?.choice !== choice) recordChoiceDraftChange(database, activityId, clock());
   const scope = { activityId, step: { id: stepAttemptId, slotId, questionId } };
-  const draft = saveWorkVersion(database, scope, { questionVersion, choice }, workId);
+  const draft = saveWorkVersion(database, scope, { questionVersion, choice }, current?.workId);
   return { workId: draft.id, slotId, questionId, revision: draft.version, questionVersion, choice };
 }

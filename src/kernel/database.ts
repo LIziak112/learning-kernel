@@ -36,6 +36,11 @@ const migrations = [
   `,
   questionPublicationMigration,
   choiceDraftMigration,
+  `
+    ALTER TABLE activities ADD COLUMN last_choice_changed_at TEXT;
+    ALTER TABLE activities ADD COLUMN first_choice_changed_at TEXT
+      CHECK (first_choice_changed_at IS NULL OR last_choice_changed_at IS NOT NULL);
+  `,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

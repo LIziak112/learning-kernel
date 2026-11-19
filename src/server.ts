@@ -8,6 +8,7 @@ import { id, publicationSchema, startInput, versionRef } from "./contracts/readi
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
 import { startActivity } from "./kernel/activity.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
+import { readChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 import { saveChoiceDraft } from "./kernel/choice-drafts.ts";
 import { openDatabase } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
@@ -23,10 +24,12 @@ const runtimeOptions = z.strictObject({
 const studentPrincipal = z.strictObject({ role: z.literal("student"), id });
 const publishedStartInput = startInput.extend({ practiceVersion: versionRef.shape.version });
 const uuid = z.uuid();
+const clock = () => new Date();
 
 export { LearningError };
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
+export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
@@ -48,17 +51,20 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
       registerPublication(database, input, settings.choiceEvaluators);
     },
     start(principal: StudentPrincipal, input: PublishedStartInput) {
-      return startActivity(database, studentId(principal), publishedStartInput.parse(input), () => new Date());
+      return startActivity(database, studentId(principal), publishedStartInput.parse(input), clock);
     },
     read(principal: StudentPrincipal, activityId: string): StudentActivity {
       return readActivity(database, studentId(principal), uuid.parse(activityId));
     },
+    readChoiceDraftActivity(principal: StudentPrincipal, activityId: string) {
+      return readChoiceDraftActivity(database, studentId(principal), uuid.parse(activityId));
+    },
     saveChoiceDraft(principal: StudentPrincipal, activityId: string, input: ChoiceDraftInput | UnversionedChoiceDraftInput) {
-      return saveChoiceDraft(database, studentId(principal), uuid.parse(activityId), choiceDraftInput.parse(input));
+      return saveChoiceDraft(database, studentId(principal), uuid.parse(activityId), choiceDraftInput.parse(input), clock);
     },
     confirmChoices(principal: StudentPrincipal, activityId: string, input: ChoiceConfirmationInput) {
       return confirmChoices(database, studentId(principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
-        () => new Date(), settings.verifyOriginal);
+        clock, settings.verifyOriginal);
     },
     recoverChoiceConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
       return recoverChoiceConfirmation(database, studentId(principal), uuid.parse(activityId), confirmationKey.parse(key),

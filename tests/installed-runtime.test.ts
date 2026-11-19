@@ -100,6 +100,11 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
           return Number(result.value.stdout.trim());
         });
         assert.equal(evaluated.reduce((sum, count) => sum + count, 0), 6);
+        const timing = "choice-draft-activity-consumer.mts";
+        cpSync(new URL("./fixtures/choice-draft-activity-consumer.mts", import.meta.url), join(directory, timing));
+        inputs.push(timing);
+        assert.throws(() => execFileSync(process.execPath, [timing, "write"], { cwd: directory, stdio: "pipe" }), { status: 49 });
+        execFileSync(process.execPath, [timing, "recover"], { cwd: directory, stdio: "inherit" });
       }
       const compiler = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
       execFileSync(process.execPath, [compiler, "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess",
