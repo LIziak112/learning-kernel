@@ -3,6 +3,7 @@ import { z } from "zod";
 import { readingMigration } from "./reading-migration.ts";
 import { evaluationMigration } from "./evaluation-migration.ts";
 import { verdictMigration } from "./verdict-migration.ts";
+import { questionPublicationMigration } from "./question-publication-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
 const migrations = [
@@ -32,12 +33,14 @@ const migrations = [
     ALTER TABLE reading_reviews ADD COLUMN redo_authorized INTEGER NOT NULL DEFAULT 0 CHECK (redo_authorized IN (0, 1));
     ALTER TABLE activities ADD COLUMN redo_of TEXT REFERENCES activities (id);
   `,
+  questionPublicationMigration,
 ];
 
 export function openDatabase(path: string): DatabaseSync {
-  const database = new DatabaseSync(path, { timeout: 5000 });
+  const database = new DatabaseSync(path, { timeout: 5000, enableForeignKeyConstraints: false });
   try {
     writeTransaction(database, () => migrate(database));
+    database.exec("PRAGMA foreign_keys = ON");
     return database;
   } catch (error) {
     database.close();
@@ -77,5 +80,8 @@ function migrate(database: DatabaseSync) {
     if (nextVersion <= version) continue;
     database.exec(sql);
     record.run(nextVersion);
+  }
+  if (version < migrations.length + 1 && database.prepare("PRAGMA foreign_key_check").get()) {
+    throw new Error("数据库迁移后的外键检查失败");
   }
 }

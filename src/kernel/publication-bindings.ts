@@ -18,6 +18,7 @@ export function validateBindings({ practice, scoringKey }: ReadingPublication, i
     validateSlots(step, inputs, practice.goals, report);
     earlierSteps.set(step.id, step);
   }
+  if (positions.size > 0 && !practice.material) issue(["practice", "material"], "绑定材料输入时须声明材料版本");
   validateGrading(practice.grading, earlierSteps, issue);
   validateAssessmentPolicy(practice, scoringKey, issue);
   validateQuestions(practice, issue);

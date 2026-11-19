@@ -15,15 +15,16 @@ assert.equal("checkpoint" in runtime, false);
 assert.throws(() => import.meta.resolve("learning-kernel/src/kernel/database.js"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
 
 function publication(version: number): PublicationInput {
-  const material = {
+  const material = host === "after-school" ? {
     id: `${host}-arithmetic`, version: 1, title: "整数运算题面", source: "教师的运算练习资料",
     paragraphs: [{ id: "q1", text: "2 + 3 等于多少？" }, { id: "q2", text: "2 × 4 等于多少？" }],
-  };
+  } : undefined;
   const scoringKey = { id: `${host}-key`, version: 1, acceptedChoices: { q1: "b", q2: "c" } };
   return {
-    material, scoringKey,
+    ...(material ? { material } : {}), scoringKey,
     practice: {
-      id: host, version, formatVersion: 1, title: `整数运算 ${version}`, material: { id: material.id, version: 1 },
+      id: host, version, formatVersion: 1, title: `整数运算 ${version}`,
+      ...(material ? { material: { id: material.id, version: material.version } } : {}),
       goals: { arithmetic: "按题判断运算结果" },
       questions: [
         { id: "q1", prompt: version === 1 ? "2 + 3 等于多少？" : "3 + 2 等于多少？", options: { a: "4", b: "5", c: "6" } },

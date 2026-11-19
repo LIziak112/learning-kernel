@@ -17,21 +17,23 @@ export function registerPublication(database: DatabaseSync, input: unknown) {
   const { material, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
     ? validatedReading.parse(input)
     : { ...publicationSchema.parse(input), scoringKey: undefined };
-  if (practice.material.id !== material.id || practice.material.version !== material.version) {
+  if (practice.material?.id !== material?.id || practice.material?.version !== material?.version) {
     throw new Error("练法引用的材料版本与发布材料不一致");
   }
-  const materialJSON = JSON.stringify(material);
   const practiceJSON = JSON.stringify(practice);
   writeTransaction(database, () => {
-    database.prepare(`
-      INSERT INTO materials (id, version, definition) VALUES (?, ?, ?)
-      ON CONFLICT (id, version) DO NOTHING
-    `).run(material.id, material.version, materialJSON);
+    if (material) {
+      const definition = JSON.stringify(material);
+      database.prepare(`
+        INSERT INTO materials (id, version, definition) VALUES (?, ?, ?)
+        ON CONFLICT (id, version) DO NOTHING
+      `).run(material.id, material.version, definition);
+      requireUnchanged(database, "materials", material, definition);
+    }
     database.prepare(`
       INSERT INTO practices (id, version, material_id, material_version, definition) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT (id, version) DO NOTHING
-    `).run(practice.id, practice.version, material.id, material.version, practiceJSON);
-    requireUnchanged(database, "materials", material, materialJSON);
+    `).run(practice.id, practice.version, material?.id ?? null, material?.version ?? null, practiceJSON);
     requireUnchanged(database, "practices", practice, practiceJSON);
     if (scoringKey) {
       const definition = JSON.stringify(scoringKey);

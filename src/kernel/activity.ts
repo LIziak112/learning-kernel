@@ -10,7 +10,7 @@ import { LearningError } from "./learning-error.ts";
 const storedStart = startReceipt.extend({ practiceId: z.string(), practiceVersion: z.int(), redoOf: z.uuid().nullable() });
 const storedActivity = startReceipt.extend({
   stepId: z.string(),
-  materialJSON: z.string(),
+  materialJSON: z.string().nullable(),
   practiceJSON: z.string(),
   completed: z.literal([0, 1]),
   redoOf: z.uuid().nullable(),
@@ -109,17 +109,23 @@ export function loadActivity(database: DatabaseSync, student: string, activityId
     FROM activities a
     JOIN step_attempts s ON s.activity_id = a.id
     JOIN practices p ON p.id = a.practice_id AND p.version = a.practice_version
-    JOIN materials m ON m.id = p.material_id AND m.version = p.material_version
+    LEFT JOIN materials m ON m.id = p.material_id AND m.version = p.material_version
     WHERE a.id = ? AND a.student_id = ? ORDER BY s.ordinal DESC LIMIT 1
   `).get(activityId, student);
   if (!row) throw new LearningError(403, "FORBIDDEN");
   const { stepId, materialJSON, practiceJSON, completed, redoOf, ...receipt } = storedActivity.parse(row);
   const practice = publishedPractice.parse(JSON.parse(practiceJSON));
-  const common = { ...receipt, material: materialSchema.parse(JSON.parse(materialJSON)), completed: completed === 1 };
+  const common = { ...receipt, completed: completed === 1 };
   if ("formatVersion" in practice) {
     const step = practice.steps.find(step => step.id === stepId);
     if (!step) throw new Error("活动的步骤尝试找不到已发布步骤");
-    return { kind: "reading" as const, ...common, practice, step, redoOf: redoOf ?? undefined };
+    const material = practice.material ? parseFrozenMaterial(materialJSON) : undefined;
+    return { kind: "reading" as const, ...common, material, practice, step, redoOf: redoOf ?? undefined };
   }
-  return { kind: "single" as const, ...common, title: practice.title, step: practice.steps[0] };
+  return { kind: "single" as const, ...common, material: parseFrozenMaterial(materialJSON), title: practice.title, step: practice.steps[0] };
+}
+
+function parseFrozenMaterial(definition: string | null) {
+  if (definition === null) throw new Error("活动引用的已发布材料不存在");
+  return materialSchema.parse(JSON.parse(definition));
 }

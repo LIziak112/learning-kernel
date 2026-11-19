@@ -77,7 +77,7 @@ const policy = z.strictObject({
 export const readingPracticeSchema = versionRef.extend({
   formatVersion: z.literal(1),
   title: nonempty,
-  material: versionRef,
+  material: versionRef.optional(),
   goals: descriptions,
   questions: z.array(z.strictObject({
     id, prompt: nonempty, options: descriptions,
@@ -102,7 +102,7 @@ export const scoringKeySchema = versionRef.extend({
 });
 
 export const readingPublicationSchema = z.strictObject({
-  material: materialSchema,
+  material: materialSchema.optional(),
   practice: readingPracticeSchema,
   scoringKey: scoringKeySchema.optional(),
 });

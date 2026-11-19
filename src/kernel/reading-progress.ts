@@ -41,13 +41,14 @@ export function saveReadingSelection(database: DatabaseSync, activity: ReadingAc
   const slot = boundOutput(step, input.slotId);
   if (slot.type !== "passageSelection") throw new LearningError(422, "INVALID_SLOT");
   const source = step.inputs[slot.source];
-  if (source?.from !== "material") throw new LearningError(409, "PRACTICE_NOT_RUNNABLE");
+  const { material } = activity;
+  if (source?.from !== "material" || !material) throw new LearningError(409, "PRACTICE_NOT_RUNNABLE");
   const selection = {
-    material: activity.practice.material,
+    material: { id: material.id, version: material.version },
     positionId: source.positionId,
     ranges: input.ranges.map(({ role, ...range }) => {
       if (!Object.hasOwn(slot.oneRangePerRole, role)) throw new LearningError(422, "INVALID_SELECTION");
-      return { role, range, text: selectedText(activity.material, range) };
+      return { role, range, text: selectedText(material, range) };
     }),
   };
   const draft = saveWorkVersion(database, workScope(activity, input), selection, input.workId);
