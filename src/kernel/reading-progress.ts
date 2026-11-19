@@ -136,12 +136,13 @@ function advanceReading(database: DatabaseSync, activity: ReadingActivity) {
 }
 
 export function readingActivityView(database: DatabaseSync, activity: ReadingActivity, submissions: StoredSubmission[]) {
-  const { activityId, stepAttemptId, startedAt, step, practice, completed } = activity;
+  const { activityId, stepAttemptId, startedAt, step, practice, completed, practiceVersion } = activity;
   const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
   const materialBound = Object.values(step.inputs).some(input => input.from === "material");
   const status: ActivityDetail["status"] = completed ? "completed" : "active";
   return {
     formatVersion: practice.formatVersion,
+    ...(practiceVersion === undefined ? {} : { practiceVersion }),
     activityId, stepAttemptId, startedAt, material: materialBound ? activity.material : undefined, redoOf: activity.redoOf,
     title: practice.title,
     step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },

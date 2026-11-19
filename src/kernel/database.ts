@@ -5,6 +5,7 @@ import { evaluationMigration } from "./evaluation-migration.ts";
 import { verdictMigration } from "./verdict-migration.ts";
 import { questionPublicationMigration } from "./question-publication-migration.ts";
 import { choiceDraftMigration, currentChoiceDraftMigration } from "./choice-draft-migration.ts";
+import { preparedActivityMigration } from "./prepared-activity-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
 const migrations = [
@@ -42,6 +43,7 @@ const migrations = [
       CHECK (first_choice_changed_at IS NULL OR last_choice_changed_at IS NOT NULL);
   `,
   currentChoiceDraftMigration,
+  preparedActivityMigration,
 ];
 
 export function openDatabase(path: string): DatabaseSync {
@@ -57,9 +59,17 @@ export function openDatabase(path: string): DatabaseSync {
 }
 
 export function writeTransaction<Result>(database: DatabaseSync, write: () => Result): Result {
-  database.exec("BEGIN IMMEDIATE");
+  return inTransaction(database, "BEGIN IMMEDIATE", write);
+}
+
+export function readTransaction<Result>(database: DatabaseSync, read: () => Result): Result {
+  return database.isTransaction ? read() : inTransaction(database, "BEGIN", read);
+}
+
+function inTransaction<Result>(database: DatabaseSync, begin: "BEGIN" | "BEGIN IMMEDIATE", operation: () => Result): Result {
+  database.exec(begin);
   try {
-    const result = write();
+    const result = operation();
     database.exec("COMMIT");
     return result;
   } catch (error) {

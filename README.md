@@ -57,6 +57,8 @@ const activity = runtime.read(principal, receipt.activityId);
 
 `formatVersion: 1` 的练法可以只绑定题目，此时发布可同时省略 `material` 和 `practice.material`。步骤绑定材料时须同时提供材料定义和匹配的版本引用。学生读取当前步骤获准的题目或材料。
 
+可信宿主可用 `prepare(principal, input)` 显式预备阅读活动，沿用 `start` 的输入及原始回执。在首个作品、确认或步骤推进前，`replacePreparedActivityVersion(principal, activityId, input)` 可切换到同一练法已发布的另一版本，首个逻辑步骤须一致。传入 `protocolVersion`、`operationId`、当前 `stepAttemptId`、`expectedPracticeVersion` 和目标 `practiceVersion`。换版保留活动标识及原起算时刻，发行新的步骤尝试凭据，旧凭据无法保存或确认。指定当前版本时沿用当前步骤凭据。`read` 在同一快照返回当前 `practiceVersion`、步骤凭据和题面。重发按当前授权交付对应的原回执。普通 `start` 创建的活动固定原教学版本。
+
 逐题单选草稿使用 `saveChoiceDraft(principal, activityId, input)`。发布时在题目上声明冻结 `version`。保存指定 `protocolVersion`、当前 `stepAttemptId`、`slotId`、`questionId`、`questionVersion`、题内 `operationId`、`baseRevision` 和选项 ID `choice`。重发相同命令取回原回执，新操作保存与当前相同的选项时回当前修订和变更数。冻结题版本一致的修订冲突或操作冲突通过 `ChoiceDraftConflict.current` 交付判定当时的修订和本人选择。`read` 只向活动本人交付当前步骤的 `choiceDrafts`，没有条目的题从未作答，修订为 0。
 
 旧协议调用同一个方法时省略 `operationId` 与 `baseRevision`。该题接受首次版本化操作前，每次旧协议保存都新增一个修订，包括重复保存相同选项。首次版本化操作即使与当前选项相同且沿用原修订，也会接管该题。此后旧协议保存返回 `ANSWER_REVISION_CONFLICT` 并附当前修订与本人选择。题与题独立接管。没有幂等键的旧协议请求每次都按一次新保存处理。

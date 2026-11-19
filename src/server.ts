@@ -4,14 +4,17 @@ import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, Confirmati
 import { choiceDraftInput, currentChoiceDraftMode } from "./contracts/choice-draft.ts";
 import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftInput } from "./contracts/choice-draft.ts";
 import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
+import { preparedVersionInput } from "./contracts/prepared-activity.ts";
+import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
 import { startActivity } from "./kernel/activity.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
 import { readChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 import { saveChoiceDraft, saveCurrentChoiceDraft } from "./kernel/choice-drafts.ts";
-import { openDatabase } from "./kernel/database.ts";
+import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
+import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
 import { registerPublication } from "./kernel/publication.ts";
 import { readActivity } from "./kernel/submission.ts";
 
@@ -27,6 +30,7 @@ const uuid = z.uuid();
 const clock = () => new Date();
 
 export { LearningError };
+export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
@@ -53,8 +57,16 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     start(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, studentId(principal), publishedStartInput.parse(input), clock);
     },
+    prepare(principal: StudentPrincipal, input: PublishedStartInput) {
+      return startActivity(database, studentId(principal), publishedStartInput.parse(input), clock, undefined, "prepare");
+    },
+    replacePreparedActivityVersion(
+      principal: StudentPrincipal, activityId: string, input: PreparedActivityVersionInput,
+    ): PreparedActivityVersionReceipt {
+      return replacePreparedActivityVersion(database, studentId(principal), uuid.parse(activityId), preparedVersionInput.parse(input));
+    },
     read(principal: StudentPrincipal, activityId: string): StudentActivity {
-      return readActivity(database, studentId(principal), uuid.parse(activityId));
+      return readTransaction(database, () => readActivity(database, studentId(principal), uuid.parse(activityId)));
     },
     readChoiceDraftActivity(principal: StudentPrincipal, activityId: string) {
       return readChoiceDraftActivity(database, studentId(principal), uuid.parse(activityId));

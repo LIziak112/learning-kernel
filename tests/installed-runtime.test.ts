@@ -55,8 +55,23 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         execFileSync(process.execPath, ["consumer.mts", host, phase], { cwd: directory, stdio: "inherit" });
       }
       const inputs = ["consumer.mts"];
+      const prepare = "prepared-version-consumer.mts";
+      cpSync(new URL("./fixtures/prepared-version-consumer.mts", import.meta.url), join(directory, prepare));
+      inputs.push(prepare);
+      for (const phase of ["open", "recover"]) {
+        execFileSync(process.execPath, [prepare, host, phase], { cwd: directory, stdio: "inherit" });
+      }
       if (host === "library-club") {
         const run = promisify(execFile);
+        execFileSync(process.execPath, [prepare, host, "race-prepare"], { cwd: directory, stdio: "inherit" });
+        const competed = await Promise.allSettled(["race-change", "race-save"].map(phase =>
+          run(process.execPath, [prepare, host, phase], { cwd: directory })));
+        const [changed, saved] = competed.map(result => {
+          if (result.status === "rejected") throw result.reason;
+          return result.value.stdout.trim();
+        });
+        assert.ok((changed === "changed" && saved === "stale") || (changed === "kept" && saved === "saved"));
+        execFileSync(process.execPath, [prepare, host, "race-recover", changed], { cwd: directory, stdio: "inherit" });
         const writes = await Promise.allSettled(["parallel-q1", "parallel-q2"].map(phase =>
           run(process.execPath, ["consumer.mts", host, phase], { cwd: directory })));
         for (const result of writes) if (result.status === "rejected") throw result.reason;
