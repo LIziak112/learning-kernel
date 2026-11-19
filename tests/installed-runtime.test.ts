@@ -75,6 +75,18 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         const winner = operations[statuses.indexOf("committed")];
         assert.ok(winner);
         execFileSync(process.execPath, [confirmation, "recover", winner], { cwd: directory, stdio: "inherit" });
+        const unversioned = "unversioned-choice-consumer.mts";
+        cpSync(new URL("./fixtures/unversioned-choice-consumer.mts", import.meta.url), join(directory, unversioned));
+        inputs.push(unversioned);
+        execFileSync(process.execPath, [unversioned, "init"], { cwd: directory, stdio: "inherit" });
+        const competing = await Promise.allSettled(["legacy", "modern"].map(phase =>
+          run(process.execPath, [unversioned, phase], { cwd: directory })));
+        const [legacy, modern] = competing.map(result => {
+          if (result.status === "rejected") throw result.reason;
+          return result.value.stdout.trim();
+        });
+        assert.ok((legacy === "wrote" && modern === "3") || (legacy === "stopped" && modern === "2"));
+        execFileSync(process.execPath, [unversioned, "recover", modern], { cwd: directory, stdio: "inherit" });
       }
       const compiler = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
       execFileSync(process.execPath, [compiler, "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess",

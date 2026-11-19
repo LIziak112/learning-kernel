@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { choiceDraftValue } from "../contracts/choice-draft.ts";
-import type { ChoiceDraftInput } from "../contracts/choice-draft.ts";
+import type { ChoiceDraftInput, UnversionedChoiceDraftInput } from "../contracts/choice-draft.ts";
 import { loadStudentActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
@@ -42,20 +42,40 @@ export function readChoiceDrafts(database: DatabaseSync, activityId: string, ste
     .map(row => draftReceipt(decodeChoice(storedVersion.parse(row))));
 }
 
-export function saveChoiceDraft(database: DatabaseSync, student: string, activityId: string, input: ChoiceDraftInput) {
+type DraftInput = ChoiceDraftInput | UnversionedChoiceDraftInput;
+
+export function saveChoiceDraft(database: DatabaseSync, student: string, activityId: string, input: DraftInput) {
   return writeTransaction(database, () => {
     const activity = loadStudentActivity(database, student, activityId);
     if (activity.kind !== "reading" || activity.stepAttemptId !== input.stepAttemptId) throw new LearningError(403, "FORBIDDEN");
-    const previous = recoverOperation(database, activityId, input);
-    if (previous) return draftReceipt(previous);
-    requireWritableQuestion(activity, input);
-    const head = writeChoice(database, activityId, input);
-    database.prepare(`
-      INSERT INTO choice_draft_operations (work_id, operation_id, base_revision, revision)
-      VALUES (?, ?, ?, ?)
-    `).run(head.workId, input.operationId, input.baseRevision, head.revision);
-    return draftReceipt(head);
+    const written = input.operationId === undefined
+      ? saveUnversionedChoice(database, activity, input)
+      : saveVersionedChoice(database, activity, input);
+    return draftReceipt(written);
   });
+}
+
+function saveVersionedChoice(database: DatabaseSync, activity: ReadingActivity, input: ChoiceDraftInput) {
+  const { activityId } = activity;
+  const previous = recoverOperation(database, activityId, input);
+  if (previous) return previous;
+  requireWritableQuestion(activity, input);
+  const head = writeAtRevision(database, activityId, input);
+  database.prepare(`
+    INSERT INTO choice_draft_operations (work_id, operation_id, base_revision, revision)
+    VALUES (?, ?, ?, ?)
+  `).run(head.workId, input.operationId, input.baseRevision, head.revision);
+  return head;
+}
+
+function saveUnversionedChoice(database: DatabaseSync, activity: ReadingActivity, input: UnversionedChoiceDraftInput) {
+  requireWritableQuestion(activity, input);
+  const { activityId } = activity;
+  const current = readChoiceHead(database, activityId, input);
+  if (current && database.prepare("SELECT 1 FROM choice_draft_operations WHERE work_id = ? LIMIT 1").get(current.workId)) {
+    throw new ChoiceDraftConflict({ revision: current.revision, choice: current.choice });
+  }
+  return appendChoiceVersion(database, activityId, input, current?.workId);
 }
 
 function recoverOperation(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
@@ -79,7 +99,7 @@ function recoverOperation(database: DatabaseSync, activityId: string, input: Cho
   return draft;
 }
 
-function requireWritableQuestion(activity: ReadingActivity, input: ChoiceDraftInput) {
+function requireWritableQuestion(activity: ReadingActivity, input: DraftInput) {
   if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
   const slot = boundOutput(activity.step, input.slotId);
   if (slot.type !== "oneChoicePerQuestion" || activity.step.inputs[slot.source]?.from !== "questions") {
@@ -91,20 +111,23 @@ function requireWritableQuestion(activity: ReadingActivity, input: ChoiceDraftIn
   if (!Object.hasOwn(question.options, input.choice)) throw new LearningError(422, "INVALID_CHOICE");
 }
 
-function readChoiceHead(database: DatabaseSync, activityId: string, { stepAttemptId, slotId, questionId }: ChoiceDraftInput) {
+function readChoiceHead(database: DatabaseSync, activityId: string, { stepAttemptId, slotId, questionId }: DraftInput) {
   const row = database.prepare(currentDrafts + "AND w.slot_id = ? AND w.question_id = ?")
     .get(activityId, stepAttemptId, slotId, questionId);
   return row && decodeChoice(storedVersion.parse(row));
 }
 
-function writeChoice(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
-  const { stepAttemptId, slotId, questionId, questionVersion, choice } = input;
+function writeAtRevision(database: DatabaseSync, activityId: string, input: ChoiceDraftInput) {
   const current = readChoiceHead(database, activityId, input);
-  if (current?.choice === choice) return current;
-  const state = current ?? { revision: 0, choice: null };
-  const { revision, choice: currentChoice } = state;
-  if (revision !== input.baseRevision) throw new ChoiceDraftConflict({ revision, choice: currentChoice });
+  if (current?.choice === input.choice) return current;
+  const { revision, choice } = current ?? { revision: 0, choice: null };
+  if (revision !== input.baseRevision) throw new ChoiceDraftConflict({ revision, choice });
+  return appendChoiceVersion(database, activityId, input, current?.workId);
+}
+
+function appendChoiceVersion(database: DatabaseSync, activityId: string, input: DraftInput, workId?: string) {
+  const { stepAttemptId, slotId, questionId, questionVersion, choice } = input;
   const scope = { activityId, step: { id: stepAttemptId, slotId, questionId } };
-  const draft = saveWorkVersion(database, scope, { questionVersion, choice }, current?.workId);
+  const draft = saveWorkVersion(database, scope, { questionVersion, choice }, workId);
   return { workId: draft.id, slotId, questionId, revision: draft.version, questionVersion, choice };
 }
