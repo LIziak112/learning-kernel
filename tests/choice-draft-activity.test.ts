@@ -121,6 +121,9 @@ test("草稿时间与工作版本及操作回执一起回滚，确认和撤权�
     const change = { ...draft, baseRevision: 1, operationId: "later", choice: "1" };
     database.exec(breakReceipt);
     t.mock.timers.setTime(Date.parse(time(3)));
+    assert.deepEqual(save(draft), accepted);
+    assert.throws(() => save({ ...change, baseRevision: 0 }), { status: 409, code: "ANSWER_REVISION_CONFLICT" });
+    assert.deepEqual(read(), expected);
     assert.throws(() => save(change), /draft operation aborted/);
     assert.deepEqual(read(), expected);
     const active = runtime.read(owner, activityId);
