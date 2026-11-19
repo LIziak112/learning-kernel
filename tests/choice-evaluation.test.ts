@@ -110,6 +110,10 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
       assert.ok(question.version);
       return { questionId: question.id, questionVersion: question.version, revision: 0, original: { state: "uncollected" } };
     }) };
+    const forged = { ...input, questions: input.questions.map(question => ({ ...question, correct: true })), score: 2 };
+    assert.throws(() => Reflect.apply(runtime.confirmChoices, runtime, [student, activityId, forged]), { name: "ZodError" });
+    assert.equal(runtime.read(student, activityId).status, "active");
+    assert.equal(database.prepare("SELECT count(*) AS count FROM evaluation_tasks").get()?.count, 0);
     const receipt = runtime.confirmChoices(student, activityId, input);
     const pending = { status: "pending", verdicts: [] };
     assert.deepEqual(evaluationFacts(database, receipt.id), pending);
