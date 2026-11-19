@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>阅读评阅 · 学习平台内核</title>
+    <link rel="stylesheet" href="/reading.css">
+    <script type="module" src="/teacher.mjs"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="frame masthead">
+        <span class="product">学习平台内核</span>
+        <a href="/demo/teacher">评阅入口</a>
+      </div>
+    </header>
+    <main class="frame">
+      <header class="activity-header"><h1>阅读评阅</h1></header>
+      <form id="review-lookup" class="panel teacher-form">
+        <label for="review-activity">活动链接或编号</label>
+        <input id="review-activity" name="activity" required>
+        <button>打开评阅</button>
+      </form>
+      <p id="review-error" role="alert" hidden></p>
+      <div id="teacher-workspace" class="workspace" hidden></div>
+    </main>
+  </body>
+</html>

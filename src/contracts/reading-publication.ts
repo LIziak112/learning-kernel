@@ -39,7 +39,7 @@ const policy = z.strictObject({
     minutes: z.int().positive(),
     startsAt: z.literal("instanceStarted"),
     onDeadline: z.literal("keepDraftAndClose"),
-  }),
+  }).optional(),
   offline: z.literal("onlineOnly"),
   redo: z.literal("newInstanceOnAuthorization"),
   student: z.strictObject({
@@ -54,13 +54,13 @@ const policy = z.strictObject({
       fields: z.array(z.enum(["correctCount", "questionCount"])),
       allowSubsets: z.literal(false),
       drilldown: z.literal(false),
-    }),
+    }).optional(),
     review: z.strictObject({
       requires: z.literal("passageScore"),
       while: z.literal("reviewOpen"),
       byQuestion: z.array(z.literal("effectiveVerdict")),
       byQuoteSet: z.array(z.literal("learnerFeedback")),
-    }),
+    }).optional(),
   }),
   reviewer: z.strictObject({
     scope: z.literal("assignedReviewer"),
@@ -81,7 +81,7 @@ export const readingPracticeSchema = versionRef.extend({
   goals: descriptions,
   questions: z.array(z.strictObject({
     id, prompt: nonempty, options: descriptions,
-  })).min(1),
+  })).default([]),
   steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
     selectionFeedback: z.strictObject({ from: slotReference, criterion: nonempty }).optional(),
@@ -91,8 +91,8 @@ export const readingPracticeSchema = versionRef.extend({
       keyRef: versionRef,
       unit: z.literal("question"),
       effectiveVerdictOrder: z.tuple([z.literal("teacherReview"), z.literal("automatic")]),
-    }),
-  }),
+    }).optional(),
+  }).default({}),
   policy,
 });
 
@@ -104,7 +104,7 @@ export const scoringKeySchema = versionRef.extend({
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema,
   practice: readingPracticeSchema,
-  scoringKey: scoringKeySchema,
+  scoringKey: scoringKeySchema.optional(),
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

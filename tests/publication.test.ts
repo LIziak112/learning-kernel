@@ -10,6 +10,7 @@ import reading from "../practices/reading-library.json" with { type: "json" };
 import { createLearningServer } from "../src/host/server.ts";
 import { openDatabase } from "../src/kernel/database.ts";
 import { registerPublication } from "../src/kernel/publication.ts";
+import { contrastB, contrastC } from "./fixtures/reading-contrasts.ts";
 
 test("发布两步阅读并固定材料版本、独立使用位置和前序槽位引用", t => {
   const path = databasePath(t);
@@ -57,6 +58,57 @@ const grading = reading.practice.grading;
 const first = ["practice", "steps", 0];
 const second = ["practice", "steps", 1];
 const failures: { title: string; input: unknown; path: (string | number)[] }[] = [
+  {
+    title: "评估声明缺少固定评分键时拒绝发布",
+    input: { ...reading, scoringKey: undefined },
+    path: ["scoringKey"],
+  },
+  {
+    title: "没有评估声明的练法不能保存未绑定评分键",
+    input: { ...contrastB, scoringKey: reading.scoringKey },
+    path: ["scoringKey"],
+  },
+  {
+    title: "复盘须同时声明整篇公布范围",
+    input: {
+      ...reading, practice: { ...reading.practice, policy: {
+        ...reading.practice.policy, student: { ...reading.practice.policy.student, passageScore: undefined },
+      } },
+    },
+    path: ["practice", "policy", "student", "review"],
+  },
+  {
+    title: "分数公布须绑定评估任务",
+    input: {
+      ...contrastB, practice: { ...contrastB.practice, policy: {
+        ...contrastB.practice.policy, student: {
+          ...contrastB.practice.policy.student, passageScore: reading.practice.policy.student.passageScore,
+        },
+      } },
+    },
+    path: ["practice", "policy", "student", "passageScore"],
+  },
+  {
+    title: "待评状态须绑定评估任务",
+    input: {
+      ...contrastB, practice: { ...contrastB.practice, policy: {
+        ...contrastB.practice.policy, student: {
+          ...contrastB.practice.policy.student, ownSubmission: reading.practice.policy.student.ownSubmission,
+        },
+      } },
+    },
+    path: ["practice", "policy", "student", "passageScore"],
+  },
+  {
+    title: "不评分的作答仍须声明至少一题",
+    input: { ...contrastC, practice: { ...contrastC.practice, questions: [] } },
+    path: ["practice", "questions"],
+  },
+  {
+    title: "不评分的题目集合仍须使用不同标识",
+    input: { ...contrastC, practice: { ...contrastC.practice, questions: [...contrastC.practice.questions, ...contrastC.practice.questions] } },
+    path: ["practice", "questions", 1, "id"],
+  },
   {
     title: "报告槽位指向不存在的目标",
     input: withSteps({ ...evidence, submit: { ...evidence.submit, slots: { quotes: { ...slots.quotes, targetId: "missing" } } } }, decide),

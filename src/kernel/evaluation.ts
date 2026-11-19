@@ -22,7 +22,7 @@ export function queueEvaluation(
   targetId: string,
 ) {
   const { assessment } = activity.practice.grading;
-  if (assessment.from.stepId !== activity.step.id || assessment.from.slotId !== receipt.slotId) return;
+  if (!assessment || assessment.from.stepId !== activity.step.id || assessment.from.slotId !== receipt.slotId) return;
   database.prepare(`
     INSERT INTO evaluation_tasks (submission_id, key_id, key_version, target_id, status)
     VALUES (?, ?, ?, ?, 'pending')
@@ -48,7 +48,8 @@ export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeChec
 function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, checkpoint?: RuntimeCheckpoint) {
   checkpoint?.({ point: "beforeEvaluation", submissionId: input.submissionId });
   const practice = readingPracticeSchema.parse(JSON.parse(input.practiceJSON));
-  const evaluator = readingCapability(practice.grading.assessment.evaluator);
+  const assessment = practice.grading.assessment;
+  const evaluator = assessment && readingCapability(assessment.evaluator);
   if (evaluator?.audience !== "server") throw new Error("已发布评估器不可用");
   const key = scoringKeySchema.parse(JSON.parse(input.keyJSON));
   const answer = readingAnswer.parse(JSON.parse(input.answerJSON));

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { once } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,8 +13,7 @@ import { createDemoServer } from "../../src/host/demo.ts";
 import { evaluatePending } from "../../src/kernel/evaluation.ts";
 import publication from "../../practices/single-quote.json" with { type: "json" };
 import reading from "../../practices/reading-library.json" with { type: "json" };
-
-let coverageSequence = 0;
+import { savePageCoverage } from "../fixtures/browser-coverage.ts";
 
 test("浏览器拖选原文并提交，刷新可回看，另一学生读不到", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {
@@ -485,23 +484,6 @@ async function openBrowserPage(browser: Browser, viewport = { width: 1200, heigh
   page.setDefaultTimeout(4000);
   if (process.env.NODE_V8_COVERAGE) await page.coverage.startJSCoverage({ resetOnNavigation: false });
   return page;
-}
-
-async function savePageCoverage(page: Page, restart = false) {
-  const directory = process.env.NODE_V8_COVERAGE;
-  if (!directory) return;
-  const scripts = new Set(["/reading.mjs", "/library-reading.mjs"]);
-  const entries = (await page.coverage.stopJSCoverage())
-    .filter(entry => scripts.has(new URL(entry.url).pathname));
-  assert.ok(entries.length > 0, "Chromium 未记录阅读页脚本覆盖率");
-  for (const entry of entries) {
-    coverageSequence += 1;
-    const file = new URL("../../src/host/web" + new URL(entry.url).pathname, import.meta.url);
-    const result = [{ scriptId: String(coverageSequence), url: file.href, functions: entry.functions }];
-    writeFileSync(join(directory, `coverage-${process.pid}-${Date.now()}-${coverageSequence}.json`),
-      JSON.stringify({ result }));
-  }
-  if (restart) await page.coverage.startJSCoverage({ resetOnNavigation: false });
 }
 
 async function openActivity(page: Page, origin: string, failFirst = false) {

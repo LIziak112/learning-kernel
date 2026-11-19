@@ -19,7 +19,19 @@ export function validateBindings({ practice, scoringKey }: ReadingPublication, i
     earlierSteps.set(step.id, step);
   }
   validateGrading(practice.grading, earlierSteps, issue);
-  validateKey(practice, scoringKey, issue);
+  validateAssessmentPolicy(practice, scoringKey, issue);
+  validateQuestions(practice, issue);
+}
+
+function validateQuestions(practice: ReadingPublication["practice"], issue: Issue) {
+  const ids = new Set<string>();
+  for (const [index, question] of practice.questions.entries()) {
+    if (ids.has(question.id)) issue(["practice", "questions", index, "id"], "题指标识重复");
+    ids.add(question.id);
+  }
+  if (practice.questions.length === 0 && practice.steps.some(step => Object.values(step.inputs).some(input => input.from === "questions"))) {
+    issue(["practice", "questions"], "绑定题目输入时须声明至少一题");
+  }
 }
 
 function resolveInputs(
@@ -120,6 +132,7 @@ function validateGrading(
   if (selectionFeedback && findSlot(steps, selectionFeedback.from)?.type !== "passageSelection") {
     issue(["practice", "grading", "selectionFeedback", "from"], "评语须绑定选区交付槽位");
   }
+  if (!assessment) return;
   const submittedType = findSlot(steps, assessment.from)?.type;
   if (submittedType !== "oneChoicePerQuestion") {
     issue(["practice", "grading", "assessment", "from"], "逐题评估须绑定单选交付槽位");
@@ -129,6 +142,17 @@ function validateGrading(
   }
 }
 
+function validateAssessmentPolicy(practice: ReadingPublication["practice"], key: ReadingPublication["scoringKey"], issue: Issue) {
+  const { assessment } = practice.grading;
+  const { passageScore, review, ownSubmission } = practice.policy.student;
+  if (review && !passageScore) issue(["practice", "policy", "student", "review"], "开放复盘须声明整篇公布条件");
+  if (Boolean(assessment) !== Boolean(key)) issue(["scoringKey"], "评分声明与固定评分键须成对提供");
+  if (!assessment && (passageScore || ownSubmission.onFinal.length)) {
+    issue(["practice", "policy", "student", "passageScore"], "公布成绩须声明评估槽位和规则");
+  }
+  if (assessment && key) validateKey(practice, assessment.keyRef, key, issue);
+}
+
 function findSlot(steps: ReadonlyMap<string, ReadingStep>, reference: { stepId: string; slotId: string }) {
   const slots = steps.get(reference.stepId)?.submit.slots;
   return slots && Object.hasOwn(slots, reference.slotId) ? slots[reference.slotId] : undefined;
@@ -136,17 +160,15 @@ function findSlot(steps: ReadonlyMap<string, ReadingStep>, reference: { stepId: 
 
 function validateKey(
   practice: ReadingPublication["practice"],
-  key: ReadingPublication["scoringKey"],
+  reference: { id: string; version: number },
+  key: NonNullable<ReadingPublication["scoringKey"]>,
   issue: Issue,
 ) {
-  const reference = practice.grading.assessment.keyRef;
   if (reference.id !== key.id || reference.version !== key.version) {
     issue(["practice", "grading", "assessment", "keyRef"], "评估引用的评分键版本与发布评分键不一致");
   }
-  const questions = new Set<string>();
-  for (const [index, question] of practice.questions.entries()) {
-    if (questions.has(question.id)) issue(["practice", "questions", index, "id"], "题指标识重复");
-    questions.add(question.id);
+  const questions = new Set(practice.questions.map(question => question.id));
+  for (const question of practice.questions) {
     const answer = key.acceptedChoices[question.id];
     if (answer === undefined || !Object.hasOwn(question.options, answer)) {
       issue(["scoringKey", "acceptedChoices", question.id], "评分键须指向本题存在的选项");

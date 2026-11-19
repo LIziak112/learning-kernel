@@ -73,8 +73,7 @@ export function confirmReadingDraft(
     throw new LearningError(409, "ALREADY_SUBMITTED");
   }
   const confirmedAt = clock();
-  const deadline = Date.parse(activity.startedAt) + activity.practice.policy.timeLimit.minutes * 60_000;
-  if (confirmedAt.getTime() >= deadline) throw new LearningError(409, "DEADLINE_PASSED");
+  requireBeforeDeadline(activity, confirmedAt);
   const slot = boundOutput(step, input.slotId);
   const content = loadWorkVersion(database, workScope(activity, input), input.draft);
   const observations = readingObservations(database, activity, slot, content);
@@ -84,6 +83,13 @@ export function confirmReadingDraft(
   else advanceReading(database, activity);
   checkpoint?.({ point: "beforeConfirmationCommit", operationId: input.operationId });
   return receipt;
+}
+
+function requireBeforeDeadline(activity: ReadingActivity, confirmedAt: Date) {
+  const limit = activity.practice.policy.timeLimit;
+  if (!limit) return;
+  const deadline = Date.parse(activity.startedAt) + limit.minutes * 60_000;
+  if (confirmedAt.getTime() >= deadline) throw new LearningError(409, "DEADLINE_PASSED");
 }
 
 function readingObservations(
@@ -122,8 +128,24 @@ function advanceReading(database: DatabaseSync, activity: ReadingActivity) {
 }
 
 export function readingActivityView(database: DatabaseSync, activity: ReadingActivity, submissions: StoredSubmission[]) {
-  const { activityId, stepAttemptId, startedAt, material, step, practice, completed } = activity;
-  const inputs = Object.fromEntries(Object.entries(step.inputs).flatMap<[string, object]>(([name, input]) => {
+  const { activityId, stepAttemptId, startedAt, step, practice, completed } = activity;
+  const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
+  const materialBound = Object.values(step.inputs).some(input => input.from === "material");
+  return {
+    formatVersion: practice.formatVersion,
+    activityId, stepAttemptId, startedAt, material: materialBound ? activity.material : undefined, redoOf: activity.redoOf,
+    title: practice.title,
+    step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },
+    status: completed ? "completed" : "active",
+    inputs: readingInputs(activity, submissions),
+    submission: submitted ? studentSubmissionView(activity, submitted) : undefined,
+    ...studentResults(database, activity),
+  };
+}
+
+function readingInputs(activity: ReadingActivity, submissions: StoredSubmission[]) {
+  const { completed, practice, step } = activity;
+  return Object.fromEntries(Object.entries(step.inputs).flatMap<[string, object]>(([name, input]) => {
     switch (input.from) {
       case "material": return [[name, { from: input.from, positionId: input.positionId }]];
       case "questions": return [[name, { from: input.from, questions: practice.questions }]];
@@ -135,17 +157,6 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
       }
     }
   }));
-  const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
-  return {
-    formatVersion: practice.formatVersion,
-    activityId, stepAttemptId, startedAt, material, redoOf: activity.redoOf,
-    title: practice.title,
-    step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },
-    status: completed ? "completed" : "active",
-    inputs,
-    submission: submitted ? studentSubmissionView(activity, submitted) : undefined,
-    ...studentResults(database, activity),
-  };
 }
 
 export function studentSubmissionView(activity: ReadingActivity, submitted: StoredSubmission) {

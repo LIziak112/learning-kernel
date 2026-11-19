@@ -19,7 +19,7 @@ export const deadline = firstClock + 8 * 60_000;
 export const sessions = new Map([["window-a", "student-1"], ["window-b", "student-1"], ["other", "student-2"]]);
 export const reviewerSessions = new Map([["teacher", "teacher-1"], ["other-teacher", "teacher-2"]]);
 
-const ranges = [
+export const selectionRanges = [
   { role: "observation", paragraphId: "p2", start: 0, end: 22 },
   { role: "condition", paragraphId: "p3", start: 0, end: 18 },
 ];
@@ -42,8 +42,10 @@ export function scenarioDatabase(t: TestContext) {
 
 type ServerOverrides = Partial<Parameters<typeof createLearningServer>[0]>;
 
-export async function withScenarioServer<T>(databasePath: string, options: ServerOverrides, run: (origin: string) => Promise<T>) {
-  const server = createLearningServer({
+export async function withScenarioServer<T>(
+  databasePath: string, options: ServerOverrides, run: (origin: string) => Promise<T>, factory = createLearningServer,
+) {
+  const server = factory({
     databasePath, publication: reading, sessions, reviewerSessions, assignedReviewer: "teacher-1",
     evaluateAutomatically: false, ...options,
   });
@@ -89,7 +91,7 @@ export async function prepareScenario(origin: string, practiceId = reading.pract
   const start = await result(post(origin, "/api/activities", { operationId: "start", practiceId }), startReceipt);
   const path = `/api/activities/${start.activityId}`;
   const first = { stepAttemptId: start.stepAttemptId, slotId: "quotes" };
-  const selection = await result(post(origin, path + "/drafts", { ...first, ranges }), readingDraftReceipt);
+  const selection = await result(post(origin, path + "/drafts", { ...first, ranges: selectionRanges }), readingDraftReceipt);
   const quote = await result(post(origin, path + "/submissions", {
     ...first, operationId: "evidence", draft: selection.draft,
   }), submissionReceipt);

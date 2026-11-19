@@ -6,5 +6,6 @@ const directory = resolve("data");
 mkdirSync(directory, { recursive: true });
 const server = createDemoServer(resolve(directory, "demo.sqlite"));
 server.listen(3000, "127.0.0.1", () => {
-  console.log("学生演示入口 http://127.0.0.1:3000/demo/student");
+  console.log("两步阅读 http://127.0.0.1:3000/demo/reading");
+  console.log("教师评阅 http://127.0.0.1:3000/demo/teacher");
 });

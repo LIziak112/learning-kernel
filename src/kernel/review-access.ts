@@ -35,7 +35,17 @@ export function assignedReading(database: DatabaseSync, teacher: string, activit
   if (role === "reviewer" && !reviewerActive) throw new LearningError(403, "FORBIDDEN");
   const activity = loadActivity(database, studentId, activityId);
   if (activity.kind !== "reading") throw new LearningError(403, "FORBIDDEN");
-  return { activity, feedback };
+  return { activity, feedback, reviewerActive };
+}
+
+export function managementView(database: DatabaseSync, teacher: string, activityId: string) {
+  const { activity, reviewerActive } = assignedReading(database, teacher, activityId, "manager");
+  const reviewOpen = reviewDisclosure(database, activityId)?.reviewOpen ?? false;
+  return {
+    reviewOpen,
+    canToggleReview: activity.practice.policy.manager.actions.includes(reviewOpen ? "closeReview" : "openReview"),
+    reviewerActions: reviewerActive ? activity.practice.policy.reviewer.actions : [],
+  };
 }
 
 export function manageReading(

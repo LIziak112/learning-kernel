@@ -17,7 +17,8 @@ function button(label, action) {
 export function renderLibraryActivity(activity, api, refresh, reportError) {
   const article = document.createElement("article");
   article.className = "panel material";
-  article.append(text("h2", activity.material.title), text("p", activity.step.instructions));
+  if (activity.material) article.append(text("h2", activity.material.title));
+  article.append(text("p", activity.step.instructions));
   const side = document.createElement("section");
   side.className = "panel quote-panel";
   const [slotId, slot] = Object.entries(activity.step.submit.slots).find(([, entry]) => entry.type !== "reuse");
@@ -29,7 +30,7 @@ export function renderLibraryActivity(activity, api, refresh, reportError) {
   const editor = slot.type === "passageSelection"
     ? selectionEditor(activity, slot, pending, article, preview, completed)
     : answerEditor(activity, sources, pending, article, preview);
-  side.append(text("h2", editor.title), preview);
+  if (editor.title) side.append(text("h2", editor.title), preview);
   if (completed) {
     const selection = activity.submission?.selection;
     if (selection) renderQuotes(preview, selection.ranges);
@@ -159,7 +160,7 @@ function selectionEditor(activity, slot, pending, article, preview, completed) {
   const labels = slot.oneRangePerRole;
   const ranges = pending?.payload.ranges ?? [];
   const editor = choiceEditor(Object.fromEntries(ranges.map(range => [range.role, range])), Object.keys(labels), completed);
-  article.append(...activity.material.paragraphs.map(paragraph => paragraphRow(paragraph, labels, editor)));
+  showParagraphs(article, activity.material, labels, editor);
   const renderPreview = () => renderSelectionPreview(preview, activity.material.paragraphs, labels, editor.values);
   if (!completed) renderPreview();
   return {
@@ -185,18 +186,33 @@ function answerEditor(activity, sources, pending, article, preview) {
   const questions = sources.find(input => input.from === "questions")?.questions ?? [];
   const values = { ...(activity.submission?.answer?.choices ?? pending?.payload.choices) };
   const editor = choiceEditor(values, questions.map(question => question.id), activity.status === "completed");
-  article.append(...activity.material.paragraphs.map(paragraph => paragraphRow(paragraph, {}, editor)));
+  showParagraphs(article, activity.material, {}, editor);
   const publishedVerdicts = reviewVerdicts(activity.review);
   article.append(...questions.map(question => questionRow(question, editor, publishedVerdicts.get(question.id))));
-  const quotes = sources.filter(input => input.from === "submission").flatMap(input => input.selection?.ranges ?? []);
-  renderQuotes(preview, quotes);
+  const title = renderPriorWork(preview, sources);
   editor.lock(editor.completed);
   return {
     ...editor,
-    title: "已交引文",
+    title,
     submitLabel: "交卷",
     payload: () => ({ choices: values, references: answerReferences(activity) }),
   };
+}
+
+function renderPriorWork(preview, sources) {
+  const submitted = sources.filter(input => input.from === "submission");
+  const quotes = submitted.flatMap(input => input.selection?.ranges ?? []);
+  const answers = submitted.filter(input => input.answer);
+  renderQuotes(preview, quotes);
+  for (const { answer } of answers) {
+    preview.append(text("p", "已交作答 " + Object.values(answer.choices).join("、")));
+  }
+  if (quotes.length) return "已交引文";
+  return answers.length ? "前次作答" : undefined;
+}
+
+function showParagraphs(article, material, labels, editor) {
+  if (material) article.append(...material.paragraphs.map(paragraph => paragraphRow(paragraph, labels, editor)));
 }
 
 function reviewVerdicts(review) {
@@ -275,7 +291,7 @@ async function confirmWithRefresh(api, path, binding, pending, storageKey, refre
 
 function readingResult(activity, refresh, reportError) {
   const result = document.createElement("section");
-  result.append(text("h2", "交卷结果"));
+  result.append(text("h2", "提交结果"));
   if (activity.submission?.receipt) result.append(text("p", `提交回执 ${activity.submission.receipt.id}`));
   const assessment = activity.assessment;
   if (assessment?.status === "pending") {

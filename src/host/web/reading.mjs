@@ -1,3 +1,4 @@
+import { api } from "/api.mjs";
 import { clearLibraryActivity, renderLibraryActivity } from "/library-reading.mjs";
 
 const element = id => document.getElementById(id);
@@ -16,19 +17,6 @@ const startKey = "learning-kernel:start";
 let activity;
 let pending;
 let busy = false;
-
-function api(path, input) {
-  const request = input && {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ protocolVersion: 1, ...input }),
-  };
-  return fetch(path, { cache: "no-store", ...request }).then(async response => {
-    const payload = await response.json();
-    if (!response.ok) throw Object.assign(new Error("请求未完成", { cause: response.status }), { code: payload.code });
-    return payload;
-  });
-}
 
 function activityURL(activityId) {
   return `/api/activities/${activityId}`;

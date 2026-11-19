@@ -4,9 +4,9 @@ import { reviewDisclosure } from "./review-access.ts";
 import { assessmentTarget, questionVerdicts } from "./verdict-state.ts";
 
 export function studentResults(database: DatabaseSync, activity: ReadingActivity) {
-  const target = assessmentTarget(database, activity.activityId);
-  if (!target) return {};
   const policy = activity.practice.policy.student;
+  const target = assessmentTarget(database, activity.activityId);
+  if (!target || !policy.passageScore) return {};
   const pending = policy.ownSubmission.onFinal.includes("passageGradingStatus") ? { status: "pending" as const } : undefined;
   if (target.status !== "done") return { assessment: pending };
   const graded = questionVerdicts(database, activity, target).flatMap(({ questionId, effective }) =>
@@ -16,14 +16,15 @@ export function studentResults(database: DatabaseSync, activity: ReadingActivity
   const fields = Object.fromEntries(policy.passageScore.fields.map(field => [field, result[field]]));
   return {
     assessment: { status: "complete" as const, ...fields },
-    review: studentReview(database, activity, graded),
+    review: policy.review && studentReview(database, activity.activityId, policy.review, graded),
   };
 }
 
-function studentReview(database: DatabaseSync, activity: ReadingActivity, graded: { questionId: string; correct: boolean }[]) {
-  const disclosure = reviewDisclosure(database, activity.activityId);
+type PublishedReview = NonNullable<ReadingActivity["practice"]["policy"]["student"]["review"]>;
+
+function studentReview(database: DatabaseSync, activityId: string, policy: PublishedReview, graded: { questionId: string; correct: boolean }[]) {
+  const disclosure = reviewDisclosure(database, activityId);
   if (!disclosure?.reviewOpen) return undefined;
-  const policy = activity.practice.policy.student.review;
   const byQuestion = policy.byQuestion.includes("effectiveVerdict") ? graded : undefined;
   const selectionFeedback = policy.byQuoteSet.includes("learnerFeedback") ? disclosure.feedback ?? undefined : undefined;
   if (!byQuestion && !selectionFeedback) return undefined;
