@@ -62,26 +62,28 @@ test("发布仅接受整卷配置中的精确宿主评估器，保留历史内�
   } finally {
     missing.close();
   }
-  const runtime = openLearningRuntime({ databasePath: path, choiceEvaluators: [registration, { ...registration, version: 2 }] });
-  try {
-    for (const unavailable of [{ ...evaluator, version: 3 }, { ...evaluator, id: "unknown" }]) {
+  assert.doesNotThrow(() => {
+    const runtime = openLearningRuntime({ databasePath: path, choiceEvaluators: [registration, { ...registration, version: 2 }] });
+    try {
+      for (const unavailable of [{ ...evaluator, version: 3 }, { ...evaluator, id: "unknown" }]) {
+        assert.throws(() => runtime.publish({
+          ...registeredPublication, practice: { ...registeredPublication.practice,
+            grading: { assessment: { ...practice.grading.assessment, evaluator: unavailable } },
+          },
+        }), rejectsPublication);
+      }
       assert.throws(() => runtime.publish({
-        ...registeredPublication, practice: { ...registeredPublication.practice,
-          grading: { assessment: { ...practice.grading.assessment, evaluator: unavailable } },
-        },
+        scoringKey, practice: { ...practice, grading: { assessment: { ...practice.grading.assessment, evaluator } } },
       }), rejectsPublication);
+      using database = new DatabaseSync(path);
+      for (const table of ["practices", "scoring_keys"]) {
+        assert.equal(database.prepare(`SELECT count(*) AS count FROM ${table}`).get()?.count, 0);
+      }
+      runtime.publish(registeredPublication);
+    } finally {
+      runtime.close();
     }
-    assert.throws(() => runtime.publish({
-      scoringKey, practice: { ...practice, grading: { assessment: { ...practice.grading.assessment, evaluator } } },
-    }), rejectsPublication);
-    using database = new DatabaseSync(path);
-    for (const table of ["practices", "scoring_keys"]) {
-      assert.equal(database.prepare(`SELECT count(*) AS count FROM ${table}`).get()?.count, 0);
-    }
-    runtime.publish(registeredPublication);
-  } finally {
-    runtime.close();
-  }
+  });
 });
 
 test("已确认评估在当前权限下恢复，坏回调和第二题写入失败都保留待评任务", t => {
@@ -121,7 +123,7 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
     assert.equal(callbackCalls, 0);
 
     const legacyReceipt = confirmLegacy(runtime, database);
-    evaluatePending(database);
+    assert.doesNotThrow(() => evaluatePending(database));
     assert.deepEqual(evaluationFacts(database, receipt.id), pending);
     assert.deepEqual(evaluationFacts(database, legacyReceipt.id), {
       status: "done", verdicts: questions.map(question => [question.id, 1]),

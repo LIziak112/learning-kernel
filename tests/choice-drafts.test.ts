@@ -79,7 +79,7 @@ test("分题改稿、陈旧相同答案收敛与原操作重发共享同一冻�
     assert.throws(() => save({ ...first, choice: "2" }), conflict(1, "0", "OPERATION_CONFLICT"));
     const revision2 = save({ ...first, operationId: "second", baseRevision: 1, choice: "1" });
     assert.deepEqual(revision2, { ...revision1, choice: "1", revision: 2, changeCount: 2 });
-    assert.deepEqual(save(first), revision1);
+    assert.doesNotThrow(() => assert.deepEqual(save(first), revision1));
     assert.throws(() => runtime.saveChoiceDraft(other, activityId, { ...first, choice: "2" }), denial(403, "FORBIDDEN"));
     assert.throws(() => save({ ...first, choice: "1" }), conflict(2, "1", "OPERATION_CONFLICT"));
     assert.throws(() => save({ ...first, baseRevision: 2 }), conflict(2, "1", "OPERATION_CONFLICT"));
@@ -126,8 +126,8 @@ test("旧客户端逐题保存并升版，只有已接受的版本化保存能�
     assert.equal("choiceDrafts" in runtime.read(student, activityId), false);
     assert.deepEqual(counts(database), [0, 0, 0, 0, 0, 0]);
 
-    const first = save(legacy);
-    assert.deepEqual(first, { slotId: legacy.slotId, questionId, questionVersion, choice: "0", revision: 1, changeCount: 1 });
+    const first = { slotId: legacy.slotId, questionId, questionVersion, choice: "0", revision: 1, changeCount: 1 };
+    assert.doesNotThrow(() => assert.deepEqual(save(legacy), first));
     const modern = { ...legacy, operationId: "takeover", baseRevision: 0 };
     assert.throws(() => save({ ...modern, choice: "1" }), conflict(1, "0"));
     const second = save(legacy);

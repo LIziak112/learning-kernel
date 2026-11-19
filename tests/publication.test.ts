@@ -16,8 +16,10 @@ test("发布两步阅读并固定材料版本、独立使用位置和前序槽�
   const path = databasePath(t);
   {
     using database = openDatabase(path);
-    registerPublication(database, reading);
-    registerPublication(database, reading);
+    assert.doesNotThrow(() => {
+      registerPublication(database, reading);
+      registerPublication(database, reading);
+    });
   }
   using database = openDatabase(path);
   const material = database.prepare("SELECT id, version FROM materials").all();

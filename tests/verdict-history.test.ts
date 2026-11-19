@@ -50,7 +50,9 @@ test("同题连续改判｜修订 0 到 4 保留全部历史并按次序回落",
       reason: "题目条件足以支持该选项", correct: true,
     };
     await score(origin, scenario.path, 1);
-    const initial = (await result(get(origin, review, "teacher"), verdicts)).verdicts.find(row => row.questionId === "q2");
+    const projected = verdicts.safeParse(await result(get(origin, review, "teacher"), z.unknown()));
+    assert.ok(projected.success, projected.error?.message);
+    const initial = projected.data.verdicts.find(row => row.questionId === "q2");
     assert.equal(initial?.revision, 0);
     assert.deepEqual(initial?.effective, { source: "automatic", correct: false });
     await rejection(post(origin, path, { ...first, questionId: "q-missing" }, "teacher"), 403, "FORBIDDEN");
