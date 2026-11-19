@@ -67,6 +67,13 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
     const otherSlot = runtime.start(student, { ...opening, practiceId: unscored, operationId: "unscored" });
     assert.throws(() => runtime.reviseChoiceSnapshot(teacher, otherSlot.activityId, { ...correction, stepAttemptId: otherSlot.stepAttemptId }),
       { code: "INVALID_SLOT" });
+    const legacyPractice = "whole-step-legacy";
+    runtime.publish({ ...frozenChoicePublication, practice: { ...frozenChoicePublication.practice, id: legacyPractice,
+      questions: publication.practice.questions,
+    } });
+    const legacyActivity = runtime.start(student, { ...opening, practiceId: legacyPractice, operationId: "legacy" });
+    assert.throws(() => runtime.reviseChoiceSnapshot(teacher, legacyActivity.activityId,
+      { ...correction, stepAttemptId: legacyActivity.stepAttemptId }), { code: "INVALID_SLOT" });
     external = true;
     assert.throws(() => revise(correction), { code: "RESPONSE_EVIDENCE_EXISTS" });
     external = false;
@@ -74,12 +81,17 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
       error instanceof ChoiceSnapshotRevisionConflict && error.current.revision === 0 && !("choice" in error.current));
     const fixed = revise(correction);
     assert.deepEqual(fixed, { slotId: scope.slotId, questionId: firstId, previousQuestionVersion: 1, questionVersion: 2, revision: 1 });
+    for (const mismatch of [{ questionVersion: 2 }, { baseRevision: 1 }, { reason: "新理由" }, { acceptedChoice: "1" }]) {
+      assert.throws(() => revise({ ...correction, ...mismatch }), { code: "OPERATION_CONFLICT" });
+    }
     assert.deepEqual(checked.at(-1), { reviewerId: teacher.id, studentId: student.id, activityId, stepAttemptId, slotId: scope.slotId,
       questionId: firstId, questionVersion: 1, baseRevision: 0, operationId: "amend" });
     assert.equal(runtime.readChoiceDraftActivity(student, activityId), undefined);
     const view = runtime.read(student, activityId);
     assert.doesNotMatch(JSON.stringify(view), /acceptedChoice|scoringKey|勘误公开题面与私钥/);
     assert.equal("choiceDrafts" in view, false);
+    assert.ok("choiceSnapshotRevisions" in view);
+    assert.deepEqual(view.choiceSnapshotRevisions, [{ slotId: scope.slotId, questionId: firstId, questionVersion: 2, revision: 1 }]);
     assert.throws(() => runtime.replacePreparedActivityVersion(student, activityId, {
       protocolVersion: 1, stepAttemptId, operationId: "replace", expectedPracticeVersion: 1, practiceVersion: 2,
     }), { code: "ACTIVITY_ALREADY_STARTED" });
@@ -121,6 +133,18 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
     assert.equal(checked.length, checkedBeforeReplay);
     access = false;
     assert.throws(() => revise(correction), denied);
+
+    const confirmationKey = { protocolVersion: 1, stepAttemptId, operationId: "confirm" } as const;
+    using database = new DatabaseSync(path);
+    const work = database.prepare("SELECT id FROM works WHERE activity_id = ? AND step_attempt_id = ? AND question_id = ?")
+      .get(activityId, stepAttemptId, firstId);
+    assert.ok(typeof work?.id === "string");
+    database.prepare("UPDATE work_versions SET selection = json_set(selection, '$.choice', '1') WHERE work_id = ?").run(work.id);
+    assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, confirmationKey), /已确认作答缺少对应的草稿版本/);
+    database.prepare("DELETE FROM choice_draft_amendments WHERE work_id = ?").run(work.id);
+    database.prepare("DELETE FROM work_versions WHERE work_id = ?").run(work.id);
+    assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, confirmationKey), /已确认作答缺少对应的草稿版本/);
+    assert.deepEqual(runtime.confirmChoices(student, activityId, { ...proof, questions: [...proof.questions] }), receipt);
   } finally {
     runtime.close();
   }
@@ -146,6 +170,18 @@ test("内核已存整步草稿和撤权也能拒绝新勘误", t => {
     assert.throws(() => revise(input), { code: "RESPONSE_EVIDENCE_EXISTS" });
     const allowed = { ...input, questionId: secondId };
     assert.equal(revise(allowed).revision, 1);
+    const confirmation = { ...scope, operationId: "confirm", questions: [
+      { questionId: firstId, questionVersion: 1, revision: 0, original: { state: "uncollected" } },
+      { questionId: secondId, questionVersion: 2, revision: 0, original: { state: "uncollected" } },
+    ] } as const;
+    assert.throws(() => runtime.confirmChoices(student, activityId, { ...confirmation, questions: [...confirmation.questions] }), {
+      code: "ANSWER_REVISION_CONFLICT", current: { revision: 1, choice: null }, questionId: secondId,
+    });
+    const heads = confirmation.questions.map(question => question.questionId === secondId ? { ...question, revision: 1 } : question);
+    runtime.confirmChoices(student, activityId, { ...confirmation, questions: heads });
+    const frozen = runtime.read(student, activityId).submission;
+    assert.ok(frozen && "confirmation" in frozen && frozen.confirmation);
+    assert.deepEqual(frozen.confirmation.questions.map(question => [question.revision, question.choice]), [[0, null], [1, null]]);
     assert.deepEqual(manageReading(database, teacher.id, activityId, "revokeReviewer"), { reviewerActive: false });
     assert.throws(() => revise(allowed), { status: 403, code: "FORBIDDEN" });
   } finally {
