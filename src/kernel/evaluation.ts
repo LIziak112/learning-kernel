@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { readingCapability } from "../builtins/reading-capabilities.ts";
+import { choiceKeyCapability } from "../builtins/reading-capabilities.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { readingPracticeSchema, scoringKeySchema } from "../contracts/reading-publication.ts";
 import { readingAnswer } from "../contracts/reading-runtime.ts";
@@ -40,28 +40,37 @@ export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeChec
     JOIN activities i ON i.id = a.activity_id
     JOIN practices p ON p.id = i.practice_id AND p.version = i.practice_version
     JOIN work_versions v ON v.work_id = s.work_id AND v.version = s.work_version
-    WHERE t.status = 'pending' ORDER BY s.confirmed_at, s.id
-  `).all();
+    WHERE t.status = 'pending'
+      AND p.definition ->> '$.grading.assessment.evaluator.id' = ?
+      AND p.definition ->> '$.grading.assessment.evaluator.version' = ?
+    ORDER BY s.confirmed_at, s.id
+  `).all(choiceKeyCapability.id, choiceKeyCapability.version);
   for (const row of pending) evaluateTask(database, task.parse(row), checkpoint);
 }
 
 function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, checkpoint?: RuntimeCheckpoint) {
   checkpoint?.({ point: "beforeEvaluation", submissionId: input.submissionId });
   const practice = readingPracticeSchema.parse(JSON.parse(input.practiceJSON));
-  const assessment = practice.grading.assessment;
-  const evaluator = assessment && readingCapability(assessment.evaluator);
-  if (evaluator?.audience !== "server") throw new Error("已发布评估器不可用");
   const key = scoringKeySchema.parse(JSON.parse(input.keyJSON));
   const answer = readingAnswer.parse(JSON.parse(input.answerJSON));
+  const verdicts = practice.questions.map(({ id: questionId }) => ({
+    questionId, correct: key.acceptedChoices[questionId] === answer.choices[questionId],
+  }));
+  recordEvaluation(database, input, verdicts, checkpoint);
+}
+
+export function recordEvaluation(
+  database: DatabaseSync, { submissionId, targetId }: { submissionId: string; targetId: string },
+  verdicts: readonly { questionId: string; correct: boolean }[], checkpoint?: RuntimeCheckpoint,
+) {
   const record = database.prepare(`
     INSERT INTO automatic_verdicts (submission_id, target_id, question_id, correct)
     VALUES (?, ?, ?, ?) ON CONFLICT (submission_id, target_id, question_id) DO NOTHING
   `);
-  for (const question of practice.questions) {
-    const correct = key.acceptedChoices[question.id] === answer.choices[question.id];
-    record.run(input.submissionId, input.targetId, question.id, Number(correct));
-    checkpoint?.({ point: "afterAutomaticVerdict", submissionId: input.submissionId, questionId: question.id });
+  for (const { questionId, correct } of verdicts) {
+    record.run(submissionId, targetId, questionId, Number(correct));
+    checkpoint?.({ point: "afterAutomaticVerdict", submissionId, questionId });
   }
-  checkpoint?.({ point: "beforeEvaluationComplete", submissionId: input.submissionId });
-  database.prepare("UPDATE evaluation_tasks SET status = 'done' WHERE submission_id = ?").run(input.submissionId);
+  checkpoint?.({ point: "beforeEvaluationComplete", submissionId });
+  database.prepare("UPDATE evaluation_tasks SET status = 'done' WHERE submission_id = ?").run(submissionId);
 }

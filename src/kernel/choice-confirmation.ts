@@ -2,10 +2,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
   ConfirmationScope, VerifyOriginal } from "../contracts/choice-confirmation.ts";
+import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
 import { loadStudentActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { ChoiceDraftConflict, readChoiceDrafts } from "./choice-drafts.ts";
+import { recoverChoiceEvaluation } from "./choice-evaluation.ts";
 import { writeTransaction } from "./database.ts";
+import { queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { boundOutput, requireBeforeDeadline } from "./reading-progress.ts";
 import { finishActivity, recordSubmission, submissionForOperation } from "./submission-store.ts";
@@ -41,22 +44,27 @@ export function confirmChoices(
     const observations = questions.flatMap(({ questionId, choice }) =>
       choice === null ? [] : [{ targetId: slot.targetId, unitId: `question:${questionId}` }]);
     const receipt = recordSubmission(database, { ...input, draft }, observations, now);
+    queueEvaluation(database, activity, receipt, slot.targetId);
     finishActivity(database, activityId, receipt.id);
     return receipt;
   });
 }
 
 export function recoverChoiceConfirmation(
-  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey, authorize?: AuthorizeConfirmationRecovery,
+  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey,
+  authorize: AuthorizeConfirmationRecovery | undefined, registered: readonly ChoiceEvaluatorRegistration[],
 ) {
   return writeTransaction(database, () => {
-    const { practice } = loadChoiceActivity(database, studentId, activityId, key.stepAttemptId);
+    const activity = loadChoiceActivity(database, studentId, activityId, key.stepAttemptId);
     if (authorize?.({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }) !== true) {
       throw new LearningError(403, "FORBIDDEN");
     }
     const recovered = confirmationForOperation(database, activityId, key);
     if (!recovered?.confirmation) throw new LearningError(404, "CONFIRMATION_NOT_FOUND");
-    return { receipt: recovered.receipt, practice: { id: practice.id, version: practice.version }, confirmation: recovered.confirmation };
+    const { receipt, confirmation } = recovered;
+    const { id, version } = activity.practice;
+    const evaluation = recoverChoiceEvaluation(database, activity, receipt, confirmation, registered);
+    return { receipt, practice: { id, version }, confirmation, ...(evaluation ? { evaluation } : {}) };
   });
 }
 

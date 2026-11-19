@@ -61,7 +61,9 @@ const activity = runtime.read(principal, receipt.activityId);
 
 旧协议调用同一个方法时省略 `operationId` 与 `baseRevision`。该题接受首次版本化操作前，每次旧协议保存都新增一个修订，包括重复保存相同选项。首次版本化操作即使与当前选项相同且沿用原修订，也会接管该题。此后旧协议保存返回 `ANSWER_REVISION_CONFLICT` 并附当前修订与本人选择。题与题独立接管。没有幂等键的旧协议请求每次都按一次新保存处理。
 
-整卷确认使用单步 `finalAnswer` 的单选槽，显式声明 `confirmFromDrafts: { allowUnanswered: true }` 可保留空答。`confirmChoices` 接受冻结全题的题版本、当前草稿修订和原稿状态，服务端从已存草稿取选项。`uncollected` 用于旧协议未采集。可信宿主同步 `verifyOriginal` 核实各状态，包括旧协议是否允许未采集。未配置回调时只接受 `uncollected`。`frozen` 保存文档 ID、版本 ID 和可选 SHA-256。宿主先持久保留选定版本，再把核实结果交给内核。确认成功返回唯一回执。草稿修订冲突通过 `ChoiceConfirmationConflict` 返回冲突的题和本人当前草稿。授权仍有效时可用同一操作和意图重取回执。常规学生 `read` 遵守已发布的回看字段。可信宿主另可凭活动、步骤尝试和操作标识调用 `recoverChoiceConfirmation`，每次须经当前活动授权和配置的 `authorizeConfirmationRecovery` 核对，返回引用的发布版本和完整确认事实。此确认模式与内置自动评分分开声明。
+整卷确认使用单步 `finalAnswer` 的单选槽，显式声明 `confirmFromDrafts: { allowUnanswered: true }` 可保留空答。`confirmChoices` 接受冻结全题的题版本、当前草稿修订和原稿状态，服务端从已存草稿取选项。`uncollected` 用于旧协议未采集。可信宿主同步 `verifyOriginal` 核实各状态，包括旧协议是否允许未采集。未配置回调时只接受 `uncollected`。`frozen` 保存文档 ID、版本 ID 和可选 SHA-256。宿主先持久保留选定版本，再把核实结果交给内核。确认成功返回唯一回执。草稿修订冲突通过 `ChoiceConfirmationConflict` 返回冲突的题和本人当前草稿。授权仍有效时可用同一操作和意图重取回执。常规学生 `read` 遵守已发布的回看字段。可信宿主另可凭活动、步骤尝试和操作标识调用 `recoverChoiceConfirmation`，每次须经当前活动授权和配置的 `authorizeConfirmationRecovery` 核对，返回引用的发布版本和完整确认事实。
+
+宿主可在 `openLearningRuntime({ databasePath, choiceEvaluators: [{ id, version, evaluate }], authorizeConfirmationRecovery })` 注册同步纯函数评估器。在草稿确认槽的 `grading.assessment` 指定同一评估器版本和本次发布的评分键。确认时持久化评估任务。可信宿主使用原确认操作标识调用 `recoverChoiceConfirmation`，经现行授权后完成待评任务，并在 `evaluation` 取回评估器版本、冻结题数、正确题数及逐题布尔判定。回调逐题收到活动、步骤尝试、槽、练法和题目版本，以及本人的选项和私有正确选项。空答为 `null`，也参与评估。等待评估时缺少精确版本返回 `EVALUATOR_UNAVAILABLE`，修复配置后可用同一操作恢复。评估异常会回滚整份判定并保留待评任务。任务完成后直接读取已存判定。学生结果仍遵守发布时的公布条件，历史 `choice-key` 声明仍使用原评估规则。
 
 `node --test tests/installed-runtime.test.ts` 在两个独立临时项目安装同一个固定包，通过包名开卷和读取，在新进程打开原库，并验证严格类型检查、冻结版本和学生隔离。
 

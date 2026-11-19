@@ -1,10 +1,15 @@
-import { readingCapability, studentTool } from "../builtins/reading-capabilities.ts";
+import { choiceKeyCapability, readingCapability, studentTool } from "../builtins/reading-capabilities.ts";
 import type { ValueType } from "../builtins/reading-capabilities.ts";
+import { findChoiceEvaluator } from "../contracts/choice-evaluation.ts";
+import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
+import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
 
 type Issue = (path: (string | number)[], message: string) => void;
 
-export function validateBindings({ practice, scoringKey }: ReadingPublication, issue: Issue) {
+export function validateBindings(
+  { practice, scoringKey }: ReadingPublication, issue: Issue, registered: readonly ChoiceEvaluatorRegistration[],
+) {
   const earlierSteps = new Map<string, ReadingStep>();
   const positions = new Set<string>();
   for (const [index, step] of practice.steps.entries()) {
@@ -20,7 +25,7 @@ export function validateBindings({ practice, scoringKey }: ReadingPublication, i
     earlierSteps.set(step.id, step);
   }
   if (positions.size > 0 && !practice.material) issue(["practice", "material"], "绑定材料输入时须声明材料版本");
-  validateGrading(practice.grading, earlierSteps, issue);
+  validateGrading(practice.grading, earlierSteps, registered, issue);
   validateAssessmentPolicy(practice, scoringKey, issue);
   validateQuestions(practice, issue);
 }
@@ -34,7 +39,6 @@ function validateChoiceConfirmation(step: ReadingStep, practice: ReadingPublicat
   if (practice.questions.some(question => question.version === undefined)) {
     issue(["submit", "slots"], "草稿确认须固定每道题的版本");
   }
-  if (practice.grading.assessment) issue(["submit", "slots"], "草稿确认槽须与内置评分分开声明");
 }
 
 function validateQuestions(practice: ReadingPublication["practice"], issue: Issue) {
@@ -140,6 +144,7 @@ function sourceMatchesSlot(slot: ReadingSlot, input: ValueType | undefined) {
 function validateGrading(
   grading: ReadingPublication["practice"]["grading"],
   steps: ReadonlyMap<string, ReadingStep>,
+  registered: readonly ChoiceEvaluatorRegistration[],
   issue: Issue,
 ) {
   const { selectionFeedback, assessment } = grading;
@@ -147,12 +152,29 @@ function validateGrading(
     issue(["practice", "grading", "selectionFeedback", "from"], "评语须绑定选区交付槽位");
   }
   if (!assessment) return;
-  const submittedType = findSlot(steps, assessment.from)?.type;
-  if (submittedType !== "oneChoicePerQuestion") {
+  const slot = findSlot(steps, assessment.from);
+  if (slot?.type !== "oneChoicePerQuestion") {
     issue(["practice", "grading", "assessment", "from"], "逐题评估须绑定单选交付槽位");
+    return;
   }
-  if (readingCapability(assessment.evaluator)?.audience !== "server") {
-    issue(["practice", "grading", "assessment", "evaluator"], "须绑定获准读取评分键并输出逐题判定的服务端评估器");
+  validateAssessmentEvaluator(slot, assessment.evaluator, registered, issue);
+}
+
+function validateAssessmentEvaluator(
+  slot: Extract<ReadingSlot, { type: "oneChoicePerQuestion" }>,
+  evaluator: VersionRef,
+  registered: readonly ChoiceEvaluatorRegistration[],
+  issue: Issue,
+) {
+  const path = ["practice", "grading", "assessment", "evaluator"];
+  if (slot.confirmFromDrafts) {
+    if (!findChoiceEvaluator(registered, evaluator)) {
+      issue(path, "草稿确认槽须注册精确版本的宿主评估器，内置评分用于旧声明");
+    }
+    return;
+  }
+  if (readingCapability(evaluator) !== choiceKeyCapability) {
+    issue(path, "须绑定获准读取评分键并输出逐题判定的服务端评估器");
   }
 }
 

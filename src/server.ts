@@ -3,6 +3,7 @@ import { choiceConfirmationInput, confirmationKey } from "./contracts/choice-con
 import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, VerifyOriginal } from "./contracts/choice-confirmation.ts";
 import { choiceDraftInput } from "./contracts/choice-draft.ts";
 import type { ChoiceDraftInput, UnversionedChoiceDraftInput } from "./contracts/choice-draft.ts";
+import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
 import { startActivity } from "./kernel/activity.ts";
@@ -15,6 +16,7 @@ import { readActivity } from "./kernel/submission.ts";
 
 const runtimeOptions = z.strictObject({
   databasePath: z.string().min(1),
+  choiceEvaluators: choiceEvaluators.default([]),
   verifyOriginal: z.custom<VerifyOriginal>(value => typeof value === "function").optional(),
   authorizeConfirmationRecovery: z.custom<AuthorizeConfirmationRecovery>(value => typeof value === "function").optional(),
 });
@@ -23,6 +25,7 @@ const publishedStartInput = startInput.extend({ practiceVersion: versionRef.shap
 const uuid = z.uuid();
 
 export { LearningError };
+export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, UnversionedChoiceDraftInput, VerifyOriginal };
@@ -42,7 +45,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const database = openDatabase(settings.databasePath);
   return {
     publish(input: PublicationInput) {
-      registerPublication(database, input);
+      registerPublication(database, input, settings.choiceEvaluators);
     },
     start(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, studentId(principal), publishedStartInput.parse(input), () => new Date());
@@ -59,7 +62,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     },
     recoverChoiceConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
       return recoverChoiceConfirmation(database, studentId(principal), uuid.parse(activityId), confirmationKey.parse(key),
-        settings.authorizeConfirmationRecovery);
+        settings.authorizeConfirmationRecovery, settings.choiceEvaluators);
     },
     close() {
       database.close();

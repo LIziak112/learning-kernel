@@ -27,6 +27,15 @@ export const textSelectionCapability = {
   outputs: ["textRange"],
 } as const satisfies ReadingCapability;
 
+export const choiceKeyCapability = {
+  id: "choice-key",
+  version: 1,
+  audience: "server",
+  requiredInputs: ["oneChoicePerQuestion", "scoringKey"],
+  optionalInputs: [],
+  outputs: ["questionVerdict"],
+} as const satisfies ReadingCapability;
+
 const capabilities: readonly ReadingCapability[] = [
   textSelectionCapability,
   {
@@ -45,18 +54,15 @@ const capabilities: readonly ReadingCapability[] = [
     optionalInputs: ["material", "passageSelection", "oneChoicePerQuestion"],
     outputs: ["oneChoicePerQuestion"],
   },
-  {
-    id: "choice-key",
-    version: 1,
-    audience: "server",
-    requiredInputs: ["oneChoicePerQuestion", "scoringKey"],
-    optionalInputs: [],
-    outputs: ["questionVerdict"],
-  },
+  choiceKeyCapability,
 ];
 
 export function readingCapability(reference: VersionRef) {
   return capabilities.find(capability => capability.id === reference.id && capability.version === reference.version);
+}
+
+export function isReservedReadingCapability(id: string) {
+  return capabilities.some(capability => capability.id === id);
 }
 
 export function studentTool(reference: VersionRef) {

@@ -17,10 +17,14 @@ export function assessmentTarget(database: DatabaseSync, activityId: string) {
   return target ? assessment.parse(target) : undefined;
 }
 
-export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: z.infer<typeof assessment>) {
-  const automatic = database.prepare(`
+export function readAutomaticVerdicts(database: DatabaseSync, { submissionId, targetId }: { submissionId: string; targetId: string }) {
+  return database.prepare(`
     SELECT question_id AS questionId, correct, valid FROM automatic_verdicts WHERE submission_id = ? AND target_id = ?
-  `).all(target.submissionId, target.targetId).map(row => storedAutomatic.parse(row));
+  `).all(submissionId, targetId).map(row => storedAutomatic.parse(row));
+}
+
+export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: z.infer<typeof assessment>) {
+  const automatic = readAutomaticVerdicts(database, target);
   const history = verdictHistory(database, target);
   return activity.practice.questions.map(question => {
     const questionHistory = history.filter(event => event.questionId === question.id);

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
 import { publicationSchema } from "../contracts/reading.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import { readingPublicationSchema } from "../contracts/reading-publication.ts";
@@ -8,14 +9,16 @@ import { validateBindings } from "./publication-bindings.ts";
 
 const storedDefinition = z.object({ definition: z.string() });
 const publicationFormat = z.object({ practice: z.object({ formatVersion: z.unknown().optional() }) });
-const validatedReading = readingPublicationSchema.superRefine((value, context) => {
-  validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }));
-});
+function parseReadingPublication(input: unknown, registered: readonly ChoiceEvaluatorRegistration[]) {
+  return readingPublicationSchema.superRefine((value, context) => {
+    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered);
+  }).parse(input);
+}
 
-export function registerPublication(database: DatabaseSync, input: unknown) {
+export function registerPublication(database: DatabaseSync, input: unknown, registered: readonly ChoiceEvaluatorRegistration[] = []) {
   const { practice: format } = publicationFormat.parse(input);
   const { material, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
-    ? validatedReading.parse(input)
+    ? parseReadingPublication(input, registered)
     : { ...publicationSchema.parse(input), scoringKey: undefined };
   requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);
