@@ -49,6 +49,7 @@ const migrations = [
   choiceAmendmentMigration,
   choiceSnapshotMigration,
 ];
+export const latestDatabaseVersion = migrations.length + 1;
 
 export function openDatabase(path: string): DatabaseSync {
   const database = new DatabaseSync(path, { timeout: 5000, enableForeignKeyConstraints: false });
@@ -93,11 +94,10 @@ function migrate(database: DatabaseSync) {
     `);
   }
   const { version } = migrationVersion.parse(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get());
-  const latestVersion = migrations.length + 1;
-  if (version === null || version < 1 || version > latestVersion) {
+  if (version === null || version < 1 || version > latestDatabaseVersion) {
     throw new Error(`不支持的数据库版本：${String(version)}`);
   }
-  if (version === latestVersion) return;
+  if (version === latestDatabaseVersion) return;
   const record = database.prepare("INSERT INTO schema_migrations (version) VALUES (?)");
   for (const [index, sql] of migrations.entries()) {
     const nextVersion = index + 2;

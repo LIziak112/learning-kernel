@@ -44,7 +44,7 @@ export { verifyActivityBindings } from "./kernel/activity-bindings.ts";
 export type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence };
 export type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDraftAmendmentScope };
 export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
-export type { ActivityBindingClaims } from "./contracts/activity-bindings.ts";
+export type { ActivityBindingClaims, TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";

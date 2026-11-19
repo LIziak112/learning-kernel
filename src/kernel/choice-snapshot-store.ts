@@ -8,6 +8,9 @@ const storedSnapshot = choiceSnapshotRevision.extend({ content: z.string() });
 const draftRevision = z.strictObject({ revision: z.int().positive() });
 const editedQuestion = readingQuestion.pick({ prompt: true, options: true });
 
+export const choiceSnapshotOffsetForWork = `COALESCE((SELECT MAX(s.revision) FROM choice_snapshot_revisions s
+  WHERE s.step_attempt_id = w.step_attempt_id AND s.slot_id = w.slot_id AND s.question_id = w.question_id), 0)`;
+
 type FrozenQuestion = z.infer<typeof readingQuestion>;
 type SnapshotScope = Pick<ChoiceDraftScope, "stepAttemptId" | "slotId" | "questionId">;
 

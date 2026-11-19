@@ -5,7 +5,7 @@ import type { ChoiceDraftInput, ChoiceDraftScope, CurrentChoiceDraftMode, Unvers
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { recordChoiceDraftChange } from "./choice-draft-activity.ts";
-import { choiceRevisionBeforeAnswers } from "./choice-snapshot-store.ts";
+import { choiceRevisionBeforeAnswers, choiceSnapshotOffsetForWork } from "./choice-snapshot-store.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { boundOutput } from "./reading-progress.ts";
@@ -26,8 +26,7 @@ const storedVersion = z.object({
 const storedOperation = storedVersion.extend({ baseRevision: z.int().nonnegative() });
 const versionColumns = `
   w.id AS workId, w.slot_id AS slotId, w.question_id AS questionId, v.version AS workVersion, v.selection AS content,
-  v.version + COALESCE((SELECT MAX(s.revision) FROM choice_snapshot_revisions s
-    WHERE s.step_attempt_id = w.step_attempt_id AND s.slot_id = w.slot_id AND s.question_id = w.question_id), 0) AS revision,
+  v.version + ${choiceSnapshotOffsetForWork} AS revision,
   v.version - (SELECT COUNT(*) FROM choice_draft_amendments a WHERE a.work_id = w.id AND a.revision <= v.version) AS changeCount
 `;
 const currentDrafts = `

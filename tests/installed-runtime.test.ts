@@ -65,6 +65,10 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
       cpSync(new URL("./fixtures/activity-binding-consumer.mts", import.meta.url), join(directory, bindings));
       inputs.push(bindings);
       execFileSync(process.execPath, [bindings], { cwd: directory, stdio: "inherit" });
+      const amendmentBindings = "teacher-amendment-binding-consumer.mts";
+      cpSync(new URL("./fixtures/teacher-amendment-binding-consumer.mts", import.meta.url), join(directory, amendmentBindings));
+      inputs.push(amendmentBindings);
+      execFileSync(process.execPath, [amendmentBindings], { cwd: directory, stdio: "inherit" });
       const prepare = "prepared-version-consumer.mts";
       cpSync(new URL("./fixtures/prepared-version-consumer.mts", import.meta.url), join(directory, prepare));
       inputs.push(prepare);
