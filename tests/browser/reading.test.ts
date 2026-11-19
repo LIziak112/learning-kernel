@@ -292,7 +292,7 @@ async function answerLibrary(workspace: ReturnType<Page["locator"]>) {
   await workspace.getByRole("radio", { name: "A 立即全年延时" }).check();
 }
 
-test("浏览器显示另一窗口的正式答卷，同时保留本窗口未交草稿", { timeout: 25_000 }, async t => {
+test("双端同时交卷｜浏览器显示另一窗口的正式答卷，同时保留本窗口未交草稿", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {
     const first = await openBrowserPage(browser);
     const workspace = await openLibrary(first, origin);
@@ -323,7 +323,7 @@ test("浏览器显示另一窗口的正式答卷，同时保留本窗口未交�
   });
 });
 
-test("浏览器到达截止后禁用交卷，刷新仍保留原草稿", { timeout: 25_000 }, async t => {
+test("双端同时交卷｜浏览器到达截止后禁用交卷，刷新仍保留原草稿", { timeout: 25_000 }, async t => {
   let now = Date.parse("2026-11-19T08:00:00Z");
   await withDemo(t, async (browser, origin) => {
     const learner = await openBrowserPage(browser);
@@ -345,7 +345,7 @@ test("浏览器到达截止后禁用交卷，刷新仍保留原草稿", { timeou
   }, { clock: () => new Date(now) });
 });
 
-test("学生页面随复盘开关闭合逐题反馈，整篇成绩保持 2/3", { timeout: 25_000 }, async t => {
+test("撤权后重新读取｜学生页面随复盘开关闭合逐题反馈，整篇成绩保持 2/3", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin, databasePath) => {
     const learner = await openBrowserPage(browser);
     const workspace = await openLibrary(learner, origin);
@@ -392,7 +392,7 @@ test("学生页面随复盘开关闭合逐题反馈，整篇成绩保持 2/3", {
   }, { evaluateAutomatically: false, reviewerSessions: new Map([["browser-teacher", "teacher-1"]]) });
 });
 
-test("浏览器获知学生记录权限收回后清除旧视图与活动缓存", { timeout: 25_000 }, async t => {
+test("撤权后重新读取｜浏览器获知学生记录权限收回后清除旧视图与活动缓存", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {
     const learner = await openBrowserPage(browser);
     const workspace = await openLibrary(learner, origin);

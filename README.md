@@ -2,9 +2,19 @@
 
 本仓实现可复用的在线学习活动内核。执行 Agent 从 [AGENTS.md](AGENTS.md) 和[仓库级 ub-mode 技能](.agents/skills/ub-mode/SKILL.md)开始。产品进度见[首版实施清单](docs/学习平台内核首版实施清单.md)，领域分层见[参考架构](docs/学习平台内核参考架构.md)，练法验收见[在线两步阅读实施规格](docs/在线两步阅读实施规格.md)。移入的设计文档保留[原许可](docs/LICENSE)。
 
+## 从干净检出验收
+
+使用 Git、Node 24.19.0 和 pnpm 12.6.0。SQLite 使用 Node 自带的 `node:sqlite`。在待验收修订的干净 Git 检出根目录运行：
+
+```sh
+pnpm run accept:fresh
+```
+
+命令按锁文件安装依赖，准备锁定版 Playwright 的 Chromium，并执行累计门禁。它输出被测 Git 修订、四个异常场景、三个声明对照和师生浏览器链路的实跑数与通过数。安装目录和浏览器位于本次检出的 `target/acceptance/`。首次安装需要访问 npm 注册表和 Playwright 浏览器下载服务。各用例在系统临时目录创建独立 SQLite 库并在结束后清理。
+
 ## 本地开发
 
-使用 Node 24.19.0、pnpm 12.6.0。SQLite 使用该 Node 版自带的 `node:sqlite`，无需数据库服务。请在独立检出的 Git 仓库根目录运行：
+开发时可单独安装依赖和测试浏览器，并运行累计门禁。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -17,15 +27,21 @@ pnpm run verify
 
 `node --test tests/single-quote.test.ts` 通过真实本地 HTTP 服务验收单步引文。用例由服务端注入学生会话，覆盖启动和提交重发、草稿升版、文件库重开和跨学生拒绝。累计验收要求数据库组和单步服务组都实际执行。
 
+`pnpm run build` 编译服务端并将演示资源写入 `target/runtime/`。`node --test tests/reading-contrasts.test.ts` 一次构建后在同一产物上验证三个声明。仅运行该文件时使用开发段落安装的 Chromium。
+
 ## 浏览器演示
 
-安装依赖后，运行 `pnpm run dev`，打开[演示学生入口](http://127.0.0.1:3000/demo/student)。点击「打开活动」，在《晚一点关门》中拖选一句话，核对「引文预览」，再点「提交引文」。页面显示「活动已完成」和提交回执。刷新活动页，核对同一引文与同一回执。
+安装依赖后运行 `pnpm run dev`。学生和教师使用不同的浏览器配置，例如普通窗口与无痕窗口，以便同时保留两种会话。
 
-打开[两步阅读演示](http://127.0.0.1:3000/demo/reading)，分别从不同段落选出客流观察和同期条件并提交。第二步对照已交引文作答。按 A、B、A 交卷，盲批初判显示整篇 1/3，可刷新活动回看原答。
+1. 学生点击「打开活动」。把「每晚平均有三十人到馆」所在段选为客流观察，把「自习室因维修暂时关闭」所在段选为同期条件，再点「提交选据」。第二步按 A、B、A 作答并交卷。预期整篇初判为 1/3，若显示待评可点击「刷新成绩」。复制地址栏中的活动链接。 [两步阅读学生入口](http://127.0.0.1:3000/demo/reading)
+2. 教师粘贴活动链接并点击「打开评阅」。在第二题填写评阅理由，点「判对」，核对修订变为 1，再点「开放复盘」。 [教师评阅入口](http://127.0.0.1:3000/demo/teacher)
+3. 学生在原活动页刷新，核对原答仍是 A、B、A，整篇变为 2/3，第二题显示「判定正确」。教师关闭复盘后，学生再次刷新仍见原答和 2/3，逐题判定随复盘关闭而隐藏。
 
-演示服务监听本机 `127.0.0.1:3000`，数据保存在 `data/demo.sqlite`。关闭服务会保留该文件。重启后从演示入口恢复会话，再在同一标签页打开活动或访问已保存的活动链接。
+演示服务监听本机 `127.0.0.1:3000` 并使用 `data/demo.sqlite`。在终端按 Ctrl+C 关闭后文件保留。重启后先按原角色重进演示入口，学生可访问保存的活动链接，教师可重新输入活动链接打开评阅。
 
-浏览器测试由锁定的 Playwright 1.64.1 运行 Chromium，使用独立的临时文件库。单独运行 `node --test tests/browser/reading.test.ts`。Linux 上可用 `pnpm exec playwright install --with-deps --only-shell chromium` 同时准备系统依赖和浏览器。累计验收要求浏览器组实际通过。
+单步演示可在《晚一点关门》中拖选一句话，核对预览后提交。刷新后仍显示同一引文和回执。 [单步引文入口](http://127.0.0.1:3000/demo/student)
+
+浏览器测试由锁定的 Playwright 1.64.1 运行 Chromium。可单独运行 `node --test tests/browser/reading.test.ts`。Linux 若缺 Chromium 所需的系统库，可用 `pnpm exec playwright install --with-deps --only-shell chromium` 准备系统依赖和开发用浏览器。
 
 ## 源码规模与持续集成
 

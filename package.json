@@ -15,6 +15,7 @@
     "check:size": "node scripts/check-size.mjs",
     "lint": "node scripts/lint.mjs",
     "verify": "pnpm run lint && pnpm run typecheck && pnpm run check:size && pnpm test",
+    "accept:fresh": "node scripts/accept-fresh.mjs",
     "build": "node scripts/build-runtime.mjs",
     "hooks:install": "git config --local core.hooksPath .githooks",
     "dev": "node src/host/dev.ts"
