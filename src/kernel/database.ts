@@ -5,6 +5,7 @@ import { evaluationMigration } from "./evaluation-migration.ts";
 import { verdictMigration } from "./verdict-migration.ts";
 import { questionPublicationMigration } from "./question-publication-migration.ts";
 import { choiceDraftMigration, currentChoiceDraftMigration } from "./choice-draft-migration.ts";
+import { choiceAmendmentMigration } from "./choice-amendment-migration.ts";
 import { preparedActivityMigration } from "./prepared-activity-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
@@ -44,6 +45,7 @@ const migrations = [
   `,
   currentChoiceDraftMigration,
   preparedActivityMigration,
+  choiceAmendmentMigration,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

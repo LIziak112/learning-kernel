@@ -141,6 +141,22 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         const latestWinner = outcomes.find(outcome => outcome !== "lost");
         assert.ok(latestWinner === "race-one" || latestWinner === "race-two");
         execFileSync(process.execPath, [current, "race-recover", latestWinner], { cwd: directory, stdio: "inherit" });
+        const amendment = "choice-amendment-consumer.mts";
+        cpSync(new URL("./fixtures/choice-amendment-consumer.mts", import.meta.url), join(directory, amendment));
+        inputs.push(amendment);
+        for (const phase of ["write", "recover"]) {
+          execFileSync(process.execPath, [amendment, phase], { cwd: directory, stdio: "inherit" });
+        }
+        execFileSync(process.execPath, [amendment, "race-prepare"], { cwd: directory, stdio: "inherit" });
+        const edited = await Promise.allSettled(["race-amend", "race-confirm"].map(phase =>
+          run(process.execPath, [amendment, phase], { cwd: directory })));
+        const [amendmentStatus, confirmationStatus] = edited.map(result => {
+          if (result.status === "rejected") throw result.reason;
+          return result.value.stdout.trim();
+        });
+        assert.ok((amendmentStatus === "amended" && confirmationStatus === "ANSWER_REVISION_CONFLICT")
+          || (amendmentStatus === "ALREADY_SUBMITTED" && confirmationStatus === "confirmed"));
+        execFileSync(process.execPath, [amendment, "race-recover", amendmentStatus], { cwd: directory, stdio: "inherit" });
       }
       const compiler = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
       execFileSync(process.execPath, [compiler, "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess",
