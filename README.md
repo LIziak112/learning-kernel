@@ -57,6 +57,8 @@ const activity = runtime.read(principal, receipt.activityId);
 
 `formatVersion: 1` 的练法可以只绑定题目，此时发布可同时省略 `material` 和 `practice.material`。步骤绑定材料时须同时提供材料定义和匹配的版本引用。学生读取当前步骤获准的题目或材料。
 
+逐题单选草稿使用 `saveChoiceDraft(principal, activityId, input)`。发布时在题目上声明冻结 `version`。保存指定 `protocolVersion`、当前 `stepAttemptId`、`slotId`、`questionId`、`questionVersion`、题内 `operationId`、`baseRevision` 和选项 ID `choice`。重发相同命令取回原回执，新操作保存与当前相同的选项时回当前修订和变更数。写入不同选项发生修订冲突时，`ChoiceDraftConflict.current` 带本次判定时的修订号和本人选择。`read` 只向活动本人交付当前步骤的 `choiceDrafts`，没有条目的题从未作答，修订为 0。
+
 `node --test tests/installed-runtime.test.ts` 在两个独立临时项目安装同一个固定包，通过包名开卷和读取，在新进程打开原库，并验证严格类型检查、冻结版本和学生隔离。
 
 ## 浏览器演示

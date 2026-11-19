@@ -7,7 +7,7 @@ import { LearningError } from "./learning-error.ts";
 
 const latestDraft = z.object({ latest: z.int() });
 
-export type WorkScope = { activityId: string; step?: { id: string; slotId: string } };
+export type WorkScope = { activityId: string; step?: { id: string; slotId: string; questionId?: string } };
 
 export function saveWorkVersion(database: DatabaseSync, scope: WorkScope, content: unknown, workId?: string) {
   const fresh = workId === undefined;
@@ -20,7 +20,7 @@ export function saveWorkVersion(database: DatabaseSync, scope: WorkScope, conten
 
 function nextVersion(database: DatabaseSync, scope: WorkScope, id: string, fresh: boolean) {
   if (fresh) {
-    database.prepare("INSERT INTO works (id, activity_id, step_attempt_id, slot_id) VALUES (?, ?, ?, ?)")
+    database.prepare("INSERT INTO works (id, activity_id, step_attempt_id, slot_id, question_id) VALUES (?, ?, ?, ?, ?)")
       .run(id, ...scopeValues(scope));
     return 1;
   }
@@ -42,7 +42,7 @@ export function readPersonalDraft(database: DatabaseSync, student: string, workI
   const row = database.prepare(`
     SELECT v.version, v.selection FROM works w
     JOIN activities a ON a.id = w.activity_id JOIN work_versions v ON v.work_id = w.id
-    WHERE w.id = ? AND a.student_id = ? ORDER BY v.version DESC LIMIT 1
+    WHERE w.id = ? AND a.student_id = ? AND w.question_id IS NULL ORDER BY v.version DESC LIMIT 1
   `).get(workId, student);
   if (!row) throw new LearningError(403, "FORBIDDEN");
   const stored = z.object({ version: z.int().positive(), selection: z.string() }).parse(row);
@@ -60,11 +60,11 @@ function authorInput(content: unknown) {
 
 function requireWorkScope(database: DatabaseSync, scope: WorkScope, id: string) {
   const work = database.prepare(`
-    SELECT 1 FROM works WHERE id = ? AND activity_id = ? AND step_attempt_id IS ? AND slot_id IS ?
+    SELECT 1 FROM works WHERE id = ? AND activity_id = ? AND step_attempt_id IS ? AND slot_id IS ? AND question_id IS ?
   `).get(id, ...scopeValues(scope));
   if (!work) throw new LearningError(403, "FORBIDDEN");
 }
 
 function scopeValues({ activityId, step }: WorkScope) {
-  return step ? [activityId, step.id, step.slotId] : [activityId, null, null];
+  return [activityId, step?.id ?? null, step?.slotId ?? null, step?.questionId ?? null];
 }

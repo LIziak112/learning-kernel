@@ -24,7 +24,7 @@ function stepForAttempt(database: DatabaseSync, activity: ReadingActivity, attem
   return step;
 }
 
-function boundOutput(step: ReadingStep, slotId: string) {
+export function boundOutput(step: ReadingStep, slotId: string) {
   const slot = step.submit.slots[slotId];
   if (!slot || slot.type === "reuse" || !studentTool(step.tool)?.outputs.includes(slot.type)) {
     throw new LearningError(422, "INVALID_SLOT");

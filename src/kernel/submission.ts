@@ -4,6 +4,7 @@ import type { ActivityDetail, SaveInput, SubmitInput } from "../contracts/readin
 import type { ReadingAnswerInput, ReadingSaveInput } from "../contracts/reading-runtime.ts";
 import { selectText } from "../builtins/selection.ts";
 import { loadStudentActivity } from "./activity.ts";
+import { readChoiceDrafts } from "./choice-drafts.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { confirmReadingDraft, readingActivityView, saveReadingAnswer, saveReadingSelection, studentSubmissionView } from "./reading-progress.ts";
@@ -53,7 +54,11 @@ export function submitDraft(
 export function readActivity(database: DatabaseSync, student: string, activityId: string) {
   const activity = loadStudentActivity(database, student, activityId);
   const submissions = activitySubmissions(database, activityId);
-  if (activity.kind === "reading") return readingActivityView(database, activity, submissions);
+  if (activity.kind === "reading") {
+    const view = readingActivityView(database, activity, submissions);
+    const choiceDrafts = readChoiceDrafts(database, activityId, activity.stepAttemptId);
+    return choiceDrafts.length > 0 ? { ...view, choiceDrafts } : view;
+  }
   const { kind, completed, ...previous } = activity;
   const view: ActivityDetail = {
     ...previous,

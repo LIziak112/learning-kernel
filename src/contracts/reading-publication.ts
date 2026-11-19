@@ -80,7 +80,7 @@ export const readingPracticeSchema = versionRef.extend({
   material: versionRef.optional(),
   goals: descriptions,
   questions: z.array(z.strictObject({
-    id, prompt: nonempty, options: descriptions,
+    id, version: versionRef.shape.version.optional(), prompt: nonempty, options: descriptions,
   })).default([]),
   steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
