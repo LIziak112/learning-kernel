@@ -1,0 +1,185 @@
+种类	固定源码	对象	键、保存内容或比较条件	关联场景及责任
+产品表	apps/server/src/db/schema-ai-attempt-review.ts:166	ai_attempt_review_facts	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema-ai-attempt-review.ts:133	ai_attempt_review_results	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema-ai-attempt-review.ts:41	ai_attempt_review_tasks	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1533	ai_connections	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1771	ai_facts	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1736	ai_messages	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1496	ai_policy_overrides	主键 subject_type+subject_id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1899	ai_prompt_overrides	主键 owner_type+owner_id+slot_key；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1859	ai_quick_buttons	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema-review-v2.ts:100	ai_review_v2_audit	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema-review-v2.ts:13	ai_review_v2_runs	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema-review-v2.ts:49	ai_review_v2_tasks	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1820	ai_share_tickets	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1685	ai_task_materials	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1592	ai_tasks	主键 id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1465	ai_teacher_settings	主键 teacher_id；AI 凭证、策略、任务与票据	M12-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1307	annotation_bases	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1399	annotations	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:119	app_settings	主键 key；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:822	assignment_students	主键 assignment_id+student_id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema.ts:800	assignment_units	主键 assignment_id+unit_id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema.ts:729	assignments	主键 id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema-attachments.ts:17	attachments	主键 id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema-attempt-batch-submissions.ts:11	attempt_batch_submissions	主键 id；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/schema-attempt-context-freezes.ts:12	attempt_context_freezes	主键 attempt_id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema-attempt-context-freezes.ts:34	attempt_context_snapshots	主键 id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/attempt-time-schema.ts:22	attempt_event_receipts	主键 seq；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/schema-attempt-settlements.ts:13	attempt_settlements	主键 id；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/schema-attempt-batch-submissions.ts:27	attempt_submission_batches	主键 submission_id+batch_index；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/attempt-time-schema.ts:12	attempt_time_profiles	主键 attempt_id；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/attempt-time-schema.ts:78	attempt_time_spans	主键 id；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/schema-attempts.ts:10	attempts	主键 id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema.ts:369	course_items	主键 id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:411	course_students	主键 course_id+student_id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/course-schema.ts:3	courses	主键 id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/create-receipt-schema.ts:3	create_receipts	主键 kind+actor_id+operation_id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema.ts:236	data_migrations	主键 key；数据库升级回填	M13-P04；M13 对账
+产品表	apps/server/src/db/schema-devices.ts:10	devices	主键 subject_type+subject_id+device_id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:946	events	主键 id；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:691	imports	主键 id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:896	ink	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:127	ink_profiles	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:652	knowledge_points	主键 id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:255	lectures	主键 id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:211	library_folders	主键 id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:99	login_failures	主键 key；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:615	material_refs	主键 teacher_id+owner_kind+owner_id+material_id+ref_order；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:495	materials	主键 teacher_id+id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema-memos.ts:86	memo_shares	主键 memo_id；随笔与授权	M10-P10；M13 对账
+产品表	apps/server/src/db/schema-memos.ts:17	memos	主键 id；随笔与授权	M10-P10；M13 对账
+产品表	apps/server/src/db/schema.ts:1179	note_images	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1115	note_versions	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:1006	notes	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:585	question_group_members	主键 teacher_id+group_id+question_id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:541	question_groups	主键 teacher_id+id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:665	question_knowledge	主键 teacher_id+question_id+knowledge_point_id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema-question-process.ts:26	question_process_batches	主键 recording_id+question_id+segment_id+first_seq；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema-question-process.ts:11	question_process_recordings	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/schema.ts:438	questions	主键 teacher_id+id；内容、题目修订和材料	M02-P02；M13 对账
+产品表	apps/server/src/db/schema.ts:1934	reports	主键 id；报告与可重建读取	M11-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:874	response_edit_audits	主键 id；评阅修订	M09-P02；M13 对账
+产品表	apps/server/src/db/attempt-time-schema.ts:44	response_time_ledger	主键 response_id；结算与题内用时	M05-P03；M13 对账
+产品表	apps/server/src/db/schema-responses.ts:37	responses	主键 id；作业、冻结与确认	M04-P04；M13 对账
+产品表	apps/server/src/db/schema-sessions.ts:6	sessions	主键 id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:163	students	主键 id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:1254	submission_evidence	主键 id；笔迹、底图、草稿和封存	M06-P03；M13 对账
+产品表	apps/server/src/db/teacher-schema.ts:13	teachers	主键 id；身份、会话与资格	M01-P01；M13 对账
+产品表	apps/server/src/db/schema.ts:309	units	主键 teacher_id+id；内容、题目修订和材料	M02-P02；M13 对账
+旧结构迁移	apps/server/src/db/migrations/0000_late_titania.sql	0000_late_titania	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0001_concerned_payback.sql	0001_concerned_payback	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0002_condemned_ender_wiggin.sql	0002_condemned_ender_wiggin	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0003_plain_blockbuster.sql	0003_plain_blockbuster	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0004_nice_vivisector.sql	0004_nice_vivisector	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0005_rainy_oracle.sql	0005_rainy_oracle	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0006_workable_turbo.sql	0006_workable_turbo	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0007_curly_cyclops.sql	0007_curly_cyclops	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0008_curved_hex.sql	0008_curved_hex	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0009_clumsy_mimic.sql	0009_clumsy_mimic	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0010_serious_tag.sql	0010_serious_tag	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0011_shocking_grey_gargoyle.sql	0011_shocking_grey_gargoyle	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0012_aromatic_piledriver.sql	0012_aromatic_piledriver	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0013_pretty_switch.sql	0013_pretty_switch	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0014_outgoing_annihilus.sql	0014_outgoing_annihilus	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0015_oval_franklin_storm.sql	0015_oval_franklin_storm	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0016_rich_ghost_rider.sql	0016_rich_ghost_rider	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0017_light_ulik.sql	0017_light_ulik	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0018_young_vivisector.sql	0018_young_vivisector	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0019_melted_lucky_pierre.sql	0019_melted_lucky_pierre	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0020_chubby_silver_fox.sql	0020_chubby_silver_fox	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0021_same_the_initiative.sql	0021_same_the_initiative	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0022_modern_hobgoblin.sql	0022_modern_hobgoblin	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0023_youthful_felicia_hardy.sql	0023_youthful_felicia_hardy	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0024_clumsy_rockslide.sql	0024_clumsy_rockslide	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0025_secret_shiva.sql	0025_secret_shiva	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0026_nostalgic_toad.sql	0026_nostalgic_toad	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0027_tense_gertrude_yorkes.sql	0027_tense_gertrude_yorkes	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0028_regular_apocalypse.sql	0028_regular_apocalypse	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0029_daily_blazing_skull.sql	0029_daily_blazing_skull	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0030_spotty_the_captain.sql	0030_spotty_the_captain	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0031_mushy_agent_zero.sql	0031_mushy_agent_zero	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0032_long_marauders.sql	0032_long_marauders	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0033_chemical_doctor_spectrum.sql	0033_chemical_doctor_spectrum	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0034_even_tomas.sql	0034_even_tomas	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0035_aspiring_logan.sql	0035_aspiring_logan	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0036_yellow_baron_strucker.sql	0036_yellow_baron_strucker	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0037_outstanding_young_avengers.sql	0037_outstanding_young_avengers	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0038_youthful_harrier.sql	0038_youthful_harrier	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0039_mean_doorman.sql	0039_mean_doorman	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0040_bizarre_fabian_cortez.sql	0040_bizarre_fabian_cortez	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0041_fat_master_mold.sql	0041_fat_master_mold	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0042_wealthy_donald_blake.sql	0042_wealthy_donald_blake	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0043_white_reptil.sql	0043_white_reptil	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0044_odd_bloodstrike.sql	0044_odd_bloodstrike	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0045_lazy_iron_monger.sql	0045_lazy_iron_monger	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0046_brief_scourge.sql	0046_brief_scourge	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0047_third_lifeguard.sql	0047_third_lifeguard	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0048_funny_retro_girl.sql	0048_funny_retro_girl	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0049_busy_echo.sql	0049_busy_echo	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0050_complex_cerise.sql	0050_complex_cerise	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0051_rich_fallen_one.sql	0051_rich_fallen_one	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0052_round_wraith.sql	0052_round_wraith	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0053_panoramic_night_thrasher.sql	0053_panoramic_night_thrasher	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0054_nice_dexter_bennett.sql	0054_nice_dexter_bennett	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0055_timed_test.sql	0055_timed_test	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0056_rubric_review.sql	0056_rubric_review	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0057_attachments.sql	0057_attachments	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0058_memos.sql	0058_memos	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0059_attachment_upload_id.sql	0059_attachment_upload_id	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0060_windy_jasper_sitwell.sql	0060_windy_jasper_sitwell	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0061_chunky_sleeper.sql	0061_chunky_sleeper	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0062_wise_lethal_legion.sql	0062_wise_lethal_legion	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0063_attempt_domain_constraints.sql	0063_attempt_domain_constraints	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0064_lumpy_skullbuster.sql	0064_lumpy_skullbuster	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0065_nervous_robin_chapel.sql	0065_nervous_robin_chapel	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0066_lonely_captain_midlands.sql	0066_lonely_captain_midlands	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0067_solid_ben_parker.sql	0067_solid_ben_parker	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0068_attempt_settlement_guards.sql	0068_attempt_settlement_guards	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0069_slimy_pandemic.sql	0069_slimy_pandemic	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0070_attempt_time_guards.sql	0070_attempt_time_guards	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0071_abnormal_vapor.sql	0071_abnormal_vapor	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0072_puzzling_orphan.sql	0072_puzzling_orphan	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0073_review_v2_guards.sql	0073_review_v2_guards	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0074_pale_sebastian_shaw.sql	0074_pale_sebastian_shaw	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0075_hard_zodiak.sql	0075_hard_zodiak	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+旧结构迁移	apps/server/src/db/migrations/0076_attempt_activation_guards.sql	0076_attempt_activation_guards	原 journal 顺序执行、保留历史结构边界，映射至 data_migrations 和 Drizzle 运行记录时须分清两者	M13-P04；迁移输入，按固定产品 SHA 取 SQL
+备份/运维	apps/server/src/services/backup-service.ts:80	tutor-<时间>.db	VACUUM INTO 生成的全库一致快照；恢复落位 tutor.db	M13-P01
+备份/运维	apps/server/src/services/backup-service.ts:274	blobs/	整个目录，包括笔迹、PNG、随笔媒体及 PDF/docx 附件；按路径与内容摘要对账	M13-P01
+备份/运维	apps/server/src/services/backup-service.ts:274	shared/	共享文件和发布描述，连同数据库校验引用	M13-P01
+备份/运维	apps/server/src/services/backup-service.ts:58	secret.key	实例密钥仅核对恢复能力；材料和密钥值不入证据	M13-P01
+备份/运维	apps/server/src/services/backup-service.ts:54	backups/	备份包排除自身；日常快照独立轮转保留	M13-P01
+备份/运维	apps/server/src/db/migrate.ts:42	__drizzle_migrations	升级记录由迁移器维护；与 68 张产品表分别清点	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	note_versions.body_path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	note_images.path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	ink.strokes_path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	ink.png_path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	annotation_bases.image_path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	annotations.body_path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+历史快照引用	apps/server/src/db/schema.ts:1095	ai_task_materials.png_path	GC 查历史快照防止删除仍被引用的对象；额外的内容寻址附件随整个 blobs/ 备份	M13-P01
+客户端 IndexedDB	apps/web/src/lib/event-queue-core.ts:109	tutor-events/pending	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M05-P04
+客户端 IndexedDB	apps/web/src/features/memos/memo-outbox.ts:53	tutor-memos/outbox	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M10-P08
+客户端 IndexedDB	apps/web/src/features/annotation/annotation-store.ts:77	tutor-annotations/annotations	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M06-P02
+客户端 IndexedDB	apps/web/src/features/persistence/attempt-session-catalog.ts:29	tutor-attempt-sessions/sessions	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M13-P05
+客户端 IndexedDB	apps/web/src/features/persistence/draft-store.ts:100	tutor-drafts/drafts	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M13-P05
+客户端 IndexedDB	apps/web/src/features/question-process/session.tsx:43	tutor-question-process/process	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M06-P04
+客户端 IndexedDB	apps/web/src/features/notes/note-store.ts:87	tutor-notes/notes	原客户端持有；按设备及会话作用域保全，与服务器备份分别对账	M06-P01
+浏览器偏好或会话	apps/web/src/features/attempt/AttemptElapsedTime.tsx	AttemptElapsedTime.tsx	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/attempt/choice-submit-mode.ts	choice-submit-mode.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/attempt/practice-preference-store.ts	practice-preference-store.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/attempt/use-reading-position.ts	use-reading-position.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/attempt/use-result-review-location.ts	use-result-review-location.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/attempt/use-workspace-flags.ts	use-workspace-flags.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/ink/ink-profile-store.ts	ink-profile-store.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/ink/lab/feel-storage.ts	feel-storage.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/keyboard/keyboard-binding-store.ts	keyboard-binding-store.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/lesson/use-lesson-reading-position.ts	use-lesson-reading-position.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/library/library-view-memory.ts	library-view-memory.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/notes/note-layout.ts	note-layout.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/student-ai/ai-display-preference-store.ts	ai-display-preference-store.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/student/use-records-reading-position.ts	use-records-reading-position.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/features/student/wrong-mastery.ts	wrong-mastery.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/lib/device-identity.ts	device-identity.ts	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/pages/personal/PersonalLoginPage.tsx	PersonalLoginPage.tsx	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+浏览器偏好或会话	apps/web/src/pages/teacher/LoginPage.tsx	LoginPage.tsx	该模块直接读写 Web Storage；区分浏览位置、偏好或身份相关键，按原访问边界核对	M13-P05；宿主保留
+PWA 缓存	apps/web/vite.config.ts:123	excalidraw-assets / 应用预缓存	版本升级与本机稿分别核对；API 响应遵守各自的缓存策略	M13-P02
