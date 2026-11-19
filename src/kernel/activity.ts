@@ -101,6 +101,12 @@ export function loadStudentActivity(database: DatabaseSync, student: string, act
   return loadActivity(database, student, activityId);
 }
 
+export function loadStudentReadingActivity(database: DatabaseSync, student: string, activityId: string, stepAttemptId: string) {
+  const activity = loadStudentActivity(database, student, activityId);
+  if (activity.kind !== "reading" || activity.stepAttemptId !== stepAttemptId) throw new LearningError(403, "FORBIDDEN");
+  return activity;
+}
+
 export function loadActivity(database: DatabaseSync, student: string, activityId: string) {
   const row = database.prepare(`
     SELECT a.id AS activityId, s.id AS stepAttemptId, s.step_id AS stepId, a.started_at AS startedAt,

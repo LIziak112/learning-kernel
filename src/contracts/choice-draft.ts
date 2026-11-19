@@ -16,5 +16,7 @@ const versionedChoiceDraftInput = unversionedChoiceDraftInput.extend({
 });
 
 export const choiceDraftInput = z.union([versionedChoiceDraftInput, unversionedChoiceDraftInput]);
+export const currentChoiceDraftMode = z.enum(["save", "replayLatestOnly"]);
+export type CurrentChoiceDraftMode = z.infer<typeof currentChoiceDraftMode>;
 export type ChoiceDraftInput = z.infer<typeof versionedChoiceDraftInput>;
 export type UnversionedChoiceDraftInput = z.infer<typeof unversionedChoiceDraftInput> & { operationId?: never; baseRevision?: never };

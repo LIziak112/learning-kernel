@@ -56,7 +56,8 @@ test("升级旧草稿保留未知首次时刻，旧写同文和接管不会补�
     priorSchema.exec(`
       ALTER TABLE activities DROP COLUMN first_choice_changed_at;
       ALTER TABLE activities DROP COLUMN last_choice_changed_at;
-      DELETE FROM schema_migrations WHERE version = 11;
+      DROP TABLE choice_draft_latest_operations;
+      DELETE FROM schema_migrations WHERE version IN (11, 12);
     `);
   }
   const upgraded = openLearningRuntime({ databasePath: path });

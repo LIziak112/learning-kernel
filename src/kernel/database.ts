@@ -4,7 +4,7 @@ import { readingMigration } from "./reading-migration.ts";
 import { evaluationMigration } from "./evaluation-migration.ts";
 import { verdictMigration } from "./verdict-migration.ts";
 import { questionPublicationMigration } from "./question-publication-migration.ts";
-import { choiceDraftMigration } from "./choice-draft-migration.ts";
+import { choiceDraftMigration, currentChoiceDraftMigration } from "./choice-draft-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
 const migrations = [
@@ -41,6 +41,7 @@ const migrations = [
     ALTER TABLE activities ADD COLUMN first_choice_changed_at TEXT
       CHECK (first_choice_changed_at IS NULL OR last_choice_changed_at IS NOT NULL);
   `,
+  currentChoiceDraftMigration,
 ];
 
 export function openDatabase(path: string): DatabaseSync {

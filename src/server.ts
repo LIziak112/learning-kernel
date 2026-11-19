@@ -1,15 +1,15 @@
 import { z } from "zod";
 import { choiceConfirmationInput, confirmationKey } from "./contracts/choice-confirmation.ts";
 import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, VerifyOriginal } from "./contracts/choice-confirmation.ts";
-import { choiceDraftInput } from "./contracts/choice-draft.ts";
-import type { ChoiceDraftInput, UnversionedChoiceDraftInput } from "./contracts/choice-draft.ts";
+import { choiceDraftInput, currentChoiceDraftMode } from "./contracts/choice-draft.ts";
+import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftInput } from "./contracts/choice-draft.ts";
 import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
 import { startActivity } from "./kernel/activity.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
 import { readChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
-import { saveChoiceDraft } from "./kernel/choice-drafts.ts";
+import { saveChoiceDraft, saveCurrentChoiceDraft } from "./kernel/choice-drafts.ts";
 import { openDatabase } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
 import { registerPublication } from "./kernel/publication.ts";
@@ -31,7 +31,7 @@ export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistratio
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
-export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, UnversionedChoiceDraftInput, VerifyOriginal };
+export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
 export type StudentPrincipal = z.input<typeof studentPrincipal>;
 export type PublishedStartInput = z.input<typeof publishedStartInput>;
@@ -61,6 +61,12 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     },
     saveChoiceDraft(principal: StudentPrincipal, activityId: string, input: ChoiceDraftInput | UnversionedChoiceDraftInput) {
       return saveChoiceDraft(database, studentId(principal), uuid.parse(activityId), choiceDraftInput.parse(input), clock);
+    },
+    saveCurrentChoiceDraft(
+      principal: StudentPrincipal, activityId: string, input: ChoiceDraftInput | UnversionedChoiceDraftInput, mode: CurrentChoiceDraftMode = "save",
+    ) {
+      return saveCurrentChoiceDraft(database, studentId(principal), uuid.parse(activityId), choiceDraftInput.parse(input),
+        currentChoiceDraftMode.parse(mode), clock);
     },
     confirmChoices(principal: StudentPrincipal, activityId: string, input: ChoiceConfirmationInput) {
       return confirmChoices(database, studentId(principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),

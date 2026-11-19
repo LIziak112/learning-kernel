@@ -3,7 +3,7 @@ import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
   ConfirmationScope, VerifyOriginal } from "../contracts/choice-confirmation.ts";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
-import { loadStudentActivity } from "./activity.ts";
+import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { ChoiceDraftConflict, readChoiceDrafts } from "./choice-drafts.ts";
 import { recoverChoiceEvaluation } from "./choice-evaluation.ts";
@@ -30,7 +30,7 @@ export function confirmChoices(
   clock: () => Date, verifyOriginal?: VerifyOriginal,
 ) {
   return writeTransaction(database, () => {
-    const activity = loadChoiceActivity(database, studentId, activityId, input.stepAttemptId);
+    const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
     const previous = confirmationForOperation(database, activityId, input);
     if (previous) return recoverReceipt(previous, input);
     const slot = requireConfirmationSlot(activity, input.slotId);
@@ -55,7 +55,7 @@ export function recoverChoiceConfirmation(
   authorize: AuthorizeConfirmationRecovery | undefined, registered: readonly ChoiceEvaluatorRegistration[],
 ) {
   return writeTransaction(database, () => {
-    const activity = loadChoiceActivity(database, studentId, activityId, key.stepAttemptId);
+    const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
     if (authorize?.({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }) !== true) {
       throw new LearningError(403, "FORBIDDEN");
     }
@@ -66,12 +66,6 @@ export function recoverChoiceConfirmation(
     const evaluation = recoverChoiceEvaluation(database, activity, receipt, confirmation, registered);
     return { receipt, practice: { id, version }, confirmation, ...(evaluation ? { evaluation } : {}) };
   });
-}
-
-function loadChoiceActivity(database: DatabaseSync, studentId: string, activityId: string, stepAttemptId: string) {
-  const activity = loadStudentActivity(database, studentId, activityId);
-  if (activity.kind !== "reading" || activity.stepAttemptId !== stepAttemptId) throw new LearningError(403, "FORBIDDEN");
-  return activity;
 }
 
 function requireConfirmationSlot(activity: ReadingActivity, slotId: string) {

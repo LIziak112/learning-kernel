@@ -105,6 +105,23 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         inputs.push(timing);
         assert.throws(() => execFileSync(process.execPath, [timing, "write"], { cwd: directory, stdio: "pipe" }), { status: 49 });
         execFileSync(process.execPath, [timing, "recover"], { cwd: directory, stdio: "inherit" });
+        const current = "current-choice-draft-consumer.mts";
+        cpSync(new URL("./fixtures/current-choice-draft-consumer.mts", import.meta.url), join(directory, current));
+        inputs.push(current);
+        for (const phase of ["write", "recover"]) {
+          execFileSync(process.execPath, [current, phase], { cwd: directory, stdio: "inherit" });
+        }
+        execFileSync(process.execPath, [current, "race-prepare"], { cwd: directory, stdio: "inherit" });
+        const candidates = ["race-one", "race-two"];
+        const raced = await Promise.allSettled(candidates.map(phase => run(process.execPath, [current, phase], { cwd: directory })));
+        const outcomes = raced.map(result => {
+          if (result.status === "rejected") throw result.reason;
+          return result.value.stdout.trim();
+        });
+        assert.equal(outcomes.filter(outcome => outcome === "lost").length, 1);
+        const latestWinner = outcomes.find(outcome => outcome !== "lost");
+        assert.ok(latestWinner === "race-one" || latestWinner === "race-two");
+        execFileSync(process.execPath, [current, "race-recover", latestWinner], { cwd: directory, stdio: "inherit" });
       }
       const compiler = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
       execFileSync(process.execPath, [compiler, "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess",

@@ -61,6 +61,10 @@ const activity = runtime.read(principal, receipt.activityId);
 
 旧协议调用同一个方法时省略 `operationId` 与 `baseRevision`。该题接受首次版本化操作前，每次旧协议保存都新增一个修订，包括重复保存相同选项。首次版本化操作即使与当前选项相同且沿用原修订，也会接管该题。此后旧协议保存返回 `ANSWER_REVISION_CONFLICT` 并附当前修订与本人选择。题与题独立接管。没有幂等键的旧协议请求每次都按一次新保存处理。
 
+`saveCurrentChoiceDraft(principal, activityId, input, mode)` 按题目当前稿判定。最近操作标识和当前选项相同时返回当前修订，忽略请求的基础修订。最近操作标识相同而选项不同时返回 `ANSWER_REVISION_CONFLICT` 和当前稿。其他操作同文收敛并成为最近操作，异文要求基础修订等于当前修订。默认模式为 `save`。可信宿主可指定 `replayLatestOnly`，此时仅接受最近操作的同文重发，其他操作返回 `DRAFT_REPLAY_REQUIRED`。最近操作改文仍返回当前稿冲突。确认后当前稿保存关闭。
+
+`saveChoiceDraft` 继续精确重放每个操作标识第一次接受的版本化请求。两种保存共用作品、计数和最近操作位置。按当前稿模式再次接受历史操作标识时，历史精确回执保持原样。精确重放、拒绝和回滚都不移动最近操作。旧数据库只有当前修订恰有一条操作记录时才恢复最近操作，否则需由普通保存来确定最近操作。
+
 `readChoiceDraftActivity(principal, activityId)` 按当前活动权限返回 `firstChangedAt` 和 `lastChangedAt`，确认后仍可读取。首次实际选中选项和之后的实际改选与草稿同事务写入。同内容保存、接管、重发和冲突都不更新时间。未保存逐题草稿的活动返回 `undefined`。历史草稿未采集的时刻保持为 `null`，升级后新增的实质改选可从最近一次时刻读回。
 
 整卷确认使用单步 `finalAnswer` 的单选槽，显式声明 `confirmFromDrafts: { allowUnanswered: true }` 可保留空答。`confirmChoices` 接受冻结全题的题版本、当前草稿修订和原稿状态，服务端从已存草稿取选项。`uncollected` 用于旧协议未采集。可信宿主同步 `verifyOriginal` 核实各状态，包括旧协议是否允许未采集。未配置回调时只接受 `uncollected`。`frozen` 保存文档 ID、版本 ID 和可选 SHA-256。宿主先持久保留选定版本，再把核实结果交给内核。确认成功返回唯一回执。草稿修订冲突通过 `ChoiceConfirmationConflict` 返回冲突的题和本人当前草稿。授权仍有效时可用同一操作和意图重取回执。常规学生 `read` 遵守已发布的回看字段。可信宿主另可凭活动、步骤尝试和操作标识调用 `recoverChoiceConfirmation`，每次须经当前活动授权和配置的 `authorizeConfirmationRecovery` 核对，返回引用的发布版本和完整确认事实。
