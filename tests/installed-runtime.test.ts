@@ -54,16 +54,31 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
       for (const phase of ["start", "recover"]) {
         execFileSync(process.execPath, ["consumer.mts", host, phase], { cwd: directory, stdio: "inherit" });
       }
+      const inputs = ["consumer.mts"];
       if (host === "library-club") {
         const run = promisify(execFile);
         const writes = await Promise.allSettled(["parallel-q1", "parallel-q2"].map(phase =>
           run(process.execPath, ["consumer.mts", host, phase], { cwd: directory })));
         for (const result of writes) if (result.status === "rejected") throw result.reason;
         execFileSync(process.execPath, ["consumer.mts", host, "parallel-recover"], { cwd: directory, stdio: "inherit" });
+        const confirmation = "choice-confirmation-consumer.mts";
+        cpSync(new URL("./fixtures/choice-confirmation-consumer.mts", import.meta.url), join(directory, confirmation));
+        inputs.push(confirmation);
+        const operations = ["confirm-a", "confirm-b"];
+        const attempted = await Promise.allSettled(operations.map(operation =>
+          run(process.execPath, [confirmation, "race", operation], { cwd: directory })));
+        const statuses = attempted.map(result => {
+          if (result.status === "rejected") throw result.reason;
+          return result.value.stdout.trim();
+        });
+        assert.deepEqual(statuses.toSorted(), ["closed", "committed"]);
+        const winner = operations[statuses.indexOf("committed")];
+        assert.ok(winner);
+        execFileSync(process.execPath, [confirmation, "recover", winner], { cwd: directory, stdio: "inherit" });
       }
       const compiler = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
       execFileSync(process.execPath, [compiler, "--noEmit", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess",
-        "--target", "ES2024", "--module", "NodeNext", "--types", "node", "--typeRoots", join(root, "node_modules/@types"), "consumer.mts"], {
+        "--target", "ES2024", "--module", "NodeNext", "--types", "node", "--typeRoots", join(root, "node_modules/@types"), ...inputs], {
         cwd: directory, stdio: "inherit",
       });
     });

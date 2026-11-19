@@ -16,12 +16,25 @@ export function validateBindings({ practice, scoringKey }: ReadingPublication, i
     const inputs = resolveInputs(step, earlierSteps, positions, report);
     validateTool(step, inputs, report);
     validateSlots(step, inputs, practice.goals, report);
+    validateChoiceConfirmation(step, practice, report);
     earlierSteps.set(step.id, step);
   }
   if (positions.size > 0 && !practice.material) issue(["practice", "material"], "绑定材料输入时须声明材料版本");
   validateGrading(practice.grading, earlierSteps, issue);
   validateAssessmentPolicy(practice, scoringKey, issue);
   validateQuestions(practice, issue);
+}
+
+function validateChoiceConfirmation(step: ReadingStep, practice: ReadingPublication["practice"], issue: Issue) {
+  const requested = Object.values(step.submit.slots).find(slot => slot.type === "oneChoicePerQuestion");
+  if (!requested?.confirmFromDrafts) return;
+  if (practice.steps.length !== 1 || step.submit.purpose !== "finalAnswer" || requested.reasonTargetId) {
+    issue(["submit", "slots"], "草稿确认要求一个单步整卷单选槽");
+  }
+  if (practice.questions.some(question => question.version === undefined)) {
+    issue(["submit", "slots"], "草稿确认须固定每道题的版本");
+  }
+  if (practice.grading.assessment) issue(["submit", "slots"], "草稿确认槽须与内置评分分开声明");
 }
 
 function validateQuestions(practice: ReadingPublication["practice"], issue: Issue) {

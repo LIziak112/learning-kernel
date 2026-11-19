@@ -17,7 +17,10 @@ const slot = z.discriminatedUnion("type", [
     distinctParagraphs: z.boolean(),
     evidenceUnit: z.literal("wholeSelection"),
   }),
-  newEvidence.extend({ type: z.literal("oneChoicePerQuestion"), reasonTargetId: id.optional() }),
+  newEvidence.extend({
+    type: z.literal("oneChoicePerQuestion"), reasonTargetId: id.optional(),
+    confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }).optional(),
+  }),
   z.strictObject({ type: z.literal("reuse"), source: id }),
 ]);
 

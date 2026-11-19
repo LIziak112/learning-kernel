@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { submissionReceipt } from "../contracts/reading.ts";
+import { draftReceipt, submissionReceipt } from "../contracts/reading.ts";
 import type { SubmitInput } from "../contracts/reading.ts";
 import { LearningError } from "./learning-error.ts";
 
-export function recoverReceipt(database: DatabaseSync, input: SubmitInput) {
+export function submissionForOperation(database: DatabaseSync, input: Pick<SubmitInput, "stepAttemptId" | "operationId">) {
   const row = database.prepare(`
     SELECT id, step_attempt_id AS stepAttemptId, slot_id AS slotId, confirmed_at AS confirmedAt,
       work_id AS workId, work_version AS workVersion
@@ -12,10 +12,17 @@ export function recoverReceipt(database: DatabaseSync, input: SubmitInput) {
   `).get(input.stepAttemptId, input.operationId);
   if (!row) return undefined;
   const { workId, workVersion, ...receipt } = row;
-  if (receipt.slotId !== input.slotId || workId !== input.draft.id || workVersion !== input.draft.version) {
+  const draft = draftReceipt.shape.draft.parse({ id: workId, version: workVersion });
+  return { receipt: submissionReceipt.parse(receipt), draft };
+}
+
+export function recoverReceipt(database: DatabaseSync, input: SubmitInput) {
+  const previous = submissionForOperation(database, input);
+  if (!previous) return undefined;
+  if (previous.receipt.slotId !== input.slotId || previous.draft.id !== input.draft.id || previous.draft.version !== input.draft.version) {
     throw new LearningError(409, "OPERATION_CONFLICT");
   }
-  return submissionReceipt.parse(receipt);
+  return previous.receipt;
 }
 
 export type Observation = { targetId: string; unitId: string };

@@ -22,7 +22,7 @@ function publication(version: number): PublicationInput {
   } : undefined;
   const scoringKey = { id: `${host}-key`, version: 1, acceptedChoices: choiceDrafting ? { q1: "1", q2: "2" } : { q1: "b", q2: "c" } };
   return {
-    ...(material ? { material } : {}), scoringKey,
+    ...(material ? { material } : {}), ...(choiceDrafting ? {} : { scoringKey }),
     practice: {
       id: host, version, formatVersion: 1, title: `整数运算 ${version}`,
       ...(material ? { material: { id: material.id, version: material.version } } : {}),
@@ -40,10 +40,12 @@ function publication(version: number): PublicationInput {
       steps: [{
         id: "answers", instructions: "每题选一个选项。", tool: { id: "single-choice-group", version: 1 },
         inputs: { items: { from: "questions" } },
-        submit: { purpose: "finalAnswer", slots: { choices: { type: "oneChoicePerQuestion", source: "items", targetId: "arithmetic" } } },
+        submit: { purpose: "finalAnswer", slots: { choices: { type: "oneChoicePerQuestion", source: "items", targetId: "arithmetic",
+          ...(choiceDrafting ? { confirmFromDrafts: { allowUnanswered: true } } : {}),
+        } } },
         afterConfirmation: "finish",
       }],
-      grading: {
+      grading: choiceDrafting ? {} : {
         assessment: {
           from: { stepId: "answers", slotId: "choices" }, evaluator: { id: "choice-key", version: 1 },
           keyRef: { id: scoringKey.id, version: 1 }, unit: "question", effectiveVerdictOrder: ["teacherReview", "automatic"],

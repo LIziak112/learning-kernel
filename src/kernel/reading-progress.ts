@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
+import type { ChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import { studentTool } from "../builtins/reading-capabilities.ts";
 import { selectedText } from "../builtins/selection.ts";
 import type { ActivityDetail, SubmitInput } from "../contracts/reading.ts";
@@ -76,6 +78,7 @@ export function confirmReadingDraft(
   const confirmedAt = clock();
   requireBeforeDeadline(activity, confirmedAt);
   const slot = boundOutput(step, input.slotId);
+  rejectDraftConfirmation(slot);
   const content = loadWorkVersion(database, workScope(activity, input), input.draft);
   const observations = readingObservations(database, activity, slot, content);
   const receipt = recordSubmission(database, input, observations, confirmedAt);
@@ -86,7 +89,11 @@ export function confirmReadingDraft(
   return receipt;
 }
 
-function requireBeforeDeadline(activity: ReadingActivity, confirmedAt: Date) {
+function rejectDraftConfirmation(slot: ReturnType<typeof boundOutput>) {
+  if (slot.type === "oneChoicePerQuestion" && slot.confirmFromDrafts) throw new LearningError(422, "INVALID_SLOT");
+}
+
+export function requireBeforeDeadline(activity: ReadingActivity, confirmedAt: Date) {
   const limit = activity.practice.policy.timeLimit;
   if (!limit) return;
   const deadline = Date.parse(activity.startedAt) + limit.minutes * 60_000;
@@ -147,6 +154,7 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
 
 type StudentSubmissionView = {
   receipt?: StoredSubmission["receipt"];
+  confirmation?: ChoiceConfirmation;
   selection?: ReadingSelection;
   answer?: Omit<ReadingAnswer, "references"> & { references?: ReadingAnswer["references"] };
 };
@@ -174,8 +182,10 @@ function readingInputs(activity: ReadingActivity, submissions: StoredSubmission[
 
 export function studentSubmissionView(activity: ReadingActivity, submitted: StoredSubmission): StudentSubmissionView {
   const fields = new Set(activity.practice.policy.student.ownSubmission.fields);
+  const receipt = fields.has("receipt") ? { receipt: submitted.receipt } : {};
+  const confirmation = readChoiceConfirmation(submitted.content);
+  if (confirmation) return fields.has("ownChoices") ? { ...receipt, confirmation } : receipt;
   const view = readingSubmissionView(submitted);
-  const receipt = fields.has("receipt") ? { receipt: view.receipt } : {};
   if (view.selection && fields.has("submittedQuotes")) return { ...receipt, selection: view.selection };
   if (!view.answer || !fields.has("ownChoices")) return receipt;
   const { references, ...answer } = view.answer;
@@ -183,6 +193,11 @@ export function studentSubmissionView(activity: ReadingActivity, submitted: Stor
 }
 
 export function readingSubmissionView(submitted: StoredSubmission) {
+  const confirmation = readChoiceConfirmation(submitted.content);
+  if (confirmation) {
+    const choices = Object.fromEntries(confirmation.questions.flatMap(({ questionId, choice }) => choice === null ? [] : [[questionId, choice]]));
+    return { receipt: submitted.receipt, answer: { choices, references: {} } };
+  }
   const selection = readingSelection.safeParse(submitted.content);
   if (selection.success) return { receipt: submitted.receipt, selection: selection.data };
   return { receipt: submitted.receipt, answer: readingAnswer.parse(submitted.content) };

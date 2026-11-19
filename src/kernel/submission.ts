@@ -56,6 +56,7 @@ export function readActivity(database: DatabaseSync, student: string, activityId
   const submissions = activitySubmissions(database, activityId);
   if (activity.kind === "reading") {
     const view = readingActivityView(database, activity, submissions);
+    if (activity.completed) return view;
     const choiceDrafts = readChoiceDrafts(database, activityId, activity.stepAttemptId);
     return choiceDrafts.length > 0 ? { ...view, choiceDrafts } : view;
   }
