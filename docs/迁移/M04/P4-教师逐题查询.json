@@ -1,0 +1,166 @@
+{
+  "fixture": "M04 P0，同一组两题单选，已公布，一对一错，合成师生",
+  "productBaseline": "49a3fb0721c16cf9a2ba4f3d1f4fe89c471e3908",
+  "candidate": "963c0bd861e451557d5c1f776d8bc739036db797",
+  "tool": "query_student_responses",
+  "studentPage": "/api/teacher/students/:id/question-review",
+  "legacy": {
+    "sdk": {
+      "side": "legacy",
+      "card": [
+        {
+          "score": 50,
+          "correct": 1,
+          "wrong": 1,
+          "pending": 0,
+          "submitted": 2
+        }
+      ],
+      "responses": [
+        {
+          "id": "m04-p0-q1",
+          "rev": 1,
+          "answered": true,
+          "final": true,
+          "changes": 1
+        },
+        {
+          "id": "m04-p0-q2",
+          "rev": 1,
+          "answered": true,
+          "final": false,
+          "changes": 1
+        }
+      ],
+      "onlyWrong": 1,
+      "stats": [
+        {
+          "id": "m04-p0-q1",
+          "j": 1,
+          "correct": 1
+        },
+        {
+          "id": "m04-p0-q2",
+          "j": 1,
+          "correct": 0
+        }
+      ],
+      "record": {
+        "revision": 1,
+        "answered": true,
+        "final": false
+      }
+    },
+    "web": {
+      "side": "legacy",
+      "wrong": {
+        "status": 200,
+        "code": null,
+        "total": 1,
+        "items": [
+          {
+            "q": "m04-p0-q2",
+            "final": false,
+            "verdict": {
+              "source": "auto",
+              "value": false
+            },
+            "redo": 0
+          }
+        ]
+      },
+      "unsure": {
+        "status": 200,
+        "code": null,
+        "total": 0,
+        "items": []
+      },
+      "corrected": {
+        "status": 200,
+        "code": null,
+        "total": 0,
+        "items": []
+      }
+    }
+  },
+  "candidateResults": {
+    "sdk": {
+      "side": "candidate",
+      "card": [
+        {
+          "score": 50,
+          "correct": 1,
+          "wrong": 1,
+          "pending": 0,
+          "submitted": 2
+        }
+      ],
+      "responses": [
+        {
+          "id": "m04-p0-q1",
+          "rev": 1,
+          "answered": true,
+          "final": true,
+          "changes": 1
+        },
+        {
+          "id": "m04-p0-q2",
+          "rev": 1,
+          "answered": true,
+          "final": false,
+          "changes": 1
+        }
+      ],
+      "onlyWrong": 1,
+      "stats": [
+        {
+          "id": "m04-p0-q1",
+          "j": 0,
+          "correct": 0
+        },
+        {
+          "id": "m04-p0-q2",
+          "j": 0,
+          "correct": 0
+        }
+      ],
+      "record": {
+        "revision": 1,
+        "answered": true,
+        "final": false
+      }
+    },
+    "web": {
+      "side": "candidate",
+      "wrong": {
+        "status": 200,
+        "code": null,
+        "total": 1,
+        "items": [
+          {
+            "q": "m04-p0-q2",
+            "final": false,
+            "verdict": {
+              "source": "auto",
+              "value": false
+            },
+            "redo": 0
+          }
+        ]
+      },
+      "unsure": {
+        "status": 200,
+        "code": null,
+        "total": 0,
+        "items": []
+      },
+      "corrected": {
+        "status": 200,
+        "code": null,
+        "total": 0,
+        "items": []
+      }
+    }
+  },
+  "separateOpenBehavior": "get_question_stats 的 stats 字段仍少计，此报告只验收教师逐题查询"
+}

@@ -1,0 +1,120 @@
+{
+  "side": "candidate",
+  "create": 201,
+  "published": {
+    "http": {
+      "s": 200,
+      "same": true,
+      "counts": {
+        "total": 2,
+        "correctCount": 1,
+        "incorrectCount": 1,
+        "unansweredCount": 0,
+        "pendingCount": 0,
+        "unknownAnswerCount": 0,
+        "hasAnswerCount": 2,
+        "missingAnswerCount": 0,
+        "gradedCount": 2,
+        "accuracyAmongGraded": 0.5
+      },
+      "allowed": [
+        "cancel"
+      ],
+      "status": "created"
+    },
+    "ui": {
+      "text": "等待领取 · 覆盖 2 题 · 2026年11月19日 22:24:13 发起 判对 1 · 判错 1 · 已判分正确率 50% 取消任务",
+      "unpublished": false,
+      "cancel": true,
+      "archive": false
+    },
+    "queue": {
+      "text": "整卷复盘 等待领取 11-19 22:24 发起 两道内核单选 · 作业 · 第 1 次 · 覆盖 2 题 判对 1 · 判错 1 · 已判分正确率 50% 查看进度 取消",
+      "cancel": true,
+      "hidden": 0
+    }
+  },
+  "hide": 200,
+  "hidden": {
+    "http": {
+      "s": 200,
+      "same": true,
+      "counts": null,
+      "allowed": [
+        "cancel"
+      ],
+      "status": "created"
+    },
+    "ui": {
+      "text": "等待领取 · 覆盖 2 题 · 2026年11月19日 22:24:13 发起 成绩未公布 取消任务",
+      "unpublished": true,
+      "cancel": true,
+      "archive": false
+    },
+    "queue": {
+      "text": "整卷复盘 等待领取 11-19 22:24 发起 两道内核单选 · 作业 · 第 1 次 · 覆盖 2 题 成绩未公布 查看进度 取消",
+      "cancel": true,
+      "hidden": 1
+    }
+  },
+  "publish": 200,
+  "released": {
+    "http": {
+      "s": 200,
+      "same": true,
+      "counts": {
+        "total": 2,
+        "correctCount": 1,
+        "incorrectCount": 1,
+        "unansweredCount": 0,
+        "pendingCount": 0,
+        "unknownAnswerCount": 0,
+        "hasAnswerCount": 2,
+        "missingAnswerCount": 0,
+        "gradedCount": 2,
+        "accuracyAmongGraded": 0.5
+      },
+      "allowed": [
+        "cancel"
+      ],
+      "status": "created"
+    },
+    "ui": {
+      "text": "等待领取 · 覆盖 2 题 · 2026年11月19日 22:24:13 发起 判对 1 · 判错 1 · 已判分正确率 50% 取消任务",
+      "unpublished": false,
+      "cancel": true,
+      "archive": false
+    },
+    "queue": {
+      "text": "整卷复盘 等待领取 11-19 22:24 发起 两道内核单选 · 作业 · 第 1 次 · 覆盖 2 题 判对 1 · 判错 1 · 已判分正确率 50% 查看进度 取消",
+      "cancel": true,
+      "hidden": 0
+    }
+  },
+  "rehide": 200,
+  "beforeCancel": {
+    "text": "等待领取 · 覆盖 2 题 · 2026年11月19日 22:24:13 发起 成绩未公布 取消任务",
+    "unpublished": true,
+    "cancel": true,
+    "archive": false
+  },
+  "cancelled": {
+    "http": {
+      "s": 200,
+      "same": true,
+      "counts": null,
+      "allowed": [
+        "archive"
+      ],
+      "status": "cancelled"
+    },
+    "text": "已取消 · 覆盖 2 题 · 2026年11月19日 22:24:13 发起 成绩未公布 归档"
+  },
+  "archiveResponse": 200,
+  "archived": {
+    "s": 200,
+    "same": true,
+    "counts": null,
+    "archived": true
+  }
+}
