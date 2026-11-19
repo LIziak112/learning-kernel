@@ -6,7 +6,7 @@ import reading from "../practices/reading-library.json" with { type: "json" };
 import single from "../practices/single-quote.json" with { type: "json" };
 import { publicationSchema } from "../src/contracts/reading.ts";
 import { readingPublicationSchema } from "../src/contracts/reading-publication.ts";
-import { startActivity } from "../src/kernel/activity.ts";
+import { redoActivity, startActivity } from "../src/kernel/activity.ts";
 import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
 import { openLearningRuntime } from "../src/server.ts";
@@ -41,11 +41,17 @@ test("预备换版同卷轮换步骤凭据，跨多次换版恢复原回执并�
     runtime.publish(edition(1));
     runtime.publish(edition(2));
     runtime.publish(edition(3, "different-logical-step"));
-    const original = runtime.prepare(student, open);
+    const legacy = publicationSchema.parse(single);
+    runtime.publish({ ...legacy, practice: { ...legacy.practice, id: practiceId, version: 4 } });
+    let opened: ReturnType<typeof runtime.prepare> | undefined;
+    assert.doesNotThrow(() => { opened = runtime.prepare(student, open); });
+    assert.ok(opened);
+    const original = opened;
     const change = (input: PreparedActivityVersionInput) => runtime.replacePreparedActivityVersion(student, original.activityId, input);
     const snapshot = () => runtime.read(student, original.activityId);
     assert.throws(() => change(replace(original.stepAttemptId, 2, 1, "wrong-base")), { code: "ACTIVITY_VERSION_CONFLICT" });
     assert.throws(() => change(replace(original.stepAttemptId, 1, 3, "different-step")), { code: "PREPARED_STEP_CHANGED" });
+    assert.throws(() => change(replace(original.stepAttemptId, 1, 4, "different-format")), { code: "PREPARED_STEP_CHANGED" });
     assert.throws(() => change(replace(original.stepAttemptId, 1, 9, "unpublished")), { status: 404, code: "PRACTICE_NOT_FOUND" });
     const noop = replace(original.stepAttemptId, 1, 1, "same-version");
     assert.deepEqual(change(noop), { ...original, practiceVersion: 1 });
@@ -62,14 +68,27 @@ test("预备换版同卷轮换步骤凭据，跨多次换版恢复原回执并�
     database.exec("DROP TRIGGER deny_refreeze_receipt");
     const version2 = change(upgrade);
     assert.notEqual(version2.stepAttemptId, original.stepAttemptId);
-    assert.deepEqual(change(upgrade), version2);
+    assert.doesNotThrow(() => assert.deepEqual(change(upgrade), version2));
+    const changedView = snapshot();
+    assert.ok("formatVersion" in changedView);
+    assert.equal(changedView.practiceVersion, 2);
+    assert.throws(() => runtime.start(student, { ...open, practiceVersion: 2 }), { code: "OPERATION_CONFLICT" });
+    assert.equal(changedView.stepAttemptId, version2.stepAttemptId);
+    const question = questions[0];
+    assert.ok(question);
+    const choice = Object.keys(question.options)[0];
+    assert.ok(choice);
+    assert.throws(() => runtime.saveCurrentChoiceDraft(student, original.activityId, {
+      protocolVersion: 1, stepAttemptId: original.stepAttemptId, slotId: "answers", questionId: question.id, questionVersion: 1,
+      operationId: "stale-draft", baseRevision: 0, choice,
+    }), { status: 403, code: "FORBIDDEN" });
     const version1 = change(replace(version2.stepAttemptId, 2, 1, "v1-return"));
     assert.notEqual(version1.stepAttemptId, original.stepAttemptId);
     assert.notEqual(version1.stepAttemptId, version2.stepAttemptId);
-    assert.deepEqual(change(upgrade), version2);
+    assert.doesNotThrow(() => assert.deepEqual(change(upgrade), version2));
     assert.deepEqual(change(noop), { ...original, practiceVersion: 1 });
-    assert.deepEqual(runtime.prepare(student, open), original);
-    assert.deepEqual(runtime.start(student, open), original);
+    assert.doesNotThrow(() => assert.deepEqual(runtime.prepare(student, open), original));
+    assert.doesNotThrow(() => assert.deepEqual(runtime.start(student, open), original));
     assert.throws(() => change(replace(original.stepAttemptId, 1, 2, "stale-same-version")), { code: "ACTIVITY_VERSION_CONFLICT" });
     assert.throws(() => change({ ...upgrade, stepAttemptId: version1.stepAttemptId }), { code: "OPERATION_CONFLICT" });
     assert.throws(() => change({ ...upgrade, expectedPracticeVersion: 2 }), { code: "OPERATION_CONFLICT" });
@@ -103,6 +122,11 @@ test("只允许显式预备的阅读练法，撤权后历史换版回执也拒�
     assert.throws(() => runtime.prepare(student, wrongKind), { status: 422, code: "ACTIVITY_NOT_PREPARABLE" });
     const ordinary = runtime.start(student, wrongKind);
     assert.throws(() => runtime.prepare(student, wrongKind), { code: "OPERATION_CONFLICT" });
+    const ordinaryOpening = { ...open, operationId: "ordinary-reading" };
+    const ordinaryReading = runtime.start(student, ordinaryOpening);
+    assert.throws(() => runtime.prepare(student, ordinaryOpening), { code: "OPERATION_CONFLICT" });
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, ordinaryReading.activityId,
+      replace(ordinaryReading.stepAttemptId, 1, 2, "change")), { code: "ACTIVITY_NOT_PREPARED" });
     assert.throws(() => runtime.replacePreparedActivityVersion(student, ordinary.activityId, replace(ordinary.stepAttemptId, 1, 2, "change")),
       { code: "ACTIVITY_NOT_PREPARED" });
     using database = new DatabaseSync(path);
@@ -126,13 +150,29 @@ test("只允许显式预备的阅读练法，撤权后历史换版回执也拒�
   }
 });
 
-test("空答确认和真实步骤推进均结束预备换版资格", t => {
+test("草稿、空答确认和步骤推进结束预备换版资格，重练仍是普通实例", t => {
   const path = scenarioDatabase(t);
   const runtime = openLearningRuntime({ databasePath: path });
   try {
-    runtime.publish(edition(1));
+    const initial = edition(1);
+    runtime.publish({ practice: { ...initial.practice,
+      policy: { ...initial.practice.policy, manager: { scope: "assigningTeacher", actions: ["authorizeRedo"] } },
+    } });
     runtime.publish(edition(2));
-    const blank = runtime.prepare(student, open);
+    using database = new DatabaseSync(path);
+    const drafted = runtime.prepare(student, { ...open, operationId: "draft-only" });
+    const question = questions[0];
+    assert.ok(question);
+    const choice = Object.keys(question.options)[0];
+    assert.ok(choice);
+    assert.equal(runtime.saveCurrentChoiceDraft(student, drafted.activityId, {
+      protocolVersion: 1, stepAttemptId: drafted.stepAttemptId, slotId: "answers", questionId: question.id, questionVersion: 1,
+      operationId: "draft", baseRevision: 0, choice,
+    }).revision, 1);
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, drafted.activityId, replace(drafted.stepAttemptId, 1, 2, "blocked")),
+      { code: "ACTIVITY_ALREADY_STARTED" });
+
+    const blank = startActivity(database, student.id, open, () => new Date(), "teacher", "prepare");
     runtime.confirmChoices(student, blank.activityId, {
       protocolVersion: 1, stepAttemptId: blank.stepAttemptId, operationId: "blank", slotId: "answers",
       questions: questions.map(question => ({
@@ -142,12 +182,16 @@ test("空答确认和真实步骤推进均结束预备换版资格", t => {
     assert.equal(runtime.readChoiceDraftActivity(student, blank.activityId), undefined);
     assert.throws(() => runtime.replacePreparedActivityVersion(student, blank.activityId, replace(blank.stepAttemptId, 1, 2, "blocked")),
       { code: "ACTIVITY_ALREADY_STARTED" });
+    manageReading(database, "teacher", blank.activityId, "authorizeRedo");
+    const redo = redoActivity(database, student.id, blank.activityId, "redo", () => new Date());
+    assert.throws(() => runtime.start(student, { ...open, operationId: "redo" }), { code: "OPERATION_CONFLICT" });
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, redo.activityId, replace(redo.stepAttemptId, 1, 2, "blocked")),
+      { code: "ACTIVITY_NOT_PREPARED" });
 
     const publishedReading = { ...reading, practice: readingPublicationSchema.parse(reading).practice };
     runtime.publish(publishedReading);
     runtime.publish({ ...publishedReading, practice: { ...publishedReading.practice, version: 2 } });
     const readingOpen = runtime.prepare(student, { ...open, operationId: "read", practiceId: reading.practice.id });
-    using database = new DatabaseSync(path);
     const first = { protocolVersion: 1, stepAttemptId: readingOpen.stepAttemptId, slotId: "quotes" } as const;
     const saved = saveDraft(database, student.id, readingOpen.activityId, { ...first, ranges: selectionRanges });
     submitDraft(database, student.id, readingOpen.activityId, { ...first, operationId: "quotes", draft: saved.draft }, () => new Date());
