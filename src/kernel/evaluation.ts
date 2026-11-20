@@ -7,6 +7,7 @@ import { readingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 
+const storedKey = z.object({ definition: z.string() });
 const task = z.strictObject({
   submissionId: z.uuid(),
   targetId: z.string(),
@@ -64,7 +65,16 @@ function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, check
 function usesHostEvaluation(practice: z.infer<typeof readingPracticeSchema>, { stepId, slotId }: z.infer<typeof task>) {
   const step = practice.steps.find(step => step.id === stepId);
   const slot = step?.submit.slots[slotId];
-  return slot?.type === "oneChoicePerQuestion" && slot.confirmFromDrafts !== undefined;
+  return slot?.type === "oneResponsePerQuestion" || (slot?.type === "oneChoicePerQuestion" && slot.confirmFromDrafts !== undefined);
+}
+
+export function loadEvaluationKey(database: DatabaseSync, submissionId: string): unknown {
+  const stored = database.prepare(`
+    SELECT k.definition FROM scoring_keys k
+    JOIN evaluation_tasks t ON t.key_id = k.id AND t.key_version = k.version
+    WHERE t.submission_id = ?
+  `).get(submissionId);
+  return JSON.parse(storedKey.parse(stored).definition);
 }
 
 export function recordEvaluation(

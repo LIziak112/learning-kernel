@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
-import type { AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
-  ConfirmationScope, VerifyOriginal } from "../contracts/choice-confirmation.ts";
+import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey,
+  VerifyOriginal } from "../contracts/choice-confirmation.ts";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
@@ -9,11 +9,12 @@ import type { ReadingActivity } from "./activity.ts";
 import { ChoiceDraftConflict, readChoiceDrafts } from "./choice-drafts.ts";
 import { recoverChoiceEvaluation } from "./choice-evaluation.ts";
 import { writeTransaction } from "./database.ts";
-import { queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { boundOutput, requireBeforeDeadline } from "./reading-progress.ts";
-import { finishActivity, recordSubmission, submissionForOperation } from "./submission-store.ts";
-import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
+import {
+  confirmedDraftChangeCount, confirmedWorkForOperation, mapConfirmationQuestions, replayQuestionConfirmation, requireConfirmationRecovery,
+  writeQuestionConfirmation,
+} from "./question-confirmation.ts";
 
 export class ChoiceConfirmationConflict extends ChoiceDraftConflict {
   readonly questionId: string;
@@ -24,8 +25,6 @@ export class ChoiceConfirmationConflict extends ChoiceDraftConflict {
   }
 }
 
-type ConfirmedQuestion = ChoiceConfirmation["questions"][number];
-
 export function confirmChoices(
   database: DatabaseSync, studentId: string, activityId: string, input: ChoiceConfirmationInput,
   clock: () => Date, verifyOriginal?: VerifyOriginal,
@@ -33,21 +32,15 @@ export function confirmChoices(
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
     const previous = confirmationForOperation(database, activityId, input);
-    if (previous) return recoverReceipt(previous, input);
+    if (previous) {
+      const intent = previous.confirmation?.questions.map(({ choice, ...revision }) => revision);
+      return replayQuestionConfirmation(previous.receipt, intent, input);
+    }
     const slot = requireConfirmationSlot(activity, input.slotId);
     const now = clock();
     requireBeforeDeadline(activity, now);
     const questions = freezeAnswers(database, activity, input, slot.confirmFromDrafts.allowUnanswered);
-    verifyOriginals(questions, { studentId, activityId, stepAttemptId: input.stepAttemptId, operationId: input.operationId },
-      input.slotId, verifyOriginal);
-    const content: ChoiceConfirmation = { kind: "choiceConfirmation", questions };
-    const draft = saveWorkVersion(database, confirmationScope(activityId, input.stepAttemptId, input.slotId), content);
-    const observations = questions.flatMap(({ questionId, choice }) =>
-      choice === null ? [] : [{ targetId: slot.targetId, unitId: `question:${questionId}` }]);
-    const receipt = recordSubmission(database, { ...input, draft }, observations, now);
-    queueEvaluation(database, activity, receipt, slot.targetId);
-    finishActivity(database, activityId, receipt.id);
-    return receipt;
+    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, { kind: "choiceConfirmation", questions }, now, verifyOriginal);
   });
 }
 
@@ -57,9 +50,7 @@ export function recoverChoiceConfirmation(
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
-    if (authorize?.({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }) !== true) {
-      throw new LearningError(403, "FORBIDDEN");
-    }
+    requireConfirmationRecovery({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }, authorize);
     const recovered = confirmationForOperation(database, activityId, key);
     if (!recovered?.confirmation) throw new LearningError(404, "CONFIRMATION_NOT_FOUND");
     const { receipt, confirmation } = recovered;
@@ -67,7 +58,7 @@ export function recoverChoiceConfirmation(
     const evaluation = recoverChoiceEvaluation(database, activity, receipt, confirmation, registered);
     const drafts = draftsByQuestion(database, activityId, receipt);
     const choiceDraftChangeCounts = confirmation.questions.map(question => ({
-      questionId: question.questionId, changeCount: confirmedChangeCount(question, drafts.get(question.questionId)),
+      questionId: question.questionId, changeCount: confirmedDraftChangeCount(question, drafts.get(question.questionId), "choice"),
     }));
     return { receipt, practice: { id, version }, confirmation, choiceDraftChangeCounts, ...(evaluation ? { evaluation } : {}) };
   });
@@ -81,20 +72,10 @@ function requireConfirmationSlot(activity: ReadingActivity, slotId: string) {
 }
 
 function freezeAnswers(database: DatabaseSync, activity: ReadingActivity, input: ChoiceConfirmationInput, allowUnanswered: boolean) {
-  const frozen = activity.practice.questions;
-  const selected = new Map(input.questions.map(question => [question.questionId, question]));
-  if (selected.size !== frozen.length || selected.size !== input.questions.length) {
-    throw new LearningError(422, "INVALID_QUESTION_SET");
-  }
   const heads = confirmationHeads(database, activity, input);
-  return frozen.map(question => {
-    const requested = selected.get(question.id);
-    if (!requested) throw new LearningError(422, "INVALID_QUESTION_SET");
-    if (requested.questionVersion !== question.version) throw new LearningError(409, "QUESTION_REVISION_STALE");
-    const current = heads.get(question.id) ?? { revision: 0, choice: null };
-    if (requested.revision !== current.revision) {
-      throw new ChoiceConfirmationConflict(question.id, { revision: current.revision, choice: current.choice });
-    }
+  return mapConfirmationQuestions(activity, input.questions, requested => {
+    const current = heads.get(requested.questionId) ?? { revision: 0, choice: null };
+    if (requested.revision !== current.revision) throw new ChoiceConfirmationConflict(requested.questionId, current);
     if (current.choice === null && !allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
     return { ...requested, choice: current.choice };
   });
@@ -116,45 +97,7 @@ function draftsByQuestion(database: DatabaseSync, activityId: string, { stepAtte
     .filter(draft => draft.slotId === slotId).map(draft => [draft.questionId, draft]));
 }
 
-function confirmedChangeCount(question: ConfirmedQuestion, draft: ReturnType<typeof readChoiceDrafts>[number] | undefined) {
-  if (question.choice === null) return 0;
-  if (draft?.revision !== question.revision || draft.choice !== question.choice || draft.questionVersion !== question.questionVersion) {
-    throw new Error("已确认作答缺少对应的草稿版本");
-  }
-  return draft.changeCount;
-}
-
-function verifyOriginals(questions: ConfirmedQuestion[], scope: ConfirmationScope, slotId: string, verify?: VerifyOriginal) {
-  for (const { questionId, questionVersion, original } of questions) {
-    if (!verify && original.state === "uncollected") continue;
-    if (verify?.({ ...scope, slotId, questionId, questionVersion, original: { ...original } }) !== true) {
-      throw new LearningError(409, "ORIGINAL_NOT_VERIFIED");
-    }
-  }
-}
-
-function confirmationScope(activityId: string, stepAttemptId: string, slotId: string) {
-  return { activityId, step: { id: stepAttemptId, slotId } };
-}
-
 function confirmationForOperation(database: DatabaseSync, activityId: string, input: ConfirmationKey) {
-  const previous = submissionForOperation(database, input);
-  if (!previous) return undefined;
-  const { receipt, draft } = previous;
-  const content = loadWorkVersion(database, confirmationScope(activityId, receipt.stepAttemptId, receipt.slotId), draft);
-  return { receipt, confirmation: readChoiceConfirmation(content) };
-}
-
-function recoverReceipt(previous: NonNullable<ReturnType<typeof confirmationForOperation>>, input: ChoiceConfirmationInput) {
-  const { receipt, confirmation } = previous;
-  const intent = confirmation?.questions.map(({ choice, ...selection }) => selection);
-  if (receipt.slotId !== input.slotId || !intent
-    || questionIntent(intent) !== questionIntent(input.questions)) {
-    throw new LearningError(409, "OPERATION_CONFLICT");
-  }
-  return receipt;
-}
-
-function questionIntent(questions: ChoiceConfirmationInput["questions"]) {
-  return JSON.stringify(questions.toSorted((a, b) => a.questionId === b.questionId ? 0 : a.questionId < b.questionId ? -1 : 1));
+  const previous = confirmedWorkForOperation(database, activityId, input);
+  return previous && { receipt: previous.receipt, confirmation: readChoiceConfirmation(previous.content) };
 }

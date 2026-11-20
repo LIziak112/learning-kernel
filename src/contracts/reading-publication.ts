@@ -21,6 +21,10 @@ const slot = z.discriminatedUnion("type", [
     type: z.literal("oneChoicePerQuestion"), reasonTargetId: id.optional(),
     confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }).optional(),
   }),
+  newEvidence.extend({
+    type: z.literal("oneResponsePerQuestion"), input: z.literal("booleanOrString"),
+    confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }),
+  }),
   z.strictObject({ type: z.literal("reuse"), source: id }),
 ]);
 
@@ -48,7 +52,7 @@ const policy = z.strictObject({
   student: z.strictObject({
     ownSubmission: z.strictObject({
       scope: z.literal("ownConfirmedSubmissions"),
-      fields: z.array(z.enum(["receipt", "submittedQuotes", "ownChoices"])),
+      fields: z.array(z.enum(["receipt", "submittedQuotes", "ownChoices", "ownResponses"])),
       onFinal: z.array(z.literal("passageGradingStatus")),
     }),
     passageScore: z.strictObject({
@@ -101,15 +105,22 @@ export const readingPracticeSchema = versionRef.extend({
   policy,
 });
 
+function orderQuestionValues<T extends string | boolean>(values: Record<string, T>) {
+  return Object.fromEntries(Object.entries(values).sort(([left], [right]) => left === right ? 0 : left < right ? -1 : 1));
+}
+
 export const scoringKeySchema = versionRef.extend({
-  acceptedChoices: z.record(id, id).transform(choices =>
-    Object.fromEntries(Object.keys(choices).sort().map(question => [question, choices[question]]))),
+  acceptedChoices: z.record(id, id).transform(orderQuestionValues),
+});
+
+export const responseScoringKeySchema = versionRef.extend({
+  acceptedResponses: z.record(id, z.boolean()).transform(orderQuestionValues),
 });
 
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema.optional(),
   practice: readingPracticeSchema,
-  scoringKey: scoringKeySchema.optional(),
+  scoringKey: z.union([scoringKeySchema, responseScoringKeySchema]).optional(),
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

@@ -62,7 +62,8 @@ test("升级旧草稿保留未知首次时刻，旧写同文和接管不会补�
       ALTER TABLE activities DROP COLUMN initial_prepared_practice_version;
       DROP TABLE choice_snapshot_revisions;
       DROP TABLE choice_draft_amendments;
-      DELETE FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15);
+      DROP TABLE response_review_requirements;
+      DELETE FROM schema_migrations WHERE version >= 11;
     `);
   }
   const upgraded = openLearningRuntime({ databasePath: path });

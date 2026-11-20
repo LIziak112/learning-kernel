@@ -142,6 +142,12 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
           return Number(result.value.stdout.trim());
         });
         assert.equal(evaluated.reduce((sum, count) => sum + count, 0), 6);
+        const responses = "response-confirmation-consumer.mts";
+        cpSync(new URL("./fixtures/response-confirmation-consumer.mts", import.meta.url), join(directory, responses));
+        inputs.push(responses);
+        for (const phase of ["write", "recover", "read-stored"]) {
+          execFileSync(process.execPath, [responses, phase], { cwd: directory, stdio: "inherit" });
+        }
         const timing = "choice-draft-activity-consumer.mts";
         cpSync(new URL("./fixtures/choice-draft-activity-consumer.mts", import.meta.url), join(directory, timing));
         inputs.push(timing);

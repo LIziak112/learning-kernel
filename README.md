@@ -83,6 +83,16 @@ const activity = runtime.read(principal, receipt.activityId);
 
 `node --test tests/installed-runtime.test.ts` 在两个独立临时项目安装同一个固定包，通过包名开卷和读取，在新进程打开原库，并验证严格类型检查、冻结版本和学生隔离。
 
+### 逐题原值与待人工判定
+
+练法以单步 `finalAnswer`、`response-group@1` 和 `oneResponsePerQuestion` 声明逐题确认。槽位声明 `input: "booleanOrString"`、`confirmFromDrafts.allowUnanswered` 和每道题的固定版本。`grading.assessment` 固定独立的 `responseEvaluators` 注册项及私有评分键 `acceptedResponses`。本版评分键逐题为布尔，评估器解释学生原值。可参看[独立宿主示例](tests/fixtures/response-confirmation-consumer.mts)。
+
+`saveResponseDraft` 接收同一题内的操作标识、基础修订、题版本和 `value`。布尔和原始字符串均按原类型保存，字符串经过保存和确认仍保留空格。未保存草稿的题在确认中是 `null`，显式保存的空字符串仍为字符串。`confirmResponses` 接收固定题集合、各题当前草稿修订和原稿声明，内核在同一事务记录作品、回执、完成与评估任务。原稿存在性仍由可信宿主使用 `verifyOriginal` 核实。同一意图重试取回原回执，改答冲突通过 `ResponseDraftConflict` 或 `ResponseConfirmationConflict` 交付本人当前稿。
+
+可信宿主用原确认操作调用 `recoverResponseConfirmation`，每次经当前活动及 `authorizeConfirmationRecovery` 核准。同步评估器收到冻结版本、原值和私有布尔评分键，返回 `{ status: "judged", correct }` 或 `{ status: "needsReview" }`。内核独立保存待人工判定事实和布尔判定。回调未配置时返回 `EVALUATOR_UNAVAILABLE`，回调异常回滚本次评估。已存结果可在重开后读取，授权恢复不暴露私有评分键。`ownResponses` 仅开放本人确认作品，学生常规读面没有本模式的判定或待批详情。人工处理使用恢复出的待批事实，本契约提供待批登记与读取。普通单选继续使用相同的单选 API、成员校验及布尔评估。
+
+版本 16 为该模式增加独立待评记录。旧版 15 升级保留既有作品、回执和布尔判定，升级后的数据库需由支持版本 16 的运行时打开。
+
 ## 浏览器演示
 
 安装依赖后运行 `pnpm run dev`。学生和教师使用不同的浏览器配置，例如普通窗口与无痕窗口，以便同时保留两种会话。

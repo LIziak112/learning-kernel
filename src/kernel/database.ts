@@ -8,6 +8,7 @@ import { choiceDraftMigration, currentChoiceDraftMigration } from "./choice-draf
 import { choiceAmendmentMigration } from "./choice-amendment-migration.ts";
 import { choiceSnapshotMigration } from "./choice-snapshot-migration.ts";
 import { preparedActivityMigration } from "./prepared-activity-migration.ts";
+import { responseEvaluationMigration } from "./response-evaluation-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
 const migrations = [
@@ -48,6 +49,7 @@ const migrations = [
   preparedActivityMigration,
   choiceAmendmentMigration,
   choiceSnapshotMigration,
+  responseEvaluationMigration,
 ];
 export const latestDatabaseVersion = migrations.length + 1;
 

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
+import type { ResponseEvaluatorRegistration } from "../contracts/response-evaluation.ts";
 import { publicationSchema } from "../contracts/reading.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import { readingPublicationSchema } from "../contracts/reading-publication.ts";
@@ -9,16 +10,21 @@ import { validateBindings } from "./publication-bindings.ts";
 
 const storedDefinition = z.object({ definition: z.string() });
 const publicationFormat = z.object({ practice: z.object({ formatVersion: z.unknown().optional() }) });
-function parseReadingPublication(input: unknown, registered: readonly ChoiceEvaluatorRegistration[]) {
+function parseReadingPublication(
+  input: unknown, registered: readonly ChoiceEvaluatorRegistration[], responses: readonly ResponseEvaluatorRegistration[],
+) {
   return readingPublicationSchema.superRefine((value, context) => {
-    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered);
+    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered, responses);
   }).parse(input);
 }
 
-export function registerPublication(database: DatabaseSync, input: unknown, registered: readonly ChoiceEvaluatorRegistration[] = []) {
+export function registerPublication(
+  database: DatabaseSync, input: unknown, registered: readonly ChoiceEvaluatorRegistration[] = [],
+  responses: readonly ResponseEvaluatorRegistration[] = [],
+) {
   const { practice: format } = publicationFormat.parse(input);
   const { material, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
-    ? parseReadingPublication(input, registered)
+    ? parseReadingPublication(input, registered, responses)
     : { ...publicationSchema.parse(input), scoringKey: undefined };
   requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);

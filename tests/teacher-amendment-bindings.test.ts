@@ -99,14 +99,14 @@ test("空勘误声明需要完整迁移证据，历史缺表和当前缺表有�
   assert.throws(() => verifyActivityBindings(current, empty), mismatch);
   assert.deepEqual(readFileSync(current), incomplete);
 
-  currentDatabase.exec("DELETE FROM schema_migrations WHERE version = 15");
+  currentDatabase.exec("DROP TABLE response_review_requirements; DELETE FROM schema_migrations WHERE version >= 15");
   const prior = readFileSync(current);
   assert.equal(verifyActivityBindings(current, empty), undefined);
   assert.deepEqual(readFileSync(current), prior);
 
   currentDatabase.exec("DELETE FROM schema_migrations WHERE version = 13");
   assert.throws(() => verifyActivityBindings(current, empty), mismatch);
-  currentDatabase.exec("INSERT INTO schema_migrations (version) VALUES (13), (15), (16)");
+  currentDatabase.exec("INSERT INTO schema_migrations (version) VALUES (13), (15), (16), (17)");
   assert.throws(() => verifyActivityBindings(current, empty), mismatch);
   currentDatabase.exec("DROP TABLE schema_migrations");
   assert.throws(() => verifyActivityBindings(current, empty), mismatch);
@@ -125,7 +125,7 @@ test("历史答案勘误的真实作品修订在题面能力出现前仍能精�
   }
 
   using database = new DatabaseSync(path);
-  database.exec("DROP TABLE choice_snapshot_revisions; DELETE FROM schema_migrations WHERE version = 15");
+  database.exec("DROP TABLE choice_snapshot_revisions; DROP TABLE response_review_requirements; DELETE FROM schema_migrations WHERE version >= 15");
   const original = { ...empty, bindings: [owner.opening] };
   const prior = readFileSync(path);
   assert.equal(verifyActivityBindings(path, withAmendments(original, [owner.proof])), undefined);

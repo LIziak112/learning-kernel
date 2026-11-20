@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { ChoiceConfirmation } from "../contracts/choice-confirmation.ts";
+import { readResponseConfirmation } from "../contracts/response.ts";
+import type { ResponseConfirmation } from "../contracts/response.ts";
 import { studentTool } from "../builtins/reading-capabilities.ts";
 import { selectedText } from "../builtins/selection.ts";
 import type { ActivityDetail, SubmitInput } from "../contracts/reading.ts";
@@ -90,7 +92,9 @@ export function confirmReadingDraft(
 }
 
 function rejectDraftConfirmation(slot: ReturnType<typeof boundOutput>) {
-  if (slot.type === "oneChoicePerQuestion" && slot.confirmFromDrafts) throw new LearningError(422, "INVALID_SLOT");
+  if (slot.type === "oneResponsePerQuestion" || (slot.type === "oneChoicePerQuestion" && slot.confirmFromDrafts)) {
+    throw new LearningError(422, "INVALID_SLOT");
+  }
 }
 
 export function requireBeforeDeadline(activity: ReadingActivity, confirmedAt: Date) {
@@ -111,6 +115,7 @@ function readingObservations(
     verifyAnswerReferences(database, activity.activityId, activity.step, answer);
     return answerObservations(activity, slot, answer);
   }
+  if (slot.type !== "passageSelection") throw new LearningError(422, "INVALID_SLOT");
   const selection = readingSelection.parse(content);
   validateSelection(selection, Object.keys(slot.oneRangePerRole), slot.distinctParagraphs);
   return [{ targetId: slot.targetId, unitId: slot.evidenceUnit }];
@@ -156,6 +161,7 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
 type StudentSubmissionView = {
   receipt?: StoredSubmission["receipt"];
   confirmation?: ChoiceConfirmation;
+  responseConfirmation?: ResponseConfirmation;
   selection?: ReadingSelection;
   answer?: Omit<ReadingAnswer, "references"> & { references?: ReadingAnswer["references"] };
 };
@@ -186,6 +192,12 @@ export function studentSubmissionView(activity: ReadingActivity, submitted: Stor
   const receipt = fields.has("receipt") ? { receipt: submitted.receipt } : {};
   const confirmation = readChoiceConfirmation(submitted.content);
   if (confirmation) return fields.has("ownChoices") ? { ...receipt, confirmation } : receipt;
+  const responseConfirmation = readResponseConfirmation(submitted.content);
+  if (responseConfirmation) return fields.has("ownResponses") ? { ...receipt, responseConfirmation } : receipt;
+  return studentReadingEvidence(submitted, fields, receipt);
+}
+
+function studentReadingEvidence(submitted: StoredSubmission, fields: ReadonlySet<string>, receipt: Pick<StudentSubmissionView, "receipt">) {
   const view = readingSubmissionView(submitted);
   if (view.selection && fields.has("submittedQuotes")) return { ...receipt, selection: view.selection };
   if (!view.answer || !fields.has("ownChoices")) return receipt;

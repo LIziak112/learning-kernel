@@ -15,15 +15,15 @@ export const confirmationKey = z.strictObject({
   protocolVersion: z.literal(1), stepAttemptId: z.uuid(), operationId: id,
 });
 
-const questionRevision = z.strictObject({
+export const confirmedQuestionRevision = z.strictObject({
   questionId: id, questionVersion: versionRef.shape.version, revision: z.int().nonnegative(), original: originalEvidence,
 });
 
 export const choiceConfirmationInput = confirmationKey.extend({
-  slotId: id, questions: z.array(questionRevision).min(1),
+  slotId: id, questions: z.array(confirmedQuestionRevision).min(1),
 });
 
-const confirmedQuestion = questionRevision.extend({ choice: id.nullable() });
+const confirmedQuestion = confirmedQuestionRevision.extend({ choice: id.nullable() });
 export const choiceConfirmation = z.strictObject({
   kind: z.literal("choiceConfirmation"), questions: z.array(confirmedQuestion).min(1),
 });
