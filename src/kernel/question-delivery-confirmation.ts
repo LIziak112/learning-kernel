@@ -3,12 +3,12 @@ import type { AuthorizeConfirmationRecovery, ConfirmationKey, VerifyOriginal } f
 import { findQuestionAnswerRule } from "../contracts/question-answer-rule.ts";
 import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { questionDeliveryIntent, questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
-import type { AuthorizeQuestionDeliveryReview, QuestionDeliveryInput } from "../contracts/question-delivery.ts";
+import type { QuestionDeliveryInput } from "../contracts/question-delivery.ts";
 import { hasStoredResponse } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
-import { loadActivity, loadStudentReadingActivity } from "./activity.ts";
+import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { readTransaction, writeTransaction } from "./database.ts";
+import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import type { PublicationEvaluators } from "./publication-bindings.ts";
 import {
@@ -18,7 +18,7 @@ import {
 import {
   deliveryDraftHead, QuestionDeliveryConflict, questionDeliveryPosition, requireFrozenQuestion, requireQuestionDeliverySlot,
 } from "./question-delivery-drafts.ts";
-import { readManualReviewBasis, readManualReviewQuestions, recoverQuestionDeliveryEvaluation } from "./question-delivery-evaluation.ts";
+import { readManualReviewQuestions, recoverQuestionDeliveryEvaluation } from "./question-delivery-evaluation.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
 import { requireBeforeDeadline } from "./reading-progress.ts";
 import { recordResponseReviewRequirements } from "./response-evaluation.ts";
@@ -135,40 +135,4 @@ export function recoverQuestionDelivery(
     }
     return { ...confirmation, assessment: "none" as const };
   });
-}
-
-export function readQuestionDeliveryReview(
-  database: DatabaseSync, reviewerId: string, activityId: string, { stepAttemptId, operationId }: ConfirmationKey,
-  authorize: AuthorizeQuestionDeliveryReview | undefined,
-) {
-  return readTransaction(database, () => {
-    const { activity, studentId } = requireReviewActivity(database, reviewerId, activityId, stepAttemptId);
-    const recovered = confirmedWorkForOperation(database, activityId, { protocolVersion: 1, stepAttemptId, operationId });
-    if (!recovered) throw new LearningError(403, "FORBIDDEN");
-    const { receipt } = recovered;
-    const { id: submissionId, slotId } = receipt;
-    if (authorize?.({ reviewerId, studentId, activityId, stepAttemptId, operationId, submissionId, slotId }) !== true) {
-      throw new LearningError(403, "FORBIDDEN");
-    }
-    const content = readQuestionDelivery(recovered.content);
-    const manualReview = activity.practice.grading.manualReview;
-    if (!manualReview || !content) throw new LearningError(404, "REVIEW_NOT_FOUND");
-    const { id, version } = activity.practice;
-    const basis = readManualReviewBasis(database, receipt, manualReview.keyRef);
-    const questions = readManualReviewQuestions(database, receipt, content);
-    return { receipt, practice: { id, version }, confirmation: questionDeliveryView(content), basis, questions };
-  });
-}
-
-function requireReviewActivity(database: DatabaseSync, reviewerId: string, activityId: string, stepAttemptId: string) {
-  const studentId = database.prepare(`
-    SELECT a.student_id AS studentId FROM activities a
-    JOIN step_attempts t ON t.activity_id = a.id
-    LEFT JOIN reading_reviews r ON r.activity_id = a.id
-    WHERE a.id = ? AND t.id = ? AND (r.activity_id IS NULL OR (r.reviewer_id = ? AND r.reviewer_active = 1))
-  `).get(activityId, stepAttemptId, reviewerId)?.studentId;
-  if (typeof studentId !== "string") throw new LearningError(403, "FORBIDDEN");
-  const activity = loadActivity(database, studentId, activityId);
-  if (activity.kind !== "reading" || activity.stepAttemptId !== stepAttemptId) throw new LearningError(403, "FORBIDDEN");
-  return { activity, studentId };
 }

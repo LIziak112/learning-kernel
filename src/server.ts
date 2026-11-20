@@ -9,8 +9,10 @@ import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
 import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
 import { questionAnswerRules } from "./contracts/question-answer-rule.ts";
-import { questionDeliveryDraftInput, questionDeliveryInput } from "./contracts/question-delivery.ts";
-import type { AuthorizeQuestionDeliveryReview, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
+import { questionDeliveryDraftInput, questionDeliveryInput, questionDeliveryReviewMode } from "./contracts/question-delivery.ts";
+import type { AuthorizeQuestionDeliveryReview, AuthorizeQuestionDeliveryVerdict, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
+import { verdictCommand } from "./contracts/verdict.ts";
+import type { VerdictCommand } from "./contracts/verdict.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
@@ -27,7 +29,8 @@ import { reviseChoiceSnapshot } from "./kernel/choice-snapshot.ts";
 import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
-import { confirmQuestionDelivery, readQuestionDeliveryReview, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
+import { confirmQuestionDelivery, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
+import { readQuestionDeliveryReview, readQuestionDeliveryVerdicts, writeQuestionDeliveryVerdict } from "./kernel/question-delivery-review.ts";
 import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
 import { registerPublication } from "./kernel/publication.ts";
 import { confirmResponses, indexResponses, recoverResponseConfirmation, scalarResponses } from "./kernel/response-confirmation.ts";
@@ -49,6 +52,7 @@ const runtimeOptions = z.strictObject({
   verifyOriginal: z.custom<VerifyOriginal>(value => typeof value === "function").optional(),
   authorizeConfirmationRecovery: z.custom<AuthorizeConfirmationRecovery>(value => typeof value === "function").optional(),
   authorizeQuestionDeliveryReview: z.custom<AuthorizeQuestionDeliveryReview>(value => typeof value === "function").optional(),
+  authorizeQuestionDeliveryVerdict: z.custom<AuthorizeQuestionDeliveryVerdict>(value => typeof value === "function").optional(),
 });
 const studentPrincipal = z.strictObject({ role: z.literal("student"), id });
 const reviewerPrincipal = z.strictObject({ role: z.literal("reviewer"), id });
@@ -65,7 +69,8 @@ export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
 export type { ActivityBindingClaims, TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
 export type { QuestionAnswerRuleRegistration } from "./contracts/question-answer-rule.ts";
-export type { AuthorizeQuestionDeliveryReview, QuestionDeliveryDraftInput, QuestionDeliveryInput };
+export type { AuthorizeQuestionDeliveryReview, AuthorizeQuestionDeliveryVerdict, QuestionDeliveryDraftInput, QuestionDeliveryInput };
+export type { VerdictCommand, VerdictReceipt } from "./contracts/verdict.ts";
 export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
@@ -115,6 +120,14 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     if (mode === "declared" || recovered.assessment !== "automatic") return recovered;
     const { assessment: _assessment, ...legacy } = recovered;
     return legacy;
+  }
+
+  function readDeliveryReview(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey, mode: "verdicts"): ReturnType<typeof readQuestionDeliveryVerdicts>;
+  function readDeliveryReview(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey): ReturnType<typeof readQuestionDeliveryReview>;
+  function readDeliveryReview(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey, input?: "verdicts") {
+    const read = questionDeliveryReviewMode.parse(input) === "verdicts" ? readQuestionDeliveryVerdicts : readQuestionDeliveryReview;
+    return read(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
+      settings.authorizeQuestionDeliveryReview);
   }
 
   return {
@@ -208,9 +221,10 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
         questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery, settings.questionAnswerRules);
     },
     recoverQuestionDelivery: recoverDelivery,
-    readQuestionDeliveryReview(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey) {
-      return readQuestionDeliveryReview(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
-        confirmationKey.parse(key), settings.authorizeQuestionDeliveryReview);
+    readQuestionDeliveryReview: readDeliveryReview,
+    writeQuestionDeliveryVerdict(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey, command: VerdictCommand) {
+      return writeQuestionDeliveryVerdict(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
+        confirmationKey.parse(key), verdictCommand.parse(command), settings.authorizeQuestionDeliveryVerdict, clock);
     },
     close() {
       database.close();

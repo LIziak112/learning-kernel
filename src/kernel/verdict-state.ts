@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ReadingActivity } from "./activity.ts";
 import { activeTeacherVerdict, verdictHistory } from "./verdict-history.ts";
+import type { TeacherVerdictMode } from "./verdict-history.ts";
 
 const assessment = z.strictObject({ submissionId: z.uuid(), targetId: z.string(), status: z.enum(["pending", "done"]) });
 const storedAutomatic = z.strictObject({
@@ -31,16 +32,23 @@ export function readAutomaticVerdicts(database: DatabaseSync, { submissionId, ta
 }
 
 export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: z.infer<typeof assessment>) {
+  const questions = activity.practice.questions.map(({ id: questionId, prompt }) => ({ questionId, prompt }));
+  return questionVerdictStates(database, target, questions, "undo");
+}
+
+export function questionVerdictStates<Question extends { questionId: string }>(
+  database: DatabaseSync, target: z.infer<typeof assessment>, questions: readonly Question[], mode: TeacherVerdictMode,
+) {
   const automatic = readAutomaticVerdicts(database, target);
   const history = verdictHistory(database, target);
-  return activity.practice.questions.map(question => {
-    const questionHistory = history.filter(event => event.questionId === question.id);
-    const original = automatic.find(item => item.questionId === question.id);
+  return questions.map(question => {
+    const { questionId } = question;
+    const questionHistory = history.filter(event => event.questionId === questionId);
+    const original = automatic.find(item => item.questionId === questionId);
     const automaticBasis = original && { correct: original.correct, valid: original.valid };
-    const effective = activeTeacherVerdict(questionHistory) ?? effectiveAutomatic(automaticBasis);
+    const effective = activeTeacherVerdict(questionHistory, mode) ?? effectiveAutomatic(automaticBasis);
     return {
-      submissionId: target.submissionId, targetId: target.targetId, questionId: question.id,
-      prompt: question.prompt,
+      ...question, submissionId: target.submissionId, targetId: target.targetId,
       revision: questionHistory.at(-1)?.revision ?? 0, effective, automatic: automaticBasis, history: questionHistory,
     };
   });

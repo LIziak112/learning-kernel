@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { verdictReceipt } from "../contracts/verdict.ts";
-import type { VerdictCommand, VerdictLocation } from "../contracts/verdict.ts";
+import type { VerdictCommand, VerdictLocation, VerdictReceipt } from "../contracts/verdict.ts";
 import { LearningError } from "./learning-error.ts";
 
 const storedEvent = verdictReceipt.extend({
@@ -20,6 +20,7 @@ const eventFields = `
 `;
 
 type Event = z.infer<typeof storedEvent>;
+export type TeacherVerdictMode = "undo" | "replace";
 
 export function verdictHistory(database: DatabaseSync, assessment: Pick<VerdictLocation, "submissionId" | "targetId">) {
   return database.prepare(`
@@ -28,11 +29,15 @@ export function verdictHistory(database: DatabaseSync, assessment: Pick<VerdictL
   `).all(assessment.submissionId, assessment.targetId).map(row => storedEvent.parse(row));
 }
 
-export function activeTeacherVerdict(history: Event[]) {
-  const withdrawn = new Set(history.map(entry => entry.withdrawId));
-  const active = history.findLast(entry => entry.correct !== null && !withdrawn.has(entry.id));
-  if (!active) return undefined;
+export function activeTeacherVerdict(history: Event[], mode: TeacherVerdictMode) {
+  const active = mode === "replace" ? history.at(-1) : lastUnwithdrawnVerdict(history);
+  if (!active || active.correct === null) return undefined;
   return { source: "teacherReview" as const, id: active.id, correct: Boolean(active.correct) };
+}
+
+function lastUnwithdrawnVerdict(history: Event[]) {
+  const withdrawn = new Set(history.map(entry => entry.withdrawId));
+  return history.findLast(entry => entry.correct !== null && !withdrawn.has(entry.id));
 }
 
 export function eventView(event: Event) {
@@ -67,12 +72,12 @@ export function repeatedReview(database: DatabaseSync, activityId: string, revie
 }
 
 export function appendReview(
-  database: DatabaseSync, activityId: string, reviewer: string, command: VerdictCommand, clock: () => Date,
-) {
+  database: DatabaseSync, activityId: string, reviewer: string, command: VerdictCommand, clock: () => Date, mode: TeacherVerdictMode = "undo",
+): VerdictReceipt {
   const history = verdictHistory(database, command).filter(event => event.questionId === command.questionId);
   const revision = history.at(-1)?.revision ?? 0;
   if (revision !== command.expectedRevision) throw new LearningError(409, "VERDICT_CONFLICT");
-  if (command.action === "withdraw" && activeTeacherVerdict(history)?.id !== command.withdrawId) {
+  if (command.action === "withdraw" && activeTeacherVerdict(history, mode)?.id !== command.withdrawId) {
     throw new LearningError(409, "VERDICT_CONFLICT");
   }
   const { correct, withdrawId } = commandVerdict(command);
@@ -89,6 +94,6 @@ export function appendReview(
   return receipt;
 }
 
-function reviewReceipt({ id, submissionId, targetId, questionId, revision }: Event) {
+function reviewReceipt({ id, submissionId, targetId, questionId, revision }: Event): VerdictReceipt {
   return { id, submissionId, targetId, questionId, revision };
 }

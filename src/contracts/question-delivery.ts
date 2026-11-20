@@ -3,6 +3,7 @@ import { choiceConfirmationInput, confirmedQuestionRevision } from "./choice-con
 import type { ConfirmationScope } from "./choice-confirmation.ts";
 import { id, versionRef } from "./reading.ts";
 import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue, titledTextResponseValue } from "./response.ts";
+import type { VerdictCommand } from "./verdict.ts";
 
 export const orderedTextFormat = z.literal("orderedTextBlanks");
 export const titledTextFormat = z.literal("textWithOptionalTitle");
@@ -31,10 +32,18 @@ export const questionDeliveryScoringKey = versionRef.extend({
 export const questionDeliveryReviewBasis = versionRef.extend({
   reviewCriteria: z.string().refine(criteria => criteria.trim().length > 0),
 });
-export type AuthorizeQuestionDeliveryReview = (scope: Readonly<ConfirmationScope & {
+export const questionDeliveryReviewMode = z.literal("verdicts").optional();
+type QuestionDeliveryReviewScope = ConfirmationScope & {
   reviewerId: string;
   submissionId: string;
   slotId: string;
+};
+export type AuthorizeQuestionDeliveryReview = (scope: Readonly<QuestionDeliveryReviewScope>) => boolean;
+export type AuthorizeQuestionDeliveryVerdict = (scope: Readonly<QuestionDeliveryReviewScope & {
+  targetId: string;
+  questionId: string;
+  questionVersion: number;
+  action: VerdictCommand["action"];
 }>) => boolean;
 
 export const questionDeliveryDraftInput = responseDraftInput.extend({ value: deliveryValue });

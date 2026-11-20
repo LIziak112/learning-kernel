@@ -16,4 +16,5 @@ export const verdictCommand = z.discriminatedUnion("action", [
 
 export const verdictReceipt = verdictLocation.extend({ id: z.uuid(), revision: z.int().positive() });
 export type VerdictCommand = z.infer<typeof verdictCommand>;
+export type VerdictReceipt = z.infer<typeof verdictReceipt>;
 export type VerdictLocation = z.infer<typeof verdictLocation>;

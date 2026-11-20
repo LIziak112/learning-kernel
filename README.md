@@ -113,9 +113,15 @@ const activity = runtime.read(principal, receipt.activityId);
 
 活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery(principal, activityId, key)` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和 `evaluation`，适用于自动评分题组。待自动评分的任务可在首次获准恢复时执行，已记录的判定和待评状态可直接复读。
 
-可信宿主可传第四参数 `"declared"`，按 `assessment` 字段识别 `"none"`、`"manual"` 和 `"automatic"`。三种模式都带原回执与确认事实，并按现行授权交付。人工模式的 `review.questions` 标明本次确认中待人工评阅的冻结题及其版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
+可信宿主可传第四参数 `"declared"`，按 `assessment` 字段识别 `"none"`、`"manual"` 和 `"automatic"`。三种模式都带原回执与确认事实，并按现行授权交付。人工模式的 `review.questions` 交付确认时登记的待评题与冻结版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
 
 需要人工评阅时，在 `grading.manualReview.keyRef` 引用本次私有 `scoringKey: { id, version, reviewCriteria }`。填写实际的量表或评阅准则文本。每个确认覆盖的位置都登记待评，含已确认的空答。表现记录继续遵守已答规则。宿主配置同步 `authorizeQuestionDeliveryReview`，凭已验证的 `{ role: "reviewer", id }`、活动 ID 和原确认键调用 `readQuestionDeliveryReview`。授权收到真实评阅者、学生、活动、步骤尝试、操作标识、提交 ID 和回执槽位。已有内核评阅指派也须有效。该读口交付冻结原值、待评题和精确版本的 `basis`，私有量表仅随获准的评阅读取交付。
+
+读题组当前判定时传入 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "verdicts")`。它按原确认交付实际回执、冻结题与任务目标，逐题返回判定修订和状态。自动评估尚未执行显示 `pendingEvaluation`，需要人工判定显示 `needsReview`，已有有效判定显示 `judged`。自动原判通过 `automatic` 返回，`effective.source` 区分生效的 `teacherReview` 与 `automatic`。人工题组仍有私有 `basis`。原三参评阅读口及人工模式的确认恢复继续交付原始待评登记。人工任务保留这项登记，宿主通过 `"verdicts"` 读取当前是否仍需评阅。
+
+改判使用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command)`。宿主须另配同步 `authorizeQuestionDeliveryVerdict`，使用真实提交、槽位、冻结题及版本、评价目标和动作裁决每次写入与重放。命令使用 `protocolVersion: 1`、`operationId`、`submissionId`、`targetId`、`questionId`、`expectedRevision` 和 `reason`，按 `action: "override"` 传 `correct` 或按 `action: "withdraw"` 传当前生效判定的 `withdrawId`。先用 `"verdicts"` 读到当前修订，初次为 0。成功得到含判定事件 ID 和新修订的回执。相同命令重发取回原回执，内容变更返回 `OPERATION_CONFLICT`，过旧修订或撤销非当前判定返回 `VERDICT_CONFLICT`。
+
+题组对同一冻结作答的新改判替换以前的教师结果。清除回到仍有效的自动原判、待人工判定或尚未执行的自动评估。逐题确认只能评本次实际交付的题。学生原答和提交回执按原策略交付。自动评分恢复继续交付原评估事实。[题组判定独立宿主示例](tests/fixtures/question-delivery-verdict-consumer.mts)
 
 填空按原序保留 `string[]`、空白和数组长度，允许少于或多于题面的空位数。数组为空或所有项去除首尾空白后均为空时不计作答，必答槽拒绝确认。显式全空和空数组仍存有草稿修订，未存稿为 `null`。宿主根据自己的冻结策略处理待人工判定。
 

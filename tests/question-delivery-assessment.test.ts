@@ -319,3 +319,244 @@ test("发布拒绝多重评估、无实际量表的人工评阅、无评估的�
     assert.equal(db.prepare("SELECT count(*) AS n FROM practices").get()?.n, 0);
   } finally { runtime.close(); }
 });
+
+test("题组教师改判｜自动原判和真正待评各自回落，连续改判的早先值不复活", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("mixed-verdict");
+  let allowed = true;
+  let reviewedSubmission: string | undefined;
+  let evaluated = 0;
+  const authorizeQuestionDeliveryReview: NonNullable<Parameters<typeof openLearningRuntime>[0]["authorizeQuestionDeliveryReview"]> =
+    scope => allowed && scope.reviewerId === reviewer.id && scope.studentId === student.id
+      && scope.submissionId === reviewedSubmission && scope.slotId === slotId;
+  const settings = {
+    databasePath, authorizeConfirmationRecovery: () => true, verifyOriginal: () => true, authorizeQuestionDeliveryReview,
+    authorizeQuestionDeliveryVerdict: authorizeQuestionDeliveryReview,
+  };
+  const runtime = openLearningRuntime({ ...settings,
+    titledTextEvaluators: [{ ...evaluator, evaluate: () => { evaluated += 1; return { status: "needsReview" }; } }],
+    responseEvaluators: [{ ...evaluator, evaluate: ({ value, acceptedResponse }) => {
+      evaluated += 1;
+      return { status: "judged", correct: value === acceptedResponse };
+    } }],
+  });
+  const committed = (() => {
+    try {
+      runtime.publish({ practice: { ...base.practice, questions: [judge, question], grading: automatic },
+        scoringKey: { ...scoringKey, acceptedByQuestion: {
+          ...scoringKey.acceptedByQuestion, [judge.id]: { response: judge.response, acceptedResponse: false },
+        } },
+      });
+      const activity = start(runtime, base.practice.id);
+      const { activityId } = activity;
+      const draft = save(runtime, activity, judge, false);
+      const essay = save(runtime, activity, question, note);
+      const input = confirmation(activity, [revision(judge, draft.revision), revision(question, essay.revision)]);
+      const receipt = runtime.confirmQuestionDelivery(student, activityId, input);
+      reviewedSubmission = receipt.id;
+      const key = recoveryKey(input);
+      const read = () => runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts");
+      assert.deepEqual(read().questions.map(({ revision, status }) => ({ revision, status })),
+        [{ revision: 0, status: "pendingEvaluation" }, { revision: 0, status: "pendingEvaluation" }]);
+      const automaticBefore = runtime.recoverQuestionDelivery(student, activityId, key);
+      assert.equal(evaluated, 2);
+      const readBefore = read();
+      assert.doesNotMatch(JSON.stringify(readBefore), /reflection-key|acceptedByQuestion|acceptedResponse/);
+      const correct = { source: "automatic", correct: true };
+      assert.deepEqual(readBefore.questions, [
+        { questionId: judge.id, questionVersion: judge.version, revision: 0, status: "judged",
+          automatic: { correct: true, valid: true }, effective: correct },
+        { questionId: question.id, questionVersion: question.version, revision: 0, status: "needsReview" },
+      ]);
+      const studentBefore = runtime.read(student, activityId);
+      const command = {
+        protocolVersion: 1, action: "override", operationId: "mark-first", expectedRevision: 0,
+        submissionId: receipt.id, targetId: "observe", questionId: judge.id, reason: "独立复核依据仅供教师", correct: false,
+      } as const;
+      const first = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, command);
+      assert.equal(first.revision, 1);
+      assert.deepEqual(read().questions, [{
+        ...readBefore.questions[0], revision: 1, effective: { source: "teacherReview", id: first.id, correct: false },
+      }, readBefore.questions[1]]);
+      assert.deepEqual(runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), first);
+      assert.deepEqual(runtime.recoverQuestionDelivery(student, activityId, key), automaticBefore);
+      assert.deepEqual(runtime.read(student, activityId), studentBefore);
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, { ...command, correct: true }),
+        { code: "OPERATION_CONFLICT" });
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, { ...command, operationId: "stale-write" }),
+        { code: "VERDICT_CONFLICT" });
+      const next = { ...command, operationId: "mark-second", expectedRevision: 1, correct: true };
+      const second = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, next);
+      assert.equal(second.revision, 2);
+      const clear = { ...command, action: "withdraw", operationId: "clear", expectedRevision: 2, withdrawId: second.id } as const;
+      const { correct: _correct, ...withdraw } = clear;
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, { ...withdraw, withdrawId: first.id }),
+        { code: "VERDICT_CONFLICT" });
+      const cleared = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, withdraw);
+      assert.equal(cleared.revision, 3);
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key,
+        { ...withdraw, operationId: "clear-superseded", expectedRevision: 3, withdrawId: first.id }), { code: "VERDICT_CONFLICT" });
+      assert.deepEqual(read().questions, [{ ...readBefore.questions[0], revision: 3 }, readBefore.questions[1]]);
+      const send = { ...command, operationId: "mark-waiting", questionId: question.id };
+      const waiting = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, send);
+      assert.equal(waiting.revision, 1);
+      const whileMarked = read();
+      assert.deepEqual(whileMarked.questions[1], {
+        ...readBefore.questions[1], revision: 1, status: "judged", effective: { source: "teacherReview", id: waiting.id, correct: false },
+      });
+      assert.deepEqual(whileMarked.questions[0], { ...readBefore.questions[0], revision: 3 });
+      runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key,
+        { ...withdraw, operationId: "clear-waiting", questionId: question.id, expectedRevision: 1, withdrawId: waiting.id });
+      assert.deepEqual(read().questions, [{ ...readBefore.questions[0], revision: 3 }, { ...readBefore.questions[1], revision: 2 }]);
+      assert.deepEqual(runtime.recoverQuestionDelivery(student, activityId, key), automaticBefore);
+      assert.deepEqual(runtime.read(student, activityId), studentBefore);
+      assert.doesNotMatch(JSON.stringify(studentBefore), /独立复核依据|teacherReview|acceptedByQuestion/);
+      assert.deepEqual(runtime.confirmQuestionDelivery(student, activityId, input), receipt);
+      return { activityId, key, command, first, withdraw, cleared, final: read() };
+    } finally { runtime.close(); }
+  })();
+  const { activityId, key, command, first, withdraw, cleared } = committed;
+  const reopened = openLearningRuntime(settings);
+  try {
+    assert.deepEqual(reopened.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts"), committed.final);
+    assert.deepEqual(reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), first);
+    assert.deepEqual(reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, withdraw), cleared);
+    const forbidden = { code: "FORBIDDEN" };
+    const readOnly = openLearningRuntime({ databasePath, authorizeQuestionDeliveryReview });
+    try {
+      assert.deepEqual(readOnly.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts"), committed.final);
+      assert.throws(() => readOnly.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), forbidden);
+    } finally { readOnly.close(); }
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict({ ...reviewer, id: "outside-reviewer" }, activityId, key, command), forbidden);
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activityId, { ...key, operationId: "unknown" }, command), forbidden);
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, { ...command, targetId: "unrelated-target" }), forbidden);
+    allowed = false;
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), forbidden);
+    assert.throws(() => reopened.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts"), forbidden);
+    assert.throws(() => reopened.recoverQuestionDelivery(outsider, activityId, key), forbidden);
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 1, evaluation_tasks: 1,
+      automatic_verdicts: 1, response_review_requirements: 1, performances: 2 });
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 5);
+    assert.equal(evaluated, 2);
+  } finally { reopened.close(); }
+});
+
+test("题组教师改判｜人工题逐题按原确认授权，拒绝同组未交题和无评估作品", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("manual-verdict");
+  let scopeSeen: unknown;
+  const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+    authorizeQuestionDeliveryVerdict(scope) {
+      scopeSeen = scope;
+      return scope.reviewerId === reviewer.id && scope.studentId === student.id;
+    },
+  });
+  try {
+    const individualStep = { ...step, submit: { ...step.submit, slots: { [slotId]: { ...step.submit.slots[slotId],
+      delivery: { mode: "perQuestion", questionSlots: { [question.id]: "first", [optional.id]: "second" } } as const,
+    } } } };
+    runtime.publish({ practice: { ...base.practice, questions: [question, optional], steps: [individualStep], grading: { manualReview } },
+      scoringKey: basis });
+    const activity = start(runtime, base.practice.id);
+    const draft = save(runtime, activity);
+    const record = revision(question, draft.revision);
+    const input: QuestionDeliveryInput = { ...confirmation(activity, [record]), source: "question", operationId: "confirm-first", questions: [record] };
+    const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    const key = recoveryKey(input);
+    const command = { protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId: question.id,
+      operationId: "manual", action: "override", correct: true, reason: "原稿符合量表", expectedRevision: 0 } as const;
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, { ...command, questionId: optional.id }),
+      { code: "FORBIDDEN" });
+    const baseline = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
+    assert.equal(baseline.assessment, "manual");
+    assert.deepEqual(baseline.basis, basis);
+    const first = runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command);
+    assert.equal(first.revision, 1);
+    assert.deepEqual(scopeSeen, { reviewerId: reviewer.id, studentId: student.id, activityId: activity.activityId,
+      stepAttemptId: activity.stepAttemptId, operationId: input.operationId, submissionId: receipt.id,
+      slotId: "first", targetId: "observe", questionId: question.id, questionVersion: question.version, action: "override" });
+    const marked = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
+    assert.deepEqual(marked.questions, [{ questionId: question.id, questionVersion: question.version, revision: 1,
+      status: "judged", effective: { source: "teacherReview", id: first.id, correct: true } }]);
+    assert.deepEqual(marked.confirmation, baseline.confirmation);
+    const confirmed = runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared");
+    assert.equal(confirmed.assessment, "manual");
+    const registered = [{ questionId: question.id, questionVersion: question.version, status: "needsReview" }];
+    assert.deepEqual(confirmed.review.questions, registered);
+    assert.deepEqual(runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key).questions, registered);
+    using db = new DatabaseSync(databasePath);
+    assert.equal(db.prepare("SELECT status FROM evaluation_tasks WHERE submission_id = ?").get(receipt.id)?.status, "pending");
+    assert.doesNotMatch(JSON.stringify(runtime.read(student, activity.activityId)), /teacherReview|原稿符合量表|private-reflection-rubric/);
+    const draft2 = save(runtime, activity, optional, titleOnly);
+    const other = revision(optional, draft2.revision);
+    const finish = confirmation(activity, [record, other], "finish");
+    const newReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, finish);
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, { ...command, submissionId: newReceipt.id }),
+      { code: "FORBIDDEN" });
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, recoveryKey(finish),
+      { ...command, submissionId: newReceipt.id }), { code: "FORBIDDEN" });
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, recoveryKey(finish),
+      { ...command, submissionId: newReceipt.id, questionId: optional.id }), { code: "OPERATION_CONFLICT" });
+    assert.deepEqual(runtime.readQuestionDeliveryReview(reviewer, activity.activityId, recoveryKey(finish), "verdicts").questions,
+      [{ questionId: optional.id, questionVersion: optional.version, revision: 0, status: "needsReview" }]);
+    db.prepare("INSERT INTO reading_reviews (activity_id, reviewer_id, reviewer_active) VALUES (?, ?, 0)").run(activity.activityId, reviewer.id);
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command), { code: "FORBIDDEN" });
+    db.prepare("UPDATE reading_reviews SET reviewer_active = 1 WHERE activity_id = ?").run(activity.activityId);
+    assert.deepEqual(runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command), first);
+    const collection = publication("ungraded-verdict");
+    runtime.publish(collection);
+    const ungraded = start(runtime, collection.practice.id);
+    const saved = save(runtime, ungraded);
+    const confirmationInput = confirmation(ungraded, [revision(question, saved.revision)]);
+    const ungradedReceipt = runtime.confirmQuestionDelivery(student, ungraded.activityId, confirmationInput);
+    const ungradedKey = recoveryKey(confirmationInput);
+    assert.throws(() => runtime.readQuestionDeliveryReview(reviewer, ungraded.activityId, ungradedKey, "verdicts"), { code: "REVIEW_NOT_FOUND" });
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, ungraded.activityId, ungradedKey,
+      { ...command, submissionId: ungradedReceipt.id }), { code: "REVIEW_NOT_FOUND" });
+    assert.deepEqual(facts(databasePath), { submissions: 3, completions: 2, scoring_keys: 1, evaluation_tasks: 2,
+      automatic_verdicts: 0, response_review_requirements: 2, performances: 2 });
+    assert.equal(db.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 1);
+  } finally { runtime.close(); }
+});
+
+test("题组教师改判｜写入失败可重试，迟到初判不覆盖教师判定", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("late-automation");
+  const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
+    responseEvaluators: [{ ...evaluator, evaluate: ({ value, acceptedResponse }) => ({ status: "judged", correct: value === acceptedResponse }) }],
+  });
+  try {
+    runtime.publish({ practice: { ...base.practice, questions: [judge], grading: automatic },
+      scoringKey: { ...keyRef, acceptedByQuestion: { [judge.id]: { response: judge.response, acceptedResponse: false } } } });
+    const activity = start(runtime, base.practice.id);
+    const { activityId } = activity;
+    const saved = save(runtime, activity, judge, false);
+    const input = confirmation(activity, [revision(judge, saved.revision)]);
+    const receipt = runtime.confirmQuestionDelivery(student, activityId, input);
+    const key = recoveryKey(input);
+    const command = { protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId: judge.id,
+      operationId: "before-auto", action: "override", correct: false, reason: "复核原答", expectedRevision: 0 } as const;
+    const read = () => runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts").questions[0];
+    using db = new DatabaseSync(databasePath);
+    db.exec(`CREATE TRIGGER abort_verdict BEFORE INSERT ON verdict_events BEGIN SELECT RAISE(ABORT, 'fixture verdict append failed'); END`);
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), /fixture verdict append failed/);
+    assert.equal(read()?.revision, 0);
+    assert.equal(read()?.status, "pendingEvaluation");
+    db.exec("DROP TRIGGER abort_verdict");
+    const marked = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, command);
+    const teacher = { source: "teacherReview", id: marked.id, correct: false };
+    const position = { questionId: judge.id, questionVersion: judge.version };
+    assert.deepEqual(read(), { ...position, revision: 1, status: "judged", effective: teacher });
+    assert.equal(runtime.recoverQuestionDelivery(student, activityId, key).evaluation.correctCount, 1);
+    assert.deepEqual(read(), { ...position, revision: 1, status: "judged", effective: teacher, automatic: { correct: true, valid: true } });
+    assert.deepEqual(runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), marked);
+    const { correct: _correct, ...location } = command;
+    runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key,
+      { ...location, action: "withdraw", operationId: "return-to-auto", expectedRevision: 1, withdrawId: marked.id });
+    assert.deepEqual(read(), { ...position, revision: 2, status: "judged",
+      effective: { source: "automatic", correct: true }, automatic: { correct: true, valid: true } });
+  } finally { runtime.close(); }
+});

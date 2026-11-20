@@ -180,6 +180,22 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         for (const phase of ["write", "recover"]) {
           execFileSync(process.execPath, [deliveryAssessment, phase], { cwd: directory, stdio: "inherit" });
         }
+        const deliveryVerdict = "question-delivery-verdict-consumer.mts";
+        cpSync(new URL("./fixtures/question-delivery-verdict-consumer.mts", import.meta.url), join(directory, deliveryVerdict));
+        inputs.push(deliveryVerdict);
+        const verdictOperations = ["mark-a", "mark-b"];
+        const verdictRaces = await Promise.allSettled(verdictOperations.map(operation =>
+          run(process.execPath, [deliveryVerdict, "race", operation], { cwd: directory })));
+        const verdictStatuses = verdictRaces.map(result => {
+          if (result.status === "rejected") throw result.reason;
+          return result.value.stdout.trim();
+        });
+        assert.deepEqual(verdictStatuses.toSorted(), ["VERDICT_CONFLICT", "committed"]);
+        const winningVerdict = verdictOperations[verdictStatuses.indexOf("committed")];
+        assert.ok(winningVerdict);
+        for (const phase of ["clear", "recover"]) {
+          execFileSync(process.execPath, [deliveryVerdict, phase, winningVerdict], { cwd: directory, stdio: "inherit" });
+        }
         const answerRule = "question-answer-rule-consumer.mts";
         cpSync(new URL("./fixtures/question-answer-rule-consumer.mts", import.meta.url), join(directory, answerRule));
         inputs.push(answerRule);
