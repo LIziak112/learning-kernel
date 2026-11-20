@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { openLearningRuntime } from "../src/server.ts";
+import { openLearningRuntime, ResponseConfirmationConflict } from "../src/server.ts";
 import type { PublicationInput, ResponseConfirmationInput, ResponseDraftInput, ResponseEvaluator, ResponseEvaluatorRegistration } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
@@ -267,9 +267,24 @@ test("原值草稿保护操作、冻结版本和原稿条件，拒绝旧槽接�
     assert.throws(() => runtime.saveChoiceDraft(student, open.activityId, { ...scope, choice: "yes" }), { status: 422, code: "INVALID_SLOT" });
     assert.throws(() => runtime.confirmChoices(student, open.activityId, confirmation(open, { unrecognized: 1 })),
       { status: 422, code: "INVALID_SLOT" });
-    assert.throws(() => runtime.confirmResponses(student, open.activityId, confirmation(open)),
-      { status: 409, code: "ANSWER_REVISION_CONFLICT", questionId: "unrecognized" });
-    assert.throws(() => runtime.confirmResponses(student, open.activityId, confirmation(open, { unrecognized: 1 })),
+    const edited = { ...input, value: false, baseRevision: 1, operationId: "edit" };
+    const second = runtime.saveResponseDraft(student, open.activityId, edited);
+    assert.deepEqual(second, { ...saved, value: false, revision: 2, changeCount: 2 });
+    const same = { ...edited, baseRevision: 2, operationId: "same" };
+    assert.deepEqual(runtime.saveResponseDraft(student, open.activityId, same), second);
+    assert.deepEqual(runtime.saveResponseDraft(student, open.activityId, same, "replayLatestOnly"), second);
+    assert.throws(() => runtime.saveResponseDraft(student, open.activityId, edited, "replayLatestOnly"),
+      { status: 409, code: "OPERATION_CONFLICT", current: { revision: 2, value: false } });
+    assert.throws(() => runtime.saveResponseDraft(student, open.activityId, { ...same, operationId: "unknown" }, "replayLatestOnly"),
+      { status: 409, code: "DRAFT_REPLAY_REQUIRED" });
+    assert.throws(() => runtime.confirmResponses(student, open.activityId, confirmation(open)), error => {
+      assert.ok(error instanceof ResponseConfirmationConflict);
+      assert.equal(error.code, "ANSWER_REVISION_CONFLICT");
+      assert.equal(error.questionId, "unrecognized");
+      assert.deepEqual(error.current, { revision: 2, value: false });
+      return true;
+    });
+    assert.throws(() => runtime.confirmResponses(student, open.activityId, confirmation(open, { unrecognized: 2 })),
       { status: 409, code: "ORIGINAL_NOT_VERIFIED" });
     assert.throws(() => runtime.recoverResponseConfirmation(student, open.activityId, {
       protocolVersion, operationId, stepAttemptId: open.stepAttemptId,

@@ -71,7 +71,9 @@ function freezeResponses(database: DatabaseSync, activity: ReadingActivity, inpu
   const drafts = draftsOfResponses(database, activity.activityId, input);
   return mapConfirmationQuestions(activity, input.questions, requested => {
     const current = drafts.get(requested.questionId) ?? { revision: 0, value: null };
-    if (requested.revision !== current.revision) throw new ResponseConfirmationConflict(requested.questionId, current);
+    if (requested.revision !== current.revision) {
+      throw new ResponseConfirmationConflict(requested.questionId, { revision: current.revision, value: current.value });
+    }
     if (current.value === null && !allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
     return { ...requested, value: current.value };
   });

@@ -154,9 +154,12 @@ test("版本、题集合或原稿失配时整单回滚，旧整步写和内置�
     assert.throws(() => runtime.confirmChoices(student, activityId, { ...request,
       questions: request.questions.map(question => ({ ...question, questionVersion: 2 })),
     }), denial(409, "QUESTION_REVISION_STALE"));
-    assert.throws(() => runtime.confirmChoices(student, activityId, intent(stepAttemptId, [0, 0])), error =>
-      error instanceof ChoiceConfirmationConflict && error.questionId === firstId
-      && error.current.revision === 1 && error.current.choice === "1");
+    assert.throws(() => runtime.confirmChoices(student, activityId, intent(stepAttemptId, [0, 0])), error => {
+      assert.ok(error instanceof ChoiceConfirmationConflict);
+      assert.equal(error.questionId, firstId);
+      assert.deepEqual(error.current, { revision: 1, choice: "1" });
+      return true;
+    });
     assert.throws(() => runtime.confirmChoices(student, activityId, request), denial(409, "ORIGINAL_NOT_VERIFIED"));
     assert.throws(() => runtime.confirmChoices(student, activityId, { ...request,
       questions: request.questions.map(question => ({ ...question,

@@ -75,7 +75,9 @@ function freezeAnswers(database: DatabaseSync, activity: ReadingActivity, input:
   const heads = confirmationHeads(database, activity, input);
   return mapConfirmationQuestions(activity, input.questions, requested => {
     const current = heads.get(requested.questionId) ?? { revision: 0, choice: null };
-    if (requested.revision !== current.revision) throw new ChoiceConfirmationConflict(requested.questionId, current);
+    if (requested.revision !== current.revision) {
+      throw new ChoiceConfirmationConflict(requested.questionId, { revision: current.revision, choice: current.choice });
+    }
     if (current.choice === null && !allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
     return { ...requested, choice: current.choice };
   });
