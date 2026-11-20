@@ -1,8 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { AuthorizeConfirmationRecovery, ConfirmationKey, VerifyOriginal } from "../contracts/choice-confirmation.ts";
+import { findQuestionAnswerRule } from "../contracts/question-answer-rule.ts";
+import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { questionDeliveryIntent, questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
 import type { QuestionDeliveryInput } from "../contracts/question-delivery.ts";
 import { hasStoredResponse } from "../contracts/response.ts";
+import type { StoredResponseValue } from "../contracts/response.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
@@ -24,7 +27,7 @@ type RequestQuestion = QuestionDeliveryInput["questions"][number];
 
 export function confirmQuestionDelivery(
   database: DatabaseSync, studentId: string, activityId: string, input: QuestionDeliveryInput, clock: () => Date,
-  verifyOriginal?: VerifyOriginal, authorize?: AuthorizeConfirmationRecovery,
+  verifyOriginal: VerifyOriginal | undefined, authorize: AuthorizeConfirmationRecovery | undefined, answerRules: BoundQuestionAnswerRules,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
@@ -42,10 +45,13 @@ export function confirmQuestionDelivery(
     const now = clock();
     requireBeforeDeadline(activity, now);
     const { requestQuestions, selected, ...placement } = deliveryPlacement(database, activity, input, slot);
-    const questions = selected.map(question => freezeDeliveryDraft(database, activity, input.slotId, slot, question));
+    const decisions = selected.map(question => freezeDeliveryDraft(database, activity, input.slotId, slot, question, answerRules));
+    const questions = decisions.map(({ question }) => question);
+    const answeredQuestionIds = new Set(decisions.filter(({ answered }) => answered).map(({ question }) => question.questionId));
     const content = { kind: "questionDelivery" as const, slotId: input.slotId, questions };
     const submitted = input.source === "finish" ? { ...content, source: input.source, requestQuestions } : { ...content, source: input.source };
-    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, submitted, now, verifyOriginal, placement);
+    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, submitted, now, verifyOriginal,
+      { ...placement, answeredQuestionIds });
   });
 }
 
@@ -66,14 +72,28 @@ function deliveryPlacement(database: DatabaseSync, activity: ReadingActivity, in
 }
 
 function freezeDeliveryDraft(
-  database: DatabaseSync, activity: ReadingActivity, logicalSlotId: string, slot: DeliverySlot, question: RequestQuestion,
+  database: DatabaseSync, activity: ReadingActivity, logicalSlotId: string, slot: DeliverySlot,
+  question: RequestQuestion, rules: BoundQuestionAnswerRules,
 ) {
   const slotId = questionDeliveryPosition(slot, logicalSlotId, question.questionId);
   const head = deliveryDraftHead(database, activity, slotId, question.questionId);
   const { revision, value } = head ?? { revision: 0, value: null };
   if (revision !== question.revision) throw new QuestionDeliveryConflict({ revision, value }, "ANSWER_REVISION_CONFLICT", question.questionId);
-  if (!hasStoredResponse(value) && !slot.confirmFromDrafts.allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
-  return { ...question, value };
+  const answered = isDeliveryAnswered(activity, question, value, rules);
+  if (!answered && !slot.confirmFromDrafts.allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
+  return { question: { ...question, value }, answered };
+}
+
+function isDeliveryAnswered(
+  activity: ReadingActivity, question: RequestQuestion, value: StoredResponseValue | null, rules: BoundQuestionAnswerRules,
+) {
+  const bindings = activity.practice.questionAnswerRules;
+  const reference = bindings && Object.hasOwn(bindings, question.questionId) ? bindings[question.questionId] : undefined;
+  if (!reference) return hasStoredResponse(value);
+  const { response } = requireFrozenQuestion(activity, question);
+  const rule = findQuestionAnswerRule(rules, reference, response);
+  if (!rule) throw new LearningError(503, "ANSWER_RULE_UNAVAILABLE");
+  return value !== null && rule.isAnswered(value);
 }
 
 export function recoverQuestionDelivery(

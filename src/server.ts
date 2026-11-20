@@ -8,6 +8,7 @@ import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftIn
 import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
 import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
+import { questionAnswerRules } from "./contracts/question-answer-rule.ts";
 import { questionDeliveryDraftInput, questionDeliveryInput } from "./contracts/question-delivery.ts";
 import type { QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
@@ -41,6 +42,7 @@ const runtimeOptions = z.strictObject({
   indexResponseEvaluators: indexResponseEvaluators.default([]),
   orderedTextEvaluators: orderedTextEvaluators.default([]),
   titledTextEvaluators: titledTextEvaluators.default([]),
+  questionAnswerRules: questionAnswerRules.default([]),
   authorizeChoiceDraftAmendment: z.custom<AuthorizeChoiceDraftAmendment>(value => typeof value === "function").optional(),
   authorizeChoiceSnapshotRevision: z.custom<AuthorizeChoiceSnapshotRevision>(value => typeof value === "function").optional(),
   hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
@@ -60,6 +62,7 @@ export type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDr
 export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
 export type { ActivityBindingClaims, TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
+export type { QuestionAnswerRuleRegistration } from "./contracts/question-answer-rule.ts";
 export type { QuestionDeliveryDraftInput, QuestionDeliveryInput };
 export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
@@ -99,7 +102,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const evaluateIndexResponse = indexResponseEvaluation(database, settings.indexResponseEvaluators);
   return {
     publish(input: PublicationInput) {
-      registerPublication(database, input, registered);
+      registerPublication(database, input, registered, settings.questionAnswerRules);
     },
     start(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, principalId(studentPrincipal, principal), publishedStartInput.parse(input), clock);
@@ -185,7 +188,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     },
     confirmQuestionDelivery(principal: StudentPrincipal, activityId: string, input: QuestionDeliveryInput) {
       return confirmQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
-        questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery);
+        questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery, settings.questionAnswerRules);
     },
     recoverQuestionDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
       return recoverQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),

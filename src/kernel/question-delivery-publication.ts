@@ -1,3 +1,5 @@
+import { findQuestionAnswerRule } from "../contracts/question-answer-rule.ts";
+import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import type { QuestionDeliveryFormat, QuestionDeliveryKey } from "../contracts/question-delivery.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
@@ -12,10 +14,15 @@ export function questionDeliverySlot(step: ReadingStep) {
   return Object.entries(step.submit.slots).find((entry): entry is [string, DeliverySlot] => entry[1].type === "questionDelivery");
 }
 
-export function validateQuestionDeliveryPublication(publication: ReadingPublication, registered: PublicationEvaluators, issue: Issue) {
+export function validateQuestionDeliveryPublication(
+  publication: ReadingPublication, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules, issue: Issue,
+) {
   const { practice, scoringKey } = publication;
   const delivery = locateDelivery(practice.steps);
   if (!delivery) {
+    if (practice.questionAnswerRules !== undefined) {
+      issue(["practice", "questionAnswerRules"], "题目已答规则须绑定逐题交付槽");
+    }
     rejectUnboundQuestionFormats(practice.questions, issue);
     return false;
   }
@@ -23,12 +30,27 @@ export function validateQuestionDeliveryPublication(publication: ReadingPublicat
   const ids = new Set(practice.questions.map(question => question.id));
   validateDeliveryLocations(delivery, practice.steps.length, ids, issue);
   const formats = validateQuestionFormats(practice.questions, issue);
+  validateAnswerRuleBindings(practice, answerRules, issue);
   const assessment = practice.grading.assessment;
   validateDeliveryAssessment(assessment, { stepId: step.id, slotId }, formats, registered, issue);
   if (validateDeliveryKey(scoringKey, assessment?.keyRef, issue)) {
     validateQuestionKeys(practice.questions, scoringKey.acceptedByQuestion, ids, issue);
   }
   return true;
+}
+
+function validateAnswerRuleBindings(
+  { questions, questionAnswerRules }: ReadingPublication["practice"], registered: BoundQuestionAnswerRules, issue: Issue,
+) {
+  if (!questionAnswerRules) return;
+  for (const [questionId, reference] of Object.entries(questionAnswerRules)) {
+    const path = ["practice", "questionAnswerRules", questionId];
+    const question = questions.find(({ id }) => id === questionId);
+    if (!question) issue(path, "已答规则须绑定已发布的题");
+    else if (!findQuestionAnswerRule(registered, reference, question.response)) {
+      issue(path, "须注册与冻结题值形态匹配的精确已答规则版本");
+    }
+  }
 }
 
 function locateDelivery(steps: readonly ReadingStep[]) {

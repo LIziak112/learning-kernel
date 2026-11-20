@@ -50,15 +50,18 @@ export function mapConfirmationQuestions<T>(
 export function writeQuestionConfirmation(
   database: DatabaseSync, activity: ReadingActivity, studentId: string, input: ChoiceConfirmationInput, targetId: string,
   content: ChoiceConfirmation | ResponseConfirmation | IndexResponseConfirmation | QuestionDelivery, now: Date, verify?: VerifyOriginal,
-  { slotId = input.slotId, finishes = true }: { slotId?: string; finishes?: boolean } = {},
+  { slotId = input.slotId, finishes = true, answeredQuestionIds }:
+  { slotId?: string; finishes?: boolean; answeredQuestionIds?: ReadonlySet<string> } = {},
 ) {
   const { activityId } = activity;
   const write = { ...input, slotId };
   const { stepAttemptId } = write;
   verifyQuestionOriginals(studentId, activityId, write, content.questions, verify);
   const draft = saveWorkVersion(database, workScope(activityId, stepAttemptId, slotId), content);
-  const observations = content.questions.flatMap(question => hasStoredResponse("choice" in question ? question.choice : question.value)
-    ? [{ targetId, unitId: `question:${question.questionId}` }] : []);
+  const observations = content.questions.filter(question => answeredQuestionIds
+    ? answeredQuestionIds.has(question.questionId)
+    : hasStoredResponse("choice" in question ? question.choice : question.value)
+  ).map(({ questionId }) => ({ targetId, unitId: `question:${questionId}` }));
   const receipt = recordSubmission(database, { ...write, draft }, observations, now);
   queueEvaluation(database, activity, receipt, targetId, input.slotId);
   if (finishes) finishActivity(database, activityId, receipt.id);

@@ -2,6 +2,7 @@ import { choiceKeyCapability, readingCapability, studentTool } from "../builtins
 import type { ValueType } from "../builtins/reading-capabilities.ts";
 import { findChoiceEvaluator } from "../contracts/choice-evaluation.ts";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
+import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
 import type { IndexResponseEvaluatorRegistration, OrderedTextEvaluatorRegistration, ResponseEvaluatorRegistration, TitledTextEvaluatorRegistration } from "../contracts/response-evaluation.ts";
 import type { ResponseFormat } from "../contracts/response.ts";
@@ -20,7 +21,7 @@ export type PublicationEvaluators = {
 };
 
 export function validateBindings(
-  publication: ReadingPublication, issue: Issue, registered: PublicationEvaluators,
+  publication: ReadingPublication, issue: Issue, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules,
 ) {
   const { practice } = publication;
   const earlierSteps = new Map<string, ReadingStep>();
@@ -39,15 +40,17 @@ export function validateBindings(
   }
   validateMaterialPositions(publication, issue);
   validateGrading(practice.grading, earlierSteps, registered, issue);
-  validateAssessmentPublication(publication, registered, issue);
+  validateAssessmentPublication(publication, registered, answerRules, issue);
   validateQuestions(practice, issue);
 }
 
-function validateAssessmentPublication(publication: ReadingPublication, registered: PublicationEvaluators, issue: Issue) {
+function validateAssessmentPublication(
+  publication: ReadingPublication, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules, issue: Issue,
+) {
   const { practice, scoringKey } = publication;
   const response = practice.steps.flatMap(step => Object.values(step.submit.slots))
     .find(slot => slot.type === "oneResponsePerQuestion")?.input;
-  const questionDelivery = validateQuestionDeliveryPublication(publication, registered, issue);
+  const questionDelivery = validateQuestionDeliveryPublication(publication, registered, answerRules, issue);
   validateResponsePolicy(practice, questionDelivery || response !== undefined, issue);
   if (!questionDelivery) validateAssessmentPolicy(practice, scoringKey, response, issue);
 }

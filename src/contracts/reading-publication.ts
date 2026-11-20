@@ -107,6 +107,7 @@ export const readingPracticeSchema = versionRef.extend({
   material: versionRef.optional(),
   goals: descriptions,
   questions: z.array(readingQuestions).default([]),
+  questionAnswerRules: z.record(id, versionRef).transform(orderedQuestionValues).optional(),
   steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
     selectionFeedback: z.strictObject({ from: slotReference, criterion: nonempty }).optional(),

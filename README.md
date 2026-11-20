@@ -117,6 +117,8 @@ const activity = runtime.read(principal, receipt.activityId);
 
 带可选标题的文字题使用 `response: "textWithOptionalTitle"`，可省略 `options`，私有条目只需 `{ response: "textWithOptionalTitle" }`。草稿值为 `{ body: string, title?: string }`，确认后原样保留正文及标题，区分缺省标题、空标题和未存稿。纯空白或空正文不登记表现。允许未作答的槽仍可确认仅有标题的作品，必答槽须等正文含有非空白字符后才能确认。宿主在 `titledTextEvaluators` 注册精确版本，收到冻结正文与标题或 `null`，沿同一任务返回 `judged` 或 `needsReview`。
 
+宿主可在冻结练法上通过私有 `questionAnswerRules: { [questionId]: { id, version } }` 为单题声明已答规则。注册项通过 `openLearningRuntime({ questionAnswerRules: [{ id, version, response, isAnswered }], ... })` 配置。发布时必须匹配题的原值形态和规则的精确版本。确认时，函数同步读取该题已存的原值并返回布尔值。缺稿按未答处理。必答校验与表现写入共用这一次结果。新确认缺少精确注册时返回 `ANSWER_RULE_UNAVAILABLE`，可在补齐配置后重试。已确认回执按当前授权取回，沿用原结果。省略绑定沿用该值形态的原确认行为，规则配置留在可信服务端。
+
 混合槽复用 SQLite v16。宿主须使用支持所发布值形态的运行时。[混合题独立宿主示例](tests/fixtures/question-delivery-consumer.mts) · [文字题独立宿主示例](tests/fixtures/titled-text-consumer.mts)
 
 ### 材料版本与使用位置

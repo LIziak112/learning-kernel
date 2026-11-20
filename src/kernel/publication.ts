@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { publicationSchema } from "../contracts/reading.ts";
 import type { Material, VersionRef } from "../contracts/reading.ts";
 import { readingPublicationSchema } from "../contracts/reading-publication.ts";
@@ -9,16 +10,18 @@ import type { PublicationEvaluators } from "./publication-bindings.ts";
 
 const storedDefinition = z.object({ definition: z.string() });
 const publicationFormat = z.object({ practice: z.object({ formatVersion: z.unknown().optional() }) });
-function parseReadingPublication(input: unknown, registered: PublicationEvaluators) {
+function parseReadingPublication(input: unknown, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules) {
   return readingPublicationSchema.superRefine((value, context) => {
-    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered);
+    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered, answerRules);
   }).parse(input);
 }
 
-export function registerPublication(database: DatabaseSync, input: unknown, registered: PublicationEvaluators = {}) {
+export function registerPublication(
+  database: DatabaseSync, input: unknown, registered: PublicationEvaluators = {}, answerRules: BoundQuestionAnswerRules = [],
+) {
   const { practice: format } = publicationFormat.parse(input);
   const { material, materials, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
-    ? parseReadingPublication(input, registered)
+    ? parseReadingPublication(input, registered, answerRules)
     : { ...publicationSchema.parse(input), materials: undefined, scoringKey: undefined };
   requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);
