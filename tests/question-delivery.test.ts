@@ -7,7 +7,7 @@ import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { openLearningRuntime, QuestionDeliveryConflict } from "../src/server.ts";
 import type {
   ChoiceConfirmationInput, ChoiceEvaluationInput, IndexResponseEvaluationInput, PublicationInput,
-  QuestionDeliveryInput, ResponseEvaluationInput, VerifyOriginal,
+  OrderedTextEvaluationInput, QuestionDeliveryInput, ResponseEvaluationInput, VerifyOriginal,
 } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
@@ -236,6 +236,8 @@ test("A 同组混合作答原子确认，按冻结私钥评估并重开取回同
       { status: 422, code: "INVALID_OPTION_INDEX" });
     assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, operationId: "wrong-mode", value: true }),
       { status: 422, code: "INVALID_OPTION_INDEX" });
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, operationId: "text-array", value: ["0"] }),
+      { status: 422, code: "INVALID_OPTION_INDEX" });
     assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, questionVersion: 1 }),
       { status: 409, code: "QUESTION_REVISION_STALE" });
     assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...target(activity, strictChoice), value: "3" }),
@@ -319,7 +321,7 @@ const unattended = frozenQuestion("unattended", 7);
 function sequentialGroup(id: string, questions = [strictChoice, activeBlank, nextChoice, unattended], allowUnanswered = true) {
   return {
     practice: { ...base, id, questions: questions.map(question => ({ ...question, response: "choice" as const })), grading,
-      policy: responsePolicy,
+      policy: structuredClone(responsePolicy),
       steps: [{ ...step, tool: { id: "question-delivery", version: 1 },
         submit: { purpose: "finalAnswer", slots: { answers: {
           type: "questionDelivery", ...slot, confirmFromDrafts: { allowUnanswered },
@@ -550,4 +552,203 @@ test("K16 纯单选把无稿题纳入全清单会确认空值并完成整卷", t
     ]);
     assert.equal(runtime.read(student, activity.activityId).status, "completed");
   } finally { runtime.close(); }
+});
+
+const orderedTextQuestions = ["partial", "extra", "blank", "empty-array", "missing-text"].map(id => ({
+  id, version: 9, prompt: "依次填写风向和云量。", response: "orderedTextBlanks" as const, blankCount: 2,
+}));
+const acceptedBlanks = [["西风", "偏西"], ["阴天"]];
+
+function orderedTextGroup(version = 1, allowUnanswered = true) {
+  const base = mixedGroup(version);
+  const key = { response: "orderedTextBlanks" as const, acceptedBlanks: version === 1 ? acceptedBlanks : [["东风"], []] };
+  return {
+    practice: {
+      ...base.practice, id: "ordered-text-delivery",
+      questions: [{ ...strictChoice, response: "choice" }, ...orderedTextQuestions],
+      steps: [{
+        ...base.practice.steps[0],
+        submit: { purpose: "finalAnswer", slots: { answers: {
+          ...base.practice.steps[0].submit.slots.answers, confirmFromDrafts: { allowUnanswered },
+        } } },
+      }],
+    },
+    scoringKey: { ...base.scoringKey, acceptedByQuestion: {
+      choice: base.scoringKey.acceptedByQuestion.choice,
+      ...Object.fromEntries(orderedTextQuestions.map(({ id }) => [id, structuredClone(key)])),
+    } },
+  } satisfies PublicationInput;
+}
+
+function orderedTextSettings(databasePath: string, canRecover: () => boolean, observed: OrderedTextEvaluationInput[]) {
+  return {
+    ...settings(databasePath, canRecover),
+    orderedTextEvaluators: [{ ...evaluator, evaluate: (input: OrderedTextEvaluationInput) => {
+      observed.push(input);
+      return input.questionId === "extra" ? { status: "judged", correct: false } as const : { status: "needsReview" } as const;
+    } }],
+  };
+}
+
+test("有序文本空位与客观题共用整卷确认，保存原值并以旧版私有键评估", t => {
+  const databasePath = scenarioDatabase(t);
+  const observed: OrderedTextEvaluationInput[] = [];
+  let authorized = true;
+  const config = orderedTextSettings(databasePath, () => authorized, observed);
+  const runtime = openLearningRuntime(config);
+  const published = orderedTextGroup();
+  const initial = [
+    ["choice", "1"], ["partial", ["  西风  "]], ["extra", ["", " 阴天 ", "附记"]],
+    ["blank", ["", " \t\u3000"]], ["empty-array", []],
+  ] satisfies [string, string | string[]][];
+  let activity: Activity;
+  let confirmation: QuestionDeliveryInput;
+  let receipt: ReturnType<Runtime["confirmQuestionDelivery"]>;
+  try {
+    runtime.publish(published);
+    activity = open(runtime, published.practice.id);
+    const inputs = deliveredView(runtime, activity).inputs.questions;
+    assert.equal(inputs?.from, "questions");
+    const question = inputs.questions.find(({ id }) => id === "partial");
+    assert.ok(question?.response === "orderedTextBlanks");
+    assert.equal(question.blankCount, 2);
+    assert.deepEqual(question.options, {});
+    for (const [id, value] of initial) {
+      const question = published.practice.questions.find(question => question.id === id);
+      assert.ok(question);
+      assert.equal(runtime.saveQuestionDeliveryDraft(student, activity.activityId,
+        { ...target(activity, question), value }).revision, 1);
+    }
+    const before = deliveredView(runtime, activity);
+    assert.equal(before.questionDeliveryDrafts.length, 5);
+    assert.deepEqual(before.questionDeliveryDrafts.find(draft => draft.questionId === "partial")?.value, ["  西风  "]);
+    const [partial] = orderedTextQuestions;
+    assert.ok(partial);
+    const save = { ...target(activity, partial), value: ["  西风  "] };
+    assert.equal(runtime.saveQuestionDeliveryDraft(student, activity.activityId, save).revision, 1);
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, value: ["  西风  ", ""] }),
+      { status: 409, code: "OPERATION_CONFLICT" });
+    for (const value of ["西风", [0], false]) {
+      assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, value }),
+        { status: 422, code: "INVALID_RESPONSE" });
+    }
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, questionVersion: 8 }),
+      { status: 409, code: "QUESTION_REVISION_STALE" });
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(outsider, activity.activityId, save), { status: 403, code: "FORBIDDEN" });
+    assert.deepEqual(deliveredView(runtime, activity), before);
+    confirmation = { ...intent(activity, published.practice.questions.map(question =>
+      revision(question, question.id === "missing-text" ? 0 : 1))), source: "whole" };
+    const stale = { ...confirmation, questions: confirmation.questions.map(question =>
+      question.questionId === "partial" ? { ...question, revision: 0 } : question) };
+    assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, stale), error =>
+      error instanceof QuestionDeliveryConflict && error.questionId === "partial" && error.current.revision === 1 &&
+      JSON.stringify(error.current.value) === JSON.stringify(["  西风  "]));
+    const submittedValues = { ...confirmation, questions: confirmation.questions.map(question =>
+      question.questionId === "missing-text" ? { ...question, value: ["伪造"] } : question) };
+    assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, submittedValues), ZodError);
+    assert.deepEqual(counts(databasePath), {
+      practices: 1, scoring_keys: 1, activities: 1, submissions: 0, completions: 0, evaluation_tasks: 0, performances: 0,
+    });
+    runtime.publish(orderedTextGroup(2));
+    receipt = runtime.confirmQuestionDelivery(student, activity.activityId, confirmation);
+    assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, confirmation), receipt);
+    assert.equal(observed.length, 0);
+  } finally { runtime.close(); }
+
+  const reopened = openLearningRuntime(config);
+  try {
+    const key = recoveryKey(confirmation);
+    assert.throws(() => reopened.recoverQuestionDelivery(outsider, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
+    assert.throws(() => reopened.read(outsider, activity.activityId), { status: 403, code: "FORBIDDEN" });
+    authorized = false;
+    assert.throws(() => reopened.recoverQuestionDelivery(student, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
+    assert.equal(observed.length, 0);
+    authorized = true;
+    const result = reopened.recoverQuestionDelivery(student, activity.activityId, key);
+    assert.deepEqual(result.receipt, receipt);
+    assert.deepEqual(result.practice, { id: published.practice.id, version: 1 });
+    assert.deepEqual(result.confirmation.questions.map(({ questionId, revision, value }) => [questionId, revision, value]),
+      [...initial.map(([id, value]) => [id, 1, value]), ["missing-text", 0, null]]);
+    assert.deepEqual(observed.map(input => [input.questionId, input.questionVersion, input.value, input.acceptedBlanks]),
+      [...initial.slice(1).map(([id, value]) => [id, 9, value, acceptedBlanks]), ["missing-text", 9, null, acceptedBlanks]]);
+    assert.equal(result.evaluation.correctCount, 1);
+    assert.equal(result.evaluation.needsReviewCount, 4);
+    assert.deepEqual(reopened.recoverQuestionDelivery(student, activity.activityId, key), result);
+    assert.equal(observed.length, 5);
+    const finished = deliveredView(reopened, activity);
+    assert.equal(finished.status, "completed");
+    assert.deepEqual(finished.questionDeliveries, [{ receipt, questionDelivery: result.confirmation }]);
+    assert.doesNotMatch(JSON.stringify([finished, result]), /acceptedBlanks|acceptedByQuestion|偏西/);
+    assert.deepEqual(counts(databasePath), {
+      practices: 2, scoring_keys: 2, activities: 1, submissions: 1, completions: 1, evaluation_tasks: 1, performances: 3,
+    });
+    using db = new DatabaseSync(databasePath, { readOnly: true });
+    assert.deepEqual(db.prepare("SELECT unit_id FROM performances ORDER BY unit_id").all().map(row => row.unit_id),
+      ["question:choice", "question:extra", "question:partial"]);
+  } finally { reopened.close(); }
+});
+
+test("有序文本必答只接受含非空白文本的数组，失败保留可编辑的明确空稿", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(orderedTextSettings(databasePath, () => true, []));
+  const full = orderedTextGroup(1, false);
+  const [question] = orderedTextQuestions;
+  assert.ok(question);
+  const publication = { practice: { ...full.practice, questions: [question] },
+    scoringKey: { ...full.scoringKey, acceptedByQuestion: {
+      partial: { response: "orderedTextBlanks", acceptedBlanks: [[], ["阴天"]] },
+    } } } satisfies PublicationInput;
+  try {
+    runtime.publish(publication);
+    const activity = open(runtime, publication.practice.id);
+    const save = target(activity, question);
+    const confirm = (draftRevision: number) => runtime.confirmQuestionDelivery(student, activity.activityId,
+      { ...intent(activity, [revision(question, draftRevision)]), source: "whole" });
+    for (const [baseRevision, value] of [[0, []], [1, ["", "\r\n\u3000"]]] satisfies [number, string[]][]) {
+      assert.throws(() => confirm(baseRevision), { status: 422, code: "UNANSWERED_QUESTION" });
+      const saved = runtime.saveQuestionDeliveryDraft(student, activity.activityId,
+        { ...save, value, baseRevision, operationId: `blank-${baseRevision}` });
+      assert.deepEqual([saved.revision, saved.value], [baseRevision + 1, value]);
+    }
+    assert.throws(() => confirm(2), { status: 422, code: "UNANSWERED_QUESTION" });
+    assert.equal(deliveredView(runtime, activity).status, "active");
+    assert.deepEqual(deliveredView(runtime, activity).questionDeliveryDrafts.map(({ value }) => value), [["", "\r\n\u3000"]]);
+    assert.deepEqual(counts(databasePath), {
+      practices: 1, scoring_keys: 1, activities: 1, submissions: 0, completions: 0, evaluation_tasks: 0, performances: 0,
+    });
+    const set = runtime.saveQuestionDeliveryDraft(student, activity.activityId,
+      { ...save, value: ["", " 阴天 ", ""], baseRevision: 2, operationId: "filled" });
+    assert.ok(confirm(set.revision).id);
+    assert.equal(deliveredView(runtime, activity).status, "completed");
+  } finally { runtime.close(); }
+});
+
+test("有序文本声明拒绝错位私有键和缺少同版注册，失败不登记", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(settings(databasePath));
+  const publication = orderedTextGroup();
+  try {
+    assert.throws(() => runtime.publish(publication), error => error instanceof ZodError &&
+      error.issues.some(issue => issue.path.join(".") === "practice.grading.assessment.evaluator"));
+  } finally { runtime.close(); }
+  const registered = openLearningRuntime(orderedTextSettings(databasePath, () => true, []));
+  try {
+    const wrongKind = { response: "booleanOrString", acceptedResponse: true } as const;
+    const wrongLength = { response: "orderedTextBlanks" as const, acceptedBlanks: [["西风"]] };
+    const invalidCandidate = { response: "orderedTextBlanks" as const, acceptedBlanks: [[""], ["阴天"]] };
+    function publishWith(partial: typeof wrongKind | typeof wrongLength) {
+      registered.publish({ ...publication, scoringKey: { ...publication.scoringKey, acceptedByQuestion: {
+        ...publication.scoringKey.acceptedByQuestion, partial,
+      } } });
+    }
+    for (const basis of [wrongKind, wrongLength]) {
+      assert.throws(() => publishWith(basis), error => error instanceof ZodError &&
+        error.issues.some(issue => issue.path.join(".") === "scoringKey.acceptedByQuestion.partial"));
+    }
+    assert.throws(() => publishWith(invalidCandidate), ZodError);
+    assert.throws(() => open(registered, publication.practice.id), { status: 404, code: "PRACTICE_NOT_FOUND" });
+    assert.deepEqual(counts(databasePath), {
+      practices: 0, scoring_keys: 0, activities: 0, submissions: 0, completions: 0, evaluation_tasks: 0, performances: 0,
+    });
+  } finally { registered.close(); }
 });

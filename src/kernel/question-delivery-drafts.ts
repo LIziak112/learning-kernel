@@ -77,21 +77,26 @@ function requireDeliveryDraftValue(question: ReturnType<typeof requireFrozenQues
   const { response, options } = question;
   if (response === "booleanOrString") {
     if (typeof value === "object") throw new LearningError(422, "INVALID_RESPONSE");
-  } else {
-    requireFrozenOptions(response, options, value);
+    return;
   }
+  if (response === "orderedTextBlanks") {
+    if (typeof value !== "object" || value.some(item => typeof item !== "string")) {
+      throw new LearningError(422, "INVALID_RESPONSE");
+    }
+    return;
+  }
+  requireFrozenOptions(response, options, value);
 }
 
 function requireFrozenOptions(
-  format: Exclude<ReturnType<typeof requireFrozenQuestion>["response"], "booleanOrString">,
-  options: Readonly<Record<string, string>>, value: Value,
+  format: "choice" | "optionIndexArray" | undefined, options: Readonly<Record<string, string>>, value: Value,
 ) {
   if (format === "choice") {
     if (typeof value !== "string" || !Object.hasOwn(options, value)) throw new LearningError(422, "INVALID_CHOICE");
     return;
   }
   if (format !== "optionIndexArray") throw new Error("冻结的题缺少作答形态");
-  if (typeof value !== "object" || value.some(index => !Object.hasOwn(options, String(index)))) {
+  if (typeof value !== "object" || value.some(index => typeof index !== "number" || !Object.hasOwn(options, String(index)))) {
     throw new LearningError(422, "INVALID_OPTION_INDEX");
   }
 }

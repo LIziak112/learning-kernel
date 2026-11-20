@@ -105,7 +105,9 @@ function validateDeliveryAssessment(
   if (assessment.from.stepId !== output.stepId || assessment.from.slotId !== output.slotId) {
     issue(["practice", "grading", "assessment", "from"], "须绑定本组逐题交付的逻辑槽");
   }
-  const evaluators = { choice: registered.choice, booleanOrString: registered.scalar, optionIndexArray: registered.indexes };
+  const evaluators = {
+    choice: registered.choice, booleanOrString: registered.scalar, optionIndexArray: registered.indexes, orderedTextBlanks: registered.orderedText,
+  };
   for (const format of formats) {
     const available: readonly (VersionRef & { evaluate: unknown })[] = evaluators[format] ?? [];
     if (!findResponseEvaluator(available, assessment.evaluator)) {
@@ -118,8 +120,8 @@ function validateQuestionKeys(questions: readonly Question[], keys: Readonly<Rec
   const pathFor = (id: string) => ["scoringKey", "acceptedByQuestion", id];
   for (const question of questions) {
     const key = Object.hasOwn(keys, question.id) ? keys[question.id] : undefined;
-    if (!key || key.response !== question.response || !keyMatchesOptions(key, question.options)) {
-      issue(pathFor(question.id), "私有键须匹配本题的冻结形态与选项");
+    if (!key || !keyMatchesQuestion(key, question)) {
+      issue(pathFor(question.id), "私有键须匹配本题的冻结形态、选项或空位");
     }
   }
   for (const id of Object.keys(keys)) {
@@ -127,10 +129,13 @@ function validateQuestionKeys(questions: readonly Question[], keys: Readonly<Rec
   }
 }
 
-function keyMatchesOptions(key: QuestionDeliveryKey, options: Question["options"]) {
+function keyMatchesQuestion(key: QuestionDeliveryKey, question: Question) {
+  if (key.response !== question.response) return false;
+  const { options } = question;
   switch (key.response) {
     case "choice": return Object.hasOwn(options, key.acceptedChoice);
     case "booleanOrString": return true;
     case "optionIndexArray": return key.acceptedIndexes.every(index => Object.hasOwn(options, String(index)));
+    case "orderedTextBlanks": return question.response === "orderedTextBlanks" && key.acceptedBlanks.length === question.blankCount;
   }
 }

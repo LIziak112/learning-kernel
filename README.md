@@ -101,7 +101,9 @@ const activity = runtime.read(principal, receipt.activityId);
 
 ### 混合整卷与逐题交付
 
-单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString` 或 `optionIndexArray`。私有 `scoringKey.acceptedByQuestion` 固定同一题型和对应的选项 ID、布尔键或索引集合。声明的评估器标识和版本必须在实际使用的每种既有评估注册中存在；评估时只取得该确认中的题、原值和该题评分键。
+单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray` 或 `orderedTextBlanks`。私有 `scoringKey.acceptedByQuestion` 固定同一题型和对应的选项 ID、布尔键、索引集合或逐空参考。声明的评估器标识和版本必须在实际使用的每种评估注册中存在。评估时只取得该确认中的题、原值和该题评分键。
+
+有序填空题声明正整数 `blankCount`，可省略 `options`。私有条目为 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
 
 `saveQuestionDeliveryDraft` 使用原题版本、当前修订和操作标识保护草稿，保留字符串原样、布尔值及数组原序与重复项。传给 `confirmQuestionDelivery` 的请求附同一逻辑槽、操作标识、题版本、所见修订和原稿声明：
 
@@ -111,7 +113,9 @@ const activity = runtime.read(principal, receipt.activityId);
 
 活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和该次评分。未评任务可在首次获准恢复时执行，已有正式判定和待评状态可直接复读。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。私有评分键和恢复专用的请求清单留在可信服务端。
 
-新声明复用 SQLite v16。旧活动和原接口沿原口径，K17 新声明需以支持它的运行时解释。[独立宿主示例](tests/fixtures/question-delivery-consumer.mts)
+填空按原序保留 `string[]`、空白和数组长度，允许少于或多于题面的空位数。数组为空或所有项去除首尾空白后均为空时不计作答，必答槽拒绝确认。显式全空和空数组仍存有草稿修订，未存稿为 `null`。宿主根据自己的冻结策略处理待人工判定。
+
+混合槽复用 SQLite v16。发布有序填空的宿主须使用支持该形态的运行时。[独立宿主示例](tests/fixtures/question-delivery-consumer.mts)
 
 ### 材料版本与使用位置
 

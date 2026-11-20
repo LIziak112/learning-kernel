@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { choiceConfirmationInput, confirmedQuestionRevision } from "./choice-confirmation.ts";
 import { id, versionRef } from "./reading.ts";
-import { indexResponseValue, optionIndex, responseDraftInput, responseValue } from "./response.ts";
+import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue } from "./response.ts";
 
-export const questionDeliveryFormat = z.enum(["choice", "booleanOrString", "optionIndexArray"]);
-const deliveryValue = z.union([responseValue, indexResponseValue]);
+export const orderedTextFormat = z.literal("orderedTextBlanks");
+export const choiceAndResponseFormat = z.enum(["choice", "booleanOrString", "optionIndexArray"]);
+const deliveryValue = z.union([responseValue, indexResponseValue, orderedTextResponseValue]);
 
 export function orderedQuestionValues<T>(values: Record<string, T>) {
   return Object.fromEntries(Object.entries(values).sort(([a], [b]) => a === b ? 0 : a < b ? -1 : 1));
@@ -18,6 +19,7 @@ const questionDeliveryKey = z.discriminatedUnion("response", [
   z.strictObject({ response: z.literal("choice"), acceptedChoice: id }),
   z.strictObject({ response: z.literal("booleanOrString"), acceptedResponse: z.boolean() }),
   z.strictObject({ response: z.literal("optionIndexArray"), acceptedIndexes: z.array(optionIndex).min(1) }),
+  z.strictObject({ response: orderedTextFormat, acceptedBlanks: z.array(z.array(z.string().min(1))).min(1) }),
 ]);
 export const questionDeliveryScoringKey = versionRef.extend({
   acceptedByQuestion: z.record(id, questionDeliveryKey).transform(orderedQuestionValues),
@@ -50,7 +52,7 @@ export type QuestionDeliveryDraftInput = z.infer<typeof questionDeliveryDraftInp
 export type QuestionDeliveryInput = z.infer<typeof questionDeliveryInput>;
 export type QuestionDelivery = z.infer<typeof questionDelivery>;
 export type QuestionDeliveryKey = z.infer<typeof questionDeliveryKey>;
-export type QuestionDeliveryFormat = z.infer<typeof questionDeliveryFormat>;
+export type QuestionDeliveryFormat = QuestionDeliveryKey["response"];
 
 export function questionDeliveryIntent(delivery: QuestionDelivery) {
   if (delivery.source === "finish") return delivery.requestQuestions;

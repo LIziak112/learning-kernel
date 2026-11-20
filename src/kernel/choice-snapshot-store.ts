@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ChoiceDraftScope } from "../contracts/choice-draft.ts";
 import { choiceSnapshotContent, choiceSnapshotRevision } from "../contracts/choice-snapshot.ts";
 import { readingQuestion } from "../contracts/reading-publication.ts";
+import type { ReadingPublication } from "../contracts/reading-publication.ts";
 
 const storedSnapshot = choiceSnapshotRevision.extend({ content: z.string() });
 const draftRevision = z.strictObject({ revision: z.int().positive() });
@@ -11,7 +12,7 @@ const editedQuestion = readingQuestion.pick({ prompt: true, options: true });
 export const choiceSnapshotOffsetForWork = `COALESCE((SELECT MAX(s.revision) FROM choice_snapshot_revisions s
   WHERE s.step_attempt_id = w.step_attempt_id AND s.slot_id = w.slot_id AND s.question_id = w.question_id), 0)`;
 
-type FrozenQuestion = z.infer<typeof readingQuestion>;
+type FrozenQuestion = ReadingPublication["practice"]["questions"][number];
 type SnapshotScope = Pick<ChoiceDraftScope, "stepAttemptId" | "slotId" | "questionId">;
 
 export function effectiveChoiceQuestions(database: DatabaseSync, stepAttemptId: string, published: readonly FrozenQuestion[]) {
@@ -23,7 +24,7 @@ export function effectiveChoiceQuestions(database: DatabaseSync, stepAttemptId: 
     ORDER BY r.question_id
   `).all(stepAttemptId).map(row => storedSnapshot.parse(row));
   const byQuestion = new Map(snapshots.map(row => [row.questionId, row]));
-  const questions = published.map(question => {
+  const questions = published.map<FrozenQuestion>(question => {
     const latest = byQuestion.get(question.id);
     if (!latest) return question;
     const patch = editedQuestion.strip().parse(JSON.parse(latest.content));

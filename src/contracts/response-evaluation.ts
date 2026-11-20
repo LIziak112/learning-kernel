@@ -21,6 +21,11 @@ export type IndexResponseEvaluationInput = Readonly<Omit<ResponseEvaluationInput
   acceptedIndexes: readonly number[];
 }>;
 export type IndexResponseEvaluator = (input: IndexResponseEvaluationInput) => ResponseVerdict;
+export type OrderedTextEvaluationInput = Readonly<Omit<ResponseEvaluationInput, "value" | "acceptedResponse"> & {
+  value: readonly string[] | null;
+  acceptedBlanks: readonly (readonly string[])[];
+}>;
+export type OrderedTextEvaluator = (input: OrderedTextEvaluationInput) => ResponseVerdict;
 
 const registration = versionRef.extend({
   evaluate: z.custom<ResponseEvaluator>(value => typeof value === "function"),
@@ -36,9 +41,13 @@ export const responseEvaluators = z.array(registration).refine(validRegistration
 export const indexResponseEvaluators = z.array(registration.extend({
   evaluate: z.custom<IndexResponseEvaluator>(value => typeof value === "function"),
 })).refine(validRegistrations, registrationIssue);
+export const orderedTextEvaluators = z.array(registration.extend({
+  evaluate: z.custom<OrderedTextEvaluator>(value => typeof value === "function"),
+})).refine(validRegistrations, registrationIssue);
 
 export type ResponseEvaluatorRegistration = z.infer<typeof registration>;
 export type IndexResponseEvaluatorRegistration = z.infer<typeof indexResponseEvaluators>[number];
+export type OrderedTextEvaluatorRegistration = z.infer<typeof orderedTextEvaluators>[number];
 
 export function findResponseEvaluator<T extends VersionRef & { evaluate: unknown }>(registered: readonly T[], { id, version }: VersionRef): T["evaluate"] | undefined {
   return registered.find(evaluator => evaluator.id === id && evaluator.version === version)?.evaluate;

@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { LearningError, openLearningRuntime } from "learning-kernel";
-import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, ResponseValue } from "learning-kernel";
+import type { OrderedTextEvaluationInput, PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, ResponseValue } from "learning-kernel";
 import { z } from "zod";
 
 const phase = z.enum(["write", "race-question", "race-finish", "recover", "read-stored"]).parse(process.argv[2]);
@@ -12,6 +12,12 @@ const protocolVersion = 1;
 const databasePath = "delivery.sqlite";
 const raw = "  需要评阅  ";
 const indexes = [2, 0, 2];
+const filled = ["", "  阴天  "];
+const blank = [" ", ""];
+const acceptedBlanks = [["西风", "偏西"], ["阴天"]];
+const textQuestions = ["filled-blanks", "empty-blanks", "missing-blanks"].map(id => ({
+  id, version: 5, response: "orderedTextBlanks" as const, prompt: "依次填写风向和云量。", blankCount: 2,
+}));
 const slotId = "answers";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
@@ -31,6 +37,12 @@ const runtime = openLearningRuntime({
       assert.deepEqual(acceptedIndexes, [0, 2]);
       return { status: "judged", correct: value !== null && [...new Set(value)].toSorted().join() === acceptedIndexes.join() };
     } }],
+    orderedTextEvaluators: [{ ...evaluator, evaluate: (input: OrderedTextEvaluationInput) => {
+      assert.deepEqual(input.practice, { id: "grouped-delivery", version: 1 });
+      assert.deepEqual(input.acceptedBlanks, acceptedBlanks);
+      assert.equal(input.questionVersion, 5);
+      return { status: "needsReview" };
+    } }],
   }),
 });
 
@@ -41,6 +53,7 @@ const published = {
     { id: "choice", version: 2, response: "choice", prompt: "任选一个。", options: { yes: "是", no: "否" } },
     { id: "text", version: 3, response: "booleanOrString", prompt: "写下原话。", options: { yes: "是", no: "否" } },
     { id: "indexes", version: 4, response: "optionIndexArray", prompt: "请选择。", options: { "0": "甲", "1": "乙", "2": "丙" } },
+    ...textQuestions,
   ],
   steps: [{
     id: "answer", instructions: "保存并交付。", tool: { id: "question-delivery", version: 1 },
@@ -65,6 +78,7 @@ const scoringKey = { ...published.grading.assessment.keyRef, acceptedByQuestion:
   choice: { response: "choice", acceptedChoice: "yes" },
   text: { response: "booleanOrString", acceptedResponse: true },
   indexes: { response: "optionIndexArray", acceptedIndexes: [0, 2] },
+  ...Object.fromEntries(textQuestions.map(({ id }) => [id, { response: "orderedTextBlanks" as const, acceptedBlanks }])),
 } } satisfies NonNullable<Extract<PublicationInput, { practice: { formatVersion: 1 } }>["scoringKey"]>;
 
 const activityKey = z.object({ activityId: z.uuid(), stepAttemptId: z.uuid() });
@@ -92,13 +106,26 @@ function key(activity: Activity, operationId: string) {
 function write() {
   runtime.publish({ practice: published, scoringKey });
   const group = open("grouped-delivery");
-  const groupAnswers = [draft(group, "choice", 2, "yes"), draft(group, "text", 3, raw), draft(group, "indexes", 4, indexes)];
+  const groupAnswers = [
+    draft(group, "choice", 2, "yes"), draft(group, "text", 3, raw), draft(group, "indexes", 4, indexes),
+    draft(group, "filled-blanks", 5, filled), draft(group, "empty-blanks", 5, blank),
+  ];
+  assert.deepEqual(groupAnswers.slice(-2).map(answer => [answer.revision, answer.value]), [[1, filled], [1, blank]]);
+  const newKey = { ...scoringKey, version: 2, acceptedByQuestion: {
+    ...scoringKey.acceptedByQuestion, ...Object.fromEntries(textQuestions.map(({ id }) =>
+      [id, { response: "orderedTextBlanks" as const, acceptedBlanks: [["东风"], []] }])),
+  } };
+  runtime.publish({ practice: { ...published, version: 2, grading: { assessment: {
+    ...published.grading.assessment, keyRef: { id: newKey.id, version: newKey.version },
+  } } }, scoringKey: newKey });
   const groupReceipt = runtime.confirmQuestionDelivery(student, group.activityId, {
     ...key(group, "whole"), slotId, source: "whole",
-    questions: groupAnswers.map(answer => current(answer.questionId, answer.questionVersion, answer.revision)),
+    questions: [...groupAnswers.map(answer => current(answer.questionId, answer.questionVersion, answer.revision)),
+      current("missing-blanks", 5, 0)],
   });
   const [step] = published.steps;
-  runtime.publish({ practice: { ...published, id: "individual-delivery", questions: published.questions.filter(question => question.id !== "text"),
+  const individualQuestions = published.questions.filter(({ id }) => id === "choice" || id === "indexes");
+  runtime.publish({ practice: { ...published, id: "individual-delivery", questions: individualQuestions,
     grading: { assessment: { ...published.grading.assessment, keyRef: { id: "individual-key", version: 1 } } },
     steps: [{ ...step, submit: { ...step.submit, slots: { answers: { ...step.submit.slots.answers,
       delivery: { mode: "perQuestion", questionSlots: { choice: "position-choice", indexes: "position-indexes" } },
@@ -141,10 +168,16 @@ function recover(questionStatus: "confirmed" | "closed") {
     { code: "FORBIDDEN" });
   const recovered = runtime.recoverQuestionDelivery(student, group.activityId, key(group, "whole"));
   assert.equal(recovered.receipt.id, groupReceipt);
-  assert.deepEqual(recovered.confirmation.questions.map(question => question.value), ["yes", raw, indexes]);
+  assert.deepEqual(recovered.confirmation.questions.map(({ value, revision }) => [value, revision]),
+    [["yes", 1], [raw, 1], [indexes, 1], [filled, 1], [blank, 1], [null, 0]]);
   assert.deepEqual(recovered.evaluation.questions.map(question => question.result), [
     { status: "judged", correct: true }, { status: "needsReview" }, { status: "judged", correct: true },
+    { status: "needsReview" }, { status: "needsReview" }, { status: "needsReview" },
   ]);
+  const groupView = runtime.read(student, group.activityId);
+  assert.ok("questionDeliveries" in groupView);
+  assert.deepEqual(groupView.questionDeliveries, [{ receipt: recovered.receipt, questionDelivery: recovered.confirmation }]);
+  assert.doesNotMatch(JSON.stringify(groupView), /acceptedBlanks|acceptedByQuestion|偏西|needsReview/);
 
   const end = runtime.recoverQuestionDelivery(student, individually.activityId, key(individually, "finish"));
   assert.equal(end.confirmation.source, "finish");

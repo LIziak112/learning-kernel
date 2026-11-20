@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { orderedQuestionValues, questionDeliveryFormat, questionDeliveryMode, questionDeliveryScoringKey } from "./question-delivery.ts";
+import { choiceAndResponseFormat, orderedQuestionValues, orderedTextFormat, questionDeliveryMode, questionDeliveryScoringKey } from "./question-delivery.ts";
 import { id, materialSchema, versionRef } from "./reading.ts";
 import { optionIndex, responseFormat } from "./response.ts";
 
@@ -90,15 +90,21 @@ const policy = z.strictObject({
 
 export const readingQuestion = z.strictObject({
   id, version: versionRef.shape.version.optional(), prompt: nonempty, options: descriptions,
-  response: questionDeliveryFormat.optional(),
 });
+const readingQuestions = z.discriminatedUnion("response", [
+  readingQuestion.extend({ response: choiceAndResponseFormat.optional() }),
+  readingQuestion.extend({
+    response: orderedTextFormat, blankCount: z.int().positive(),
+    options: z.record(id, z.never()).default({}),
+  }),
+]);
 
 export const readingPracticeSchema = versionRef.extend({
   formatVersion: z.literal(1),
   title: nonempty,
   material: versionRef.optional(),
   goals: descriptions,
-  questions: z.array(readingQuestion).default([]),
+  questions: z.array(readingQuestions).default([]),
   steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
     selectionFeedback: z.strictObject({ from: slotReference, criterion: nonempty }).optional(),

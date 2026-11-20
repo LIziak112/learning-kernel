@@ -5,6 +5,7 @@ import { versionedChoiceDraftInput } from "./choice-draft.ts";
 export const responseValue = z.union([z.boolean(), z.string()]);
 export const optionIndex = z.int().nonnegative();
 export const indexResponseValue = z.array(optionIndex);
+export const orderedTextResponseValue = z.array(z.string());
 export const responseFormat = z.enum(["booleanOrString", "optionIndexArray"]);
 export const responseDraftValue = versionedChoiceDraftInput.pick({ questionVersion: true }).extend({ value: responseValue });
 export const responseDraftInput = versionedChoiceDraftInput.omit({ choice: true }).extend({ value: responseValue });
@@ -35,14 +36,14 @@ export type ResponseConfirmation = z.infer<typeof responseConfirmation>;
 export type IndexResponseDraftInput = z.infer<typeof indexResponseDraftInput>;
 export type IndexResponseConfirmation = z.infer<typeof indexResponseConfirmation>;
 export type ResponseFormat = z.infer<typeof responseFormat>;
-export type StoredResponseValue = ResponseValue | readonly number[];
+export type StoredResponseValue = ResponseValue | readonly number[] | readonly string[];
 
 export function hasStoredResponse(value: StoredResponseValue | null) {
-  return value !== null && (typeof value !== "object" || value.length > 0);
+  return value !== null && (typeof value !== "object" || value.some(item => typeof item === "number" || item.trim() !== ""));
 }
 
 export function sameStoredResponse(left: StoredResponseValue | null, right: StoredResponseValue | null) {
   if (left === right) return true;
   if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
-  return left.length === right.length && left.every((index, offset) => index === right[offset]);
+  return left.length === right.length && left.every((item, offset) => item === right[offset]);
 }

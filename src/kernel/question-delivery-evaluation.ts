@@ -6,7 +6,7 @@ import { questionDeliveryScoringKey } from "../contracts/question-delivery.ts";
 import type { QuestionDelivery, QuestionDeliveryKey } from "../contracts/question-delivery.ts";
 import type { SubmissionReceipt, VersionRef } from "../contracts/reading.ts";
 import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
-import { indexResponseValue, responseValue } from "../contracts/response.ts";
+import { indexResponseValue, orderedTextResponseValue, responseValue } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { LearningError } from "./learning-error.ts";
@@ -35,8 +35,9 @@ type EvaluationInput = Omit<ChoiceEvaluationInput, "choice" | "acceptedChoice"> 
 const confirmedChoice = z.string().nullable();
 const confirmedScalar = responseValue.nullable();
 const confirmedIndexes = indexResponseValue.nullable();
+const confirmedOrderedText = orderedTextResponseValue.nullable();
 
-function evaluateOf(reference: VersionRef, basis: QuestionDeliveryKey, { choice = [], scalar = [], indexes = [] }: PublicationEvaluators) {
+function evaluateOf(reference: VersionRef, basis: QuestionDeliveryKey, { choice = [], scalar = [], indexes = [], orderedText = [] }: PublicationEvaluators) {
   switch (basis.response) {
     case "choice": {
       const evaluate = requireEvaluator(findChoiceEvaluator(choice, reference));
@@ -54,6 +55,13 @@ function evaluateOf(reference: VersionRef, basis: QuestionDeliveryKey, { choice 
       const evaluate = requireEvaluator(findResponseEvaluator(indexes, reference));
       return ({ value, ...context }: EvaluationInput) =>
         evaluate({ ...context, value: confirmedIndexes.parse(value), acceptedIndexes: [...basis.acceptedIndexes] });
+    }
+    case "orderedTextBlanks": {
+      const evaluate = requireEvaluator(findResponseEvaluator(orderedText, reference));
+      return ({ value, ...context }: EvaluationInput) => evaluate({
+        ...context, value: confirmedOrderedText.parse(value),
+        acceptedBlanks: basis.acceptedBlanks.map(values => [...values]),
+      });
     }
   }
 }
