@@ -3,12 +3,12 @@ import type { AuthorizeConfirmationRecovery, ConfirmationKey, VerifyOriginal } f
 import { findQuestionAnswerRule } from "../contracts/question-answer-rule.ts";
 import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { questionDeliveryIntent, questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
-import type { QuestionDeliveryInput } from "../contracts/question-delivery.ts";
+import type { AuthorizeQuestionDeliveryReview, QuestionDeliveryInput } from "../contracts/question-delivery.ts";
 import { hasStoredResponse } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
-import { loadStudentReadingActivity } from "./activity.ts";
+import { loadActivity, loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { writeTransaction } from "./database.ts";
+import { readTransaction, writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import type { PublicationEvaluators } from "./publication-bindings.ts";
 import {
@@ -18,9 +18,10 @@ import {
 import {
   deliveryDraftHead, QuestionDeliveryConflict, questionDeliveryPosition, requireFrozenQuestion, requireQuestionDeliverySlot,
 } from "./question-delivery-drafts.ts";
-import { recoverQuestionDeliveryEvaluation } from "./question-delivery-evaluation.ts";
+import { readManualReviewBasis, readManualReviewQuestions, recoverQuestionDeliveryEvaluation } from "./question-delivery-evaluation.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
 import { requireBeforeDeadline } from "./reading-progress.ts";
+import { recordResponseReviewRequirements } from "./response-evaluation.ts";
 import { submittedSlots } from "./submission-store.ts";
 
 type RequestQuestion = QuestionDeliveryInput["questions"][number];
@@ -50,8 +51,12 @@ export function confirmQuestionDelivery(
     const answeredQuestionIds = new Set(decisions.filter(({ answered }) => answered).map(({ question }) => question.questionId));
     const content = { kind: "questionDelivery" as const, slotId: input.slotId, questions };
     const submitted = input.source === "finish" ? { ...content, source: input.source, requestQuestions } : { ...content, source: input.source };
-    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, submitted, now, verifyOriginal,
+    const receipt = writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, submitted, now, verifyOriginal,
       { ...placement, answeredQuestionIds });
+    if (activity.practice.grading.manualReview) {
+      recordResponseReviewRequirements(database, receipt.id, questions.map(({ questionId }) => questionId));
+    }
+    return receipt;
   });
 }
 
@@ -98,7 +103,7 @@ function isDeliveryAnswered(
 
 export function recoverQuestionDelivery(
   database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey,
-  authorize: AuthorizeConfirmationRecovery | undefined, registered: PublicationEvaluators,
+  authorize: AuthorizeConfirmationRecovery | undefined, registered: PublicationEvaluators, mode: "automatic" | "declared",
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
@@ -114,10 +119,51 @@ export function recoverQuestionDelivery(
       const draft = deliveryDraftHead(database, activity, slotId, question.questionId);
       return { questionId: question.questionId, changeCount: confirmedDraftChangeCount(question, draft || undefined, "value") };
     });
-    const evaluation = recoverQuestionDeliveryEvaluation(database, activity, receipt, content, registered);
-    return {
+    const confirmation = {
       receipt, practice: { id, version }, confirmation: questionDeliveryView(content), requestQuestions: questionDeliveryIntent(content),
-      draftChangeCounts, evaluation,
+      draftChangeCounts,
     };
+    const { assessment, manualReview } = activity.practice.grading;
+    if (assessment) {
+      const evaluation = recoverQuestionDeliveryEvaluation(database, activity, receipt, content, registered);
+      return { ...confirmation, assessment: "automatic" as const, evaluation };
+    }
+    if (mode === "automatic") throw new LearningError(409, "ASSESSMENT_MODE_MISMATCH");
+    if (manualReview) {
+      const questions = readManualReviewQuestions(database, receipt, content);
+      return { ...confirmation, assessment: "manual" as const, review: { questions } };
+    }
+    return { ...confirmation, assessment: "none" as const };
+  });
+}
+
+export function readQuestionDeliveryReview(
+  database: DatabaseSync, reviewerId: string, activityId: string, { stepAttemptId, operationId }: ConfirmationKey,
+  authorize: AuthorizeQuestionDeliveryReview | undefined,
+) {
+  return readTransaction(database, () => {
+    const studentId = database.prepare(`
+      SELECT a.student_id AS studentId FROM activities a
+      JOIN step_attempts t ON t.activity_id = a.id
+      LEFT JOIN reading_reviews r ON r.activity_id = a.id
+      WHERE a.id = ? AND t.id = ? AND (r.activity_id IS NULL OR (r.reviewer_id = ? AND r.reviewer_active = 1))
+    `).get(activityId, stepAttemptId, reviewerId)?.studentId;
+    if (typeof studentId !== "string") throw new LearningError(403, "FORBIDDEN");
+    const activity = loadActivity(database, studentId, activityId);
+    if (activity.kind !== "reading" || activity.stepAttemptId !== stepAttemptId) throw new LearningError(403, "FORBIDDEN");
+    const recovered = confirmedWorkForOperation(database, activityId, { protocolVersion: 1, stepAttemptId, operationId });
+    if (!recovered) throw new LearningError(403, "FORBIDDEN");
+    const { receipt } = recovered;
+    const { id: submissionId, slotId } = receipt;
+    if (authorize?.({ reviewerId, studentId, activityId, stepAttemptId, operationId, submissionId, slotId }) !== true) {
+      throw new LearningError(403, "FORBIDDEN");
+    }
+    const content = readQuestionDelivery(recovered.content);
+    const manualReview = activity.practice.grading.manualReview;
+    if (!manualReview || !content) throw new LearningError(404, "REVIEW_NOT_FOUND");
+    const { id, version } = activity.practice;
+    const basis = readManualReviewBasis(database, receipt, manualReview.keyRef);
+    const questions = readManualReviewQuestions(database, receipt, content);
+    return { receipt, practice: { id, version }, confirmation: questionDeliveryView(content), basis, questions };
   });
 }

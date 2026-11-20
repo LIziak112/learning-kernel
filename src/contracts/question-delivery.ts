@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { choiceConfirmationInput, confirmedQuestionRevision } from "./choice-confirmation.ts";
+import type { ConfirmationScope } from "./choice-confirmation.ts";
 import { id, versionRef } from "./reading.ts";
 import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue, titledTextResponseValue } from "./response.ts";
 
@@ -26,6 +27,15 @@ const questionDeliveryKey = z.discriminatedUnion("response", [
 export const questionDeliveryScoringKey = versionRef.extend({
   acceptedByQuestion: z.record(id, questionDeliveryKey).transform(orderedQuestionValues),
 });
+
+export const questionDeliveryReviewBasis = versionRef.extend({
+  reviewCriteria: z.string().refine(criteria => criteria.trim().length > 0),
+});
+export type AuthorizeQuestionDeliveryReview = (scope: Readonly<ConfirmationScope & {
+  reviewerId: string;
+  submissionId: string;
+  slotId: string;
+}>) => boolean;
 
 export const questionDeliveryDraftInput = responseDraftInput.extend({ value: deliveryValue });
 export const questionDeliveryDraftValue = questionDeliveryDraftInput.pick({ questionVersion: true, value: true });

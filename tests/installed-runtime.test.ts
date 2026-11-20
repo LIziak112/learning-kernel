@@ -174,6 +174,12 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         for (const phase of ["write", "recover", "read-stored"]) {
           execFileSync(process.execPath, [titledText, phase], { cwd: directory, stdio: "inherit" });
         }
+        const deliveryAssessment = "question-delivery-assessment-consumer.mts";
+        cpSync(new URL("./fixtures/question-delivery-assessment-consumer.mts", import.meta.url), join(directory, deliveryAssessment));
+        inputs.push(deliveryAssessment);
+        for (const phase of ["write", "recover"]) {
+          execFileSync(process.execPath, [deliveryAssessment, phase], { cwd: directory, stdio: "inherit" });
+        }
         const answerRule = "question-answer-rule-consumer.mts";
         cpSync(new URL("./fixtures/question-answer-rule-consumer.mts", import.meta.url), join(directory, answerRule));
         inputs.push(answerRule);

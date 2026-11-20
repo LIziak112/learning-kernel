@@ -51,8 +51,14 @@ function validateAssessmentPublication(
   const response = practice.steps.flatMap(step => Object.values(step.submit.slots))
     .find(slot => slot.type === "oneResponsePerQuestion")?.input;
   const questionDelivery = validateQuestionDeliveryPublication(publication, registered, answerRules, issue);
-  validateResponsePolicy(practice, questionDelivery || response !== undefined, issue);
-  if (!questionDelivery) validateAssessmentPolicy(practice, scoringKey, response, issue);
+  if (questionDelivery) {
+    validateResponsePolicy(practice, true, issue);
+    return;
+  }
+  if (practice.grading.manualReview) issue(["practice", "grading", "manualReview"], "人工评阅须绑定题组交付槽");
+  if (response !== undefined && !practice.grading.assessment) issue(["practice", "grading", "assessment"], "原值确认须声明固定评估");
+  validateResponsePolicy(practice, response !== undefined, issue);
+  validateAssessmentPolicy(practice, scoringKey, response, issue);
 }
 
 function validateDraftConfirmation(step: ReadingStep, practice: ReadingPublication["practice"], issue: Issue) {
@@ -231,7 +237,6 @@ function validateResponsePolicy(practice: ReadingPublication["practice"], respon
     if (fields.includes("ownResponses")) issue(["practice", "policy", "student", "ownSubmission", "fields"], "原值回看须使用原值提交槽");
     return;
   }
-  if (!practice.grading.assessment) issue(["practice", "grading", "assessment"], "原值确认须声明固定评估");
   validateResponseStudentPolicy(student, issue);
   if (reviewer.fields.length || reviewer.actions.length || manager.actions.length) {
     issue(["practice", "policy"], "原值确认不声明阅读评阅动作或字段");

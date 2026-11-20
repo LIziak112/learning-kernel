@@ -91,25 +91,34 @@ function completeResponseEvaluation(
   database: DatabaseSync, target: { submissionId: string; targetId: string },
   outcomes: readonly { questionId: string; result: ResponseVerdict }[],
 ) {
-  const requireReview = database.prepare("INSERT INTO response_review_requirements (submission_id, question_id) VALUES (?, ?)");
+  const pending: string[] = [];
   const judged = outcomes.flatMap(({ questionId, result }) => {
     if (result.status === "judged") return [{ questionId, correct: result.correct }];
-    requireReview.run(target.submissionId, questionId);
+    pending.push(questionId);
     return [];
   });
+  recordResponseReviewRequirements(database, target.submissionId, pending);
   recordEvaluation(database, target, judged);
 }
 
+export function recordResponseReviewRequirements(database: DatabaseSync, submissionId: string, questionIds: readonly string[]) {
+  const requireReview = database.prepare("INSERT INTO response_review_requirements (submission_id, question_id) VALUES (?, ?)");
+  for (const questionId of questionIds) requireReview.run(submissionId, questionId);
+}
+
 const storedRequirement = z.strictObject({ questionId: z.string() });
+
+export function readResponseReviewRequirements(database: DatabaseSync, submissionId: string) {
+  return database.prepare("SELECT question_id AS questionId FROM response_review_requirements WHERE submission_id = ?")
+    .all(submissionId).map(row => storedRequirement.parse(row).questionId);
+}
 function storedOutcomes(database: DatabaseSync, target: { submissionId: string; targetId: string }) {
   const outcomes = new Map<string, ResponseVerdict>();
   for (const { questionId, correct, valid } of readAutomaticVerdicts(database, target)) {
     if (!valid) throw new Error("已执行的原值评估包含无效自动判定");
     outcomes.set(questionId, { status: "judged", correct });
   }
-  const pending = database.prepare("SELECT question_id AS questionId FROM response_review_requirements WHERE submission_id = ?").all(target.submissionId);
-  for (const row of pending) {
-    const { questionId } = storedRequirement.parse(row);
+  for (const questionId of readResponseReviewRequirements(database, target.submissionId)) {
     if (outcomes.has(questionId)) throw new Error("同一道题同时处于已评与待评");
     outcomes.set(questionId, { status: "needsReview" });
   }

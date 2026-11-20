@@ -17,7 +17,7 @@ export function questionDeliverySlot(step: ReadingStep) {
 export function validateQuestionDeliveryPublication(
   publication: ReadingPublication, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules, issue: Issue,
 ) {
-  const { practice, scoringKey } = publication;
+  const { practice } = publication;
   const delivery = locateDelivery(practice.steps);
   if (!delivery) {
     if (practice.questionAnswerRules !== undefined) {
@@ -31,12 +31,34 @@ export function validateQuestionDeliveryPublication(
   validateDeliveryLocations(delivery, practice.steps.length, ids, issue);
   const formats = validateQuestionFormats(practice.questions, issue);
   validateAnswerRuleBindings(practice, answerRules, issue);
-  const assessment = practice.grading.assessment;
-  validateDeliveryAssessment(assessment, { stepId: step.id, slotId }, formats, registered, issue);
-  if (validateDeliveryKey(scoringKey, assessment?.keyRef, issue)) {
-    validateQuestionKeys(practice.questions, scoringKey.acceptedByQuestion, ids, issue);
-  }
+  validateDeliveryGrading(publication, { stepId: step.id, slotId }, formats, ids, registered, issue);
   return true;
+}
+
+function validateDeliveryGrading(
+  { practice, scoringKey }: ReadingPublication, output: Assessment["from"], formats: ReadonlySet<QuestionDeliveryFormat>,
+  ids: ReadonlySet<string>, registered: PublicationEvaluators, issue: Issue,
+) {
+  const { assessment, manualReview } = practice.grading;
+  if (manualReview) {
+    if (assessment) issue(["practice", "grading", "manualReview"], "同一次题组交付只声明一种评估方式");
+    validateManualReviewBasis(scoringKey, manualReview.keyRef, issue);
+  } else if (assessment) {
+    validateDeliveryAssessment(assessment, output, formats, registered, issue);
+    if (validateDeliveryKey(scoringKey, assessment.keyRef, issue)) {
+      validateQuestionKeys(practice.questions, scoringKey.acceptedByQuestion, ids, issue);
+    }
+  } else if (scoringKey) {
+    issue(["practice", "grading", "assessment"], "冻结的评分依据须有对应的评估声明");
+  }
+}
+
+function validateManualReviewBasis(key: ReadingPublication["scoringKey"], reference: VersionRef, issue: Issue) {
+  if (!key || !("reviewCriteria" in key)) {
+    issue(["scoringKey"], "人工评阅须提供实际冻结的评阅依据");
+  } else if (key.id !== reference.id || key.version !== reference.version) {
+    issue(["practice", "grading", "manualReview", "keyRef"], "人工评阅引用须指向本次冻结依据的精确版本");
+  }
 }
 
 function validateAnswerRuleBindings(
@@ -78,12 +100,12 @@ function rejectUnboundQuestionFormats(questions: readonly Question[], issue: Iss
 
 type DeliveryKey = Extract<ReadingPublication["scoringKey"], { acceptedByQuestion: unknown }>;
 
-function validateDeliveryKey(key: ReadingPublication["scoringKey"], reference: VersionRef | undefined, issue: Issue): key is DeliveryKey {
+function validateDeliveryKey(key: ReadingPublication["scoringKey"], reference: VersionRef, issue: Issue): key is DeliveryKey {
   if (!key || !("acceptedByQuestion" in key)) {
     issue(["scoringKey"], "逐题交付须提供按题冻结的评分键");
     return false;
   }
-  if (reference && (key.id !== reference.id || key.version !== reference.version)) {
+  if (key.id !== reference.id || key.version !== reference.version) {
     issue(["practice", "grading", "assessment", "keyRef"], "评估引用须指向本次冻结的评分键");
   }
   return true;
@@ -121,9 +143,8 @@ function validateQuestionSlots(slots: Readonly<Record<string, string>>, logicalS
 type Assessment = NonNullable<ReadingPublication["practice"]["grading"]["assessment"]>;
 
 function validateDeliveryAssessment(
-  assessment: Assessment | undefined, output: Assessment["from"], formats: ReadonlySet<QuestionDeliveryFormat>, registered: PublicationEvaluators, issue: Issue,
+  assessment: Assessment, output: Assessment["from"], formats: ReadonlySet<QuestionDeliveryFormat>, registered: PublicationEvaluators, issue: Issue,
 ) {
-  if (!assessment) return;
   if (assessment.from.stepId !== output.stepId || assessment.from.slotId !== output.slotId) {
     issue(["practice", "grading", "assessment", "from"], "须绑定本组逐题交付的逻辑槽");
   }

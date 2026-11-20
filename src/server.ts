@@ -10,7 +10,7 @@ import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
 import { questionAnswerRules } from "./contracts/question-answer-rule.ts";
 import { questionDeliveryDraftInput, questionDeliveryInput } from "./contracts/question-delivery.ts";
-import type { QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
+import type { AuthorizeQuestionDeliveryReview, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
@@ -27,7 +27,7 @@ import { reviseChoiceSnapshot } from "./kernel/choice-snapshot.ts";
 import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
-import { confirmQuestionDelivery, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
+import { confirmQuestionDelivery, readQuestionDeliveryReview, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
 import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
 import { registerPublication } from "./kernel/publication.ts";
 import { confirmResponses, indexResponses, recoverResponseConfirmation, scalarResponses } from "./kernel/response-confirmation.ts";
@@ -48,11 +48,13 @@ const runtimeOptions = z.strictObject({
   hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
   verifyOriginal: z.custom<VerifyOriginal>(value => typeof value === "function").optional(),
   authorizeConfirmationRecovery: z.custom<AuthorizeConfirmationRecovery>(value => typeof value === "function").optional(),
+  authorizeQuestionDeliveryReview: z.custom<AuthorizeQuestionDeliveryReview>(value => typeof value === "function").optional(),
 });
 const studentPrincipal = z.strictObject({ role: z.literal("student"), id });
 const reviewerPrincipal = z.strictObject({ role: z.literal("reviewer"), id });
 const publishedStartInput = startInput.extend({ practiceVersion: versionRef.shape.version });
 const uuid = z.uuid();
+const recoveryMode = z.literal("declared").optional();
 const clock = () => new Date();
 
 export { LearningError };
@@ -63,7 +65,7 @@ export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
 export type { ActivityBindingClaims, TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
 export type { QuestionAnswerRuleRegistration } from "./contracts/question-answer-rule.ts";
-export type { QuestionDeliveryDraftInput, QuestionDeliveryInput };
+export type { AuthorizeQuestionDeliveryReview, QuestionDeliveryDraftInput, QuestionDeliveryInput };
 export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
@@ -91,6 +93,9 @@ function principalId(schema: z.ZodType<{ id: string }>, principal: unknown) {
   return parsed.data.id;
 }
 
+type DeclaredQuestionDeliveryRecovery = ReturnType<typeof recoverQuestionDelivery>;
+type AutomaticQuestionDeliveryRecovery = Omit<Extract<DeclaredQuestionDeliveryRecovery, { assessment: "automatic" }>, "assessment">;
+
 export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const settings = runtimeOptions.parse(options);
   const database = openDatabase(settings.databasePath);
@@ -100,6 +105,18 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   };
   const evaluateScalarResponse = scalarResponseEvaluation(database, settings.responseEvaluators);
   const evaluateIndexResponse = indexResponseEvaluation(database, settings.indexResponseEvaluators);
+
+  function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, mode: "declared"): DeclaredQuestionDeliveryRecovery;
+  function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey): AutomaticQuestionDeliveryRecovery;
+  function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, input?: "declared") {
+    const mode = recoveryMode.parse(input);
+    const recovered = recoverQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
+      confirmationKey.parse(key), settings.authorizeConfirmationRecovery, registered, mode ?? "automatic");
+    if (mode === "declared" || recovered.assessment !== "automatic") return recovered;
+    const { assessment: _assessment, ...legacy } = recovered;
+    return legacy;
+  }
+
   return {
     publish(input: PublicationInput) {
       registerPublication(database, input, registered, settings.questionAnswerRules);
@@ -190,9 +207,10 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
       return confirmQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
         questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery, settings.questionAnswerRules);
     },
-    recoverQuestionDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
-      return recoverQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
-        confirmationKey.parse(key), settings.authorizeConfirmationRecovery, registered);
+    recoverQuestionDelivery: recoverDelivery,
+    readQuestionDeliveryReview(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey) {
+      return readQuestionDeliveryReview(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
+        confirmationKey.parse(key), settings.authorizeQuestionDeliveryReview);
     },
     close() {
       database.close();

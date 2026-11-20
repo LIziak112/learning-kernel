@@ -101,7 +101,7 @@ const activity = runtime.read(principal, receipt.activityId);
 
 ### 混合整卷与逐题交付
 
-单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。私有 `scoringKey.acceptedByQuestion` 固定每题的形态和对应的评分数据。声明的评估器标识和版本必须在实际使用的每种评估注册中存在。评估时只取得该确认中的题、原值和该题评分键。
+单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。仅收作品时声明 `grading: {}`，省略 `scoringKey`。确认照常写入回执和完成记录，评估任务为零。自动评分使用 `grading.assessment`，私有 `scoringKey.acceptedByQuestion` 固定每题的形态和评分数据。评估器标识和版本必须在实际使用的每种评估注册中存在。评估器只收到该次确认中的题、原值和该题评分键。
 
 有序填空题声明正整数 `blankCount`，可省略 `options`。私有条目为 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
 
@@ -111,7 +111,11 @@ const activity = runtime.read(principal, receipt.activityId);
 - `delivery.mode: "perQuestion"` 的 `questionSlots` 为每题固定互异的交付位置。`source: "question"` 只确认一题，其他题可继续保存，最后一题确认后完成活动。显式空交也有本题确认位置。
 - 逐题活动可用 `source: "finish"` 发出全题版本与修订清单。内核核对全部题版本，仅以未交题当前稿或空值组成收尾提交。先交题保留原作品、回执与判定。确认来源区分主动单题空交和收尾时的被动空值。保存的空数组保有草稿修订；无稿值为 `null`，空值不登记表现。
 
-活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和该次评分。未评任务可在首次获准恢复时执行，已有正式判定和待评状态可直接复读。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。私有评分键和恢复专用的请求清单留在可信服务端。
+活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery(principal, activityId, key)` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和 `evaluation`，适用于自动评分题组。待自动评分的任务可在首次获准恢复时执行，已记录的判定和待评状态可直接复读。
+
+可信宿主可传第四参数 `"declared"`，按 `assessment` 字段识别 `"none"`、`"manual"` 和 `"automatic"`。三种模式都带原回执与确认事实，并按现行授权交付。人工模式的 `review.questions` 标明本次确认中待人工评阅的冻结题及其版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
+
+需要人工评阅时，在 `grading.manualReview.keyRef` 引用本次私有 `scoringKey: { id, version, reviewCriteria }`。填写实际的量表或评阅准则文本。每个确认覆盖的位置都登记待评，含已确认的空答。表现记录继续遵守已答规则。宿主配置同步 `authorizeQuestionDeliveryReview`，凭已验证的 `{ role: "reviewer", id }`、活动 ID 和原确认键调用 `readQuestionDeliveryReview`。授权收到真实评阅者、学生、活动、步骤尝试、操作标识、提交 ID 和回执槽位。已有内核评阅指派也须有效。该读口交付冻结原值、待评题和精确版本的 `basis`，私有量表仅随获准的评阅读取交付。
 
 填空按原序保留 `string[]`、空白和数组长度，允许少于或多于题面的空位数。数组为空或所有项去除首尾空白后均为空时不计作答，必答槽拒绝确认。显式全空和空数组仍存有草稿修订，未存稿为 `null`。宿主根据自己的冻结策略处理待人工判定。
 

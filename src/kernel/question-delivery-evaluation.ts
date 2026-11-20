@@ -2,16 +2,17 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { findChoiceEvaluator } from "../contracts/choice-evaluation.ts";
 import type { ChoiceEvaluationInput } from "../contracts/choice-evaluation.ts";
-import { questionDeliveryScoringKey } from "../contracts/question-delivery.ts";
+import { questionDeliveryReviewBasis, questionDeliveryScoringKey } from "../contracts/question-delivery.ts";
 import type { QuestionDelivery, QuestionDeliveryKey } from "../contracts/question-delivery.ts";
 import type { SubmissionReceipt, VersionRef } from "../contracts/reading.ts";
 import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
 import { indexResponseValue, orderedTextResponseValue, responseValue, titledTextResponseValue } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
 import type { ReadingActivity } from "./activity.ts";
+import { loadEvaluationKey } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import type { PublicationEvaluators } from "./publication-bindings.ts";
-import { recoverEvaluatedResponses } from "./response-evaluation.ts";
+import { readResponseReviewRequirements, recoverEvaluatedResponses } from "./response-evaluation.ts";
 import type { EvaluationQuestion } from "./response-evaluation.ts";
 import { submissionAssessmentTarget } from "./verdict-state.ts";
 
@@ -28,6 +29,20 @@ export function recoverQuestionDeliveryEvaluation(
       return evaluate({ ...context, practice: { ...context.practice }, ...question });
     };
   }, target);
+}
+
+export function readManualReviewQuestions(database: DatabaseSync, receipt: SubmissionReceipt, delivery: QuestionDelivery) {
+  const required = new Set(readResponseReviewRequirements(database, receipt.id));
+  if (required.size !== delivery.questions.length || delivery.questions.some(({ questionId }) => !required.has(questionId))) {
+    throw new Error("人工待评位置与冻结提交不一致");
+  }
+  return delivery.questions.map(({ questionId, questionVersion }) => ({ questionId, questionVersion, status: "needsReview" as const }));
+}
+
+export function readManualReviewBasis(database: DatabaseSync, receipt: SubmissionReceipt, reference: VersionRef) {
+  const basis = questionDeliveryReviewBasis.parse(loadEvaluationKey(database, receipt.id));
+  if (basis.id !== reference.id || basis.version !== reference.version) throw new Error("人工待评引用与冻结依据不一致");
+  return basis;
 }
 
 type EvaluationInput = Omit<ChoiceEvaluationInput, "choice" | "acceptedChoice"> & EvaluationQuestion<StoredResponseValue>;

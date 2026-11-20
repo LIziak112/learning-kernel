@@ -166,7 +166,7 @@ function recover(questionStatus: "confirmed" | "closed") {
   const { group, individually, groupReceipt } = readCheckpoint();
   assert.throws(() => runtime.recoverQuestionDelivery({ ...student, id: "outsider" }, group.activityId, key(group, "whole")),
     { code: "FORBIDDEN" });
-  const recovered = runtime.recoverQuestionDelivery(student, group.activityId, key(group, "whole"));
+  const recovered: ReturnType<typeof runtime.recoverQuestionDelivery> = runtime.recoverQuestionDelivery(student, group.activityId, key(group, "whole"));
   assert.equal(recovered.receipt.id, groupReceipt);
   assert.deepEqual(recovered.confirmation.questions.map(({ value, revision }) => [value, revision]),
     [["yes", 1], [raw, 1], [indexes, 1], [filled, 1], [blank, 1], [null, 0]]);

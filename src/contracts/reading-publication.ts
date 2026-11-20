@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { choiceAndResponseFormat, orderedQuestionValues, orderedTextFormat, questionDeliveryMode, questionDeliveryScoringKey, titledTextFormat } from "./question-delivery.ts";
+import { choiceAndResponseFormat, orderedQuestionValues, orderedTextFormat, questionDeliveryMode, questionDeliveryReviewBasis, questionDeliveryScoringKey, titledTextFormat } from "./question-delivery.ts";
 import { id, materialSchema, versionRef } from "./reading.ts";
 import { optionIndex, responseFormat } from "./response.ts";
 
@@ -118,6 +118,7 @@ export const readingPracticeSchema = versionRef.extend({
       unit: z.literal("question"),
       effectiveVerdictOrder: z.tuple([z.literal("teacherReview"), z.literal("automatic")]),
     }).optional(),
+    manualReview: z.strictObject({ keyRef: versionRef }).optional(),
   }).default({}),
   policy,
 });
@@ -137,7 +138,9 @@ export const readingPublicationSchema = z.strictObject({
   material: materialSchema.optional(),
   materials: z.array(materialSchema).min(1).optional(),
   practice: readingPracticeSchema,
-  scoringKey: z.union([scoringKeySchema, responseScoringKeySchema, indexResponseScoringKeySchema, questionDeliveryScoringKey]).optional(),
+  scoringKey: z.union([
+    scoringKeySchema, responseScoringKeySchema, indexResponseScoringKeySchema, questionDeliveryScoringKey, questionDeliveryReviewBasis,
+  ]).optional(),
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

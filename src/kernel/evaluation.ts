@@ -25,12 +25,14 @@ export function queueEvaluation(
   receipt: SubmissionReceipt,
   targetId: string, assessmentSlotId = receipt.slotId,
 ) {
-  const { assessment } = activity.practice.grading;
-  if (!assessment || assessment.from.stepId !== activity.step.id || assessment.from.slotId !== assessmentSlotId) return;
+  const { assessment, manualReview } = activity.practice.grading;
+  if (assessment && (assessment.from.stepId !== activity.step.id || assessment.from.slotId !== assessmentSlotId)) return;
+  const keyRef = assessment?.keyRef ?? manualReview?.keyRef;
+  if (!keyRef) return;
   database.prepare(`
     INSERT INTO evaluation_tasks (submission_id, key_id, key_version, target_id, status)
     VALUES (?, ?, ?, ?, 'pending')
-  `).run(receipt.id, assessment.keyRef.id, assessment.keyRef.version, targetId);
+  `).run(receipt.id, keyRef.id, keyRef.version, targetId);
 }
 
 export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeCheckpoint) {
