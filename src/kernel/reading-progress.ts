@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { ChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import { readIndexResponseConfirmation, readResponseConfirmation } from "../contracts/response.ts";
@@ -14,6 +15,7 @@ import type { ReadingActivity } from "./activity.ts";
 import { queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { loadMaterialAtVersion } from "./material-positions.ts";
+import { questionDeliverySlot } from "./question-delivery-publication.ts";
 import { answerObservations, findSource, verifyAnswerReferences } from "./reading-answers.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 import { studentResults } from "./student-results.ts";
@@ -73,6 +75,7 @@ export function confirmReadingDraft(
   database: DatabaseSync, activity: ReadingActivity, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
 ) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
+  if (questionDeliverySlot(step)) throw new LearningError(422, "INVALID_SLOT");
   const repeated = recoverReceipt(database, input);
   if (repeated) return repeated;
   if (activity.completed || activity.stepAttemptId !== input.stepAttemptId) {
@@ -143,7 +146,7 @@ function advanceReading(database: DatabaseSync, activity: ReadingActivity) {
 
 export function readingActivityView(database: DatabaseSync, activity: ReadingActivity, submissions: StoredSubmission[]) {
   const { activityId, stepAttemptId, startedAt, step, practice, completed, practiceVersion } = activity;
-  const submitted = submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
+  const submitted = questionDeliverySlot(step) ? undefined : submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
   const materialBound = Object.values(step.inputs).some(input => input.from === "material");
   const status: ActivityDetail["status"] = completed ? "completed" : "active";
   return {
@@ -164,6 +167,7 @@ type StudentSubmissionView = {
   confirmation?: ChoiceConfirmation;
   responseConfirmation?: ResponseConfirmation;
   indexResponseConfirmation?: IndexResponseConfirmation;
+  questionDelivery?: ReturnType<typeof questionDeliveryView>;
   selection?: ReadingSelection;
   answer?: Omit<ReadingAnswer, "references"> & { references?: ReadingAnswer["references"] };
 };
@@ -196,6 +200,12 @@ function readingInputs(database: DatabaseSync, activity: ReadingActivity, submis
 export function studentSubmissionView(activity: ReadingActivity, submitted: StoredSubmission): StudentSubmissionView {
   const fields = new Set(activity.practice.policy.student.ownSubmission.fields);
   const receipt = fields.has("receipt") ? { receipt: submitted.receipt } : {};
+  const delivery = readQuestionDelivery(submitted.content);
+  if (delivery) return fields.has("ownResponses") ? { ...receipt, questionDelivery: questionDeliveryView(delivery) } : receipt;
+  return legacyStudentSubmission(submitted, fields, receipt);
+}
+
+function legacyStudentSubmission(submitted: StoredSubmission, fields: ReadonlySet<string>, receipt: Pick<StudentSubmissionView, "receipt">) {
   const confirmation = readChoiceConfirmation(submitted.content);
   if (confirmation) return fields.has("ownChoices") ? { ...receipt, confirmation } : receipt;
   const responseConfirmation = readResponseConfirmation(submitted.content);

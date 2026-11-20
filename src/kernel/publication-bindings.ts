@@ -8,6 +8,7 @@ import type { ResponseFormat } from "../contracts/response.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
 import { validateMaterialPositions } from "./material-positions.ts";
+import { validateQuestionDeliveryPublication } from "./question-delivery-publication.ts";
 
 type Issue = (path: (string | number)[], message: string) => void;
 export type PublicationEvaluators = {
@@ -19,7 +20,7 @@ export type PublicationEvaluators = {
 export function validateBindings(
   publication: ReadingPublication, issue: Issue, registered: PublicationEvaluators,
 ) {
-  const { practice, scoringKey } = publication;
+  const { practice } = publication;
   const earlierSteps = new Map<string, ReadingStep>();
   const positions = new Set<string>();
   for (const [index, step] of practice.steps.entries()) {
@@ -36,11 +37,17 @@ export function validateBindings(
   }
   validateMaterialPositions(publication, issue);
   validateGrading(practice.grading, earlierSteps, registered, issue);
+  validateAssessmentPublication(publication, registered, issue);
+  validateQuestions(practice, issue);
+}
+
+function validateAssessmentPublication(publication: ReadingPublication, registered: PublicationEvaluators, issue: Issue) {
+  const { practice, scoringKey } = publication;
   const response = practice.steps.flatMap(step => Object.values(step.submit.slots))
     .find(slot => slot.type === "oneResponsePerQuestion")?.input;
-  validateResponsePolicy(practice, response !== undefined, issue);
-  validateAssessmentPolicy(practice, scoringKey, response, issue);
-  validateQuestions(practice, issue);
+  const questionDelivery = validateQuestionDeliveryPublication(publication, registered, issue);
+  validateResponsePolicy(practice, questionDelivery || response !== undefined, issue);
+  if (!questionDelivery) validateAssessmentPolicy(practice, scoringKey, response, issue);
 }
 
 function validateDraftConfirmation(step: ReadingStep, practice: ReadingPublication["practice"], issue: Issue) {
@@ -56,7 +63,7 @@ function validateDraftConfirmation(step: ReadingStep, practice: ReadingPublicati
 }
 
 function hasDraftConfirmation(slot: ReadingSlot): slot is Extract<ReadingSlot, { type: "oneChoicePerQuestion" | "oneResponsePerQuestion" }> {
-  return "confirmFromDrafts" in slot && slot.confirmFromDrafts !== undefined;
+  return (slot.type === "oneChoicePerQuestion" || slot.type === "oneResponsePerQuestion") && slot.confirmFromDrafts !== undefined;
 }
 
 function isSingleFinalStep(practice: ReadingPublication["practice"], step: ReadingStep) {
@@ -159,7 +166,8 @@ function sourceMatchesSlot(slot: ReadingSlot, input: ValueType | undefined) {
   switch (slot.type) {
     case "passageSelection": return input === "material";
     case "oneChoicePerQuestion":
-    case "oneResponsePerQuestion": return input === "questions";
+    case "oneResponsePerQuestion":
+    case "questionDelivery": return input === "questions";
     case "reuse": return input === "passageSelection" || input === "oneChoicePerQuestion";
   }
 }
@@ -180,6 +188,7 @@ function validateGrading(
 function validateAssessmentBinding(
   slot: ReadingSlot | undefined, evaluator: VersionRef, { choice = [], scalar = [], indexes = [] }: PublicationEvaluators, issue: Issue,
 ) {
+  if (slot?.type === "questionDelivery") return;
   if (slot?.type === "oneResponsePerQuestion") {
     const evaluate = slot.input === "optionIndexArray" ? findResponseEvaluator(indexes, evaluator) : findResponseEvaluator(scalar, evaluator);
     if (!evaluate) {
@@ -268,7 +277,7 @@ function validateKey(
     validateIndexKey(practice.questions, key.acceptedIndexes, issue);
   } else if ("acceptedResponses" in key) {
     validateQuestionKeys(practice.questions, "acceptedResponses", key.acceptedResponses, "每道题须具有对应的布尔评分键", () => true, issue);
-  } else {
+  } else if ("acceptedChoices" in key) {
     validateQuestionKeys(practice.questions, "acceptedChoices", key.acceptedChoices, "评分键须指向本题存在的选项",
       (question, choice) => Object.hasOwn(question.options, choice), issue);
   }

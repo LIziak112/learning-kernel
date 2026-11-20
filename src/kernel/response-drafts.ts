@@ -76,9 +76,9 @@ function requireQuestionVersion(activity: ReadingActivity, input: ChoiceDraftSco
   return question;
 }
 
-function saveCurrentResponse<Value extends StoredResponseValue>(
+export function saveCurrentResponse<Value extends StoredResponseValue>(
   database: DatabaseSync, activityId: string, input: DraftInput<Value>,
-  mode: CurrentChoiceDraftMode, clock: () => Date, { schema, Conflict }: ResponseDraftMode<Value>,
+  mode: CurrentChoiceDraftMode, clock: () => Date, { schema, Conflict }: Omit<ResponseDraftMode<Value>, "format">,
 ) {
   const current = readQuestionDraftHead(database, activityId, input, schema);
   const previous = readQuestionDraftOperation(database, activityId, input, schema);

@@ -46,6 +46,11 @@ export function recordSubmission(
   return receipt;
 }
 
+export function submittedSlots(database: DatabaseSync, stepAttemptId: string) {
+  return new Set(database.prepare("SELECT slot_id AS slotId FROM submissions WHERE step_attempt_id = ?")
+    .all(stepAttemptId).map(({ slotId }) => String(slotId)));
+}
+
 export function finishActivity(database: DatabaseSync, activityId: string, submissionId: string) {
   database.prepare("INSERT INTO completions (activity_id, submission_id) VALUES (?, ?)").run(activityId, submissionId);
 }

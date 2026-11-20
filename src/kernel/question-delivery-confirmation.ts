@@ -1,0 +1,103 @@
+import type { DatabaseSync } from "node:sqlite";
+import type { AuthorizeConfirmationRecovery, ConfirmationKey, VerifyOriginal } from "../contracts/choice-confirmation.ts";
+import { questionDeliveryIntent, questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
+import type { QuestionDeliveryInput } from "../contracts/question-delivery.ts";
+import { hasStoredResponse } from "../contracts/response.ts";
+import { loadStudentReadingActivity } from "./activity.ts";
+import type { ReadingActivity } from "./activity.ts";
+import { writeTransaction } from "./database.ts";
+import { LearningError } from "./learning-error.ts";
+import type { PublicationEvaluators } from "./publication-bindings.ts";
+import {
+  confirmedDraftChangeCount, confirmedWorkForOperation, mapConfirmationQuestions, requireConfirmationRecovery,
+  sameQuestionIntent, writeQuestionConfirmation,
+} from "./question-confirmation.ts";
+import {
+  deliveryDraftHead, QuestionDeliveryConflict, questionDeliveryPosition, requireFrozenQuestion, requireQuestionDeliverySlot,
+} from "./question-delivery-drafts.ts";
+import { recoverQuestionDeliveryEvaluation } from "./question-delivery-evaluation.ts";
+import type { DeliverySlot } from "./question-delivery-publication.ts";
+import { requireBeforeDeadline } from "./reading-progress.ts";
+import { submittedSlots } from "./submission-store.ts";
+
+type RequestQuestion = QuestionDeliveryInput["questions"][number];
+
+export function confirmQuestionDelivery(
+  database: DatabaseSync, studentId: string, activityId: string, input: QuestionDeliveryInput, clock: () => Date,
+  verifyOriginal?: VerifyOriginal, authorize?: AuthorizeConfirmationRecovery,
+) {
+  return writeTransaction(database, () => {
+    const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
+    const previous = confirmedWorkForOperation(database, activityId, input);
+    if (previous) {
+      requireConfirmationRecovery({ studentId, activityId, stepAttemptId: input.stepAttemptId, operationId: input.operationId }, authorize);
+      const content = readQuestionDelivery(previous.content);
+      if (!content || content.source !== input.source || content.slotId !== input.slotId || !sameQuestionIntent(questionDeliveryIntent(content), input.questions)) {
+        throw new LearningError(409, "OPERATION_CONFLICT");
+      }
+      return previous.receipt;
+    }
+    if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
+    const slot = requireQuestionDeliverySlot(activity, input.slotId);
+    const now = clock();
+    requireBeforeDeadline(activity, now);
+    const { requestQuestions, selected, ...placement } = deliveryPlacement(database, activity, input, slot);
+    const questions = selected.map(question => freezeDeliveryDraft(database, activity, input.slotId, slot, question));
+    const content = { kind: "questionDelivery" as const, slotId: input.slotId, questions };
+    const submitted = input.source === "finish" ? { ...content, source: input.source, requestQuestions } : { ...content, source: input.source };
+    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, submitted, now, verifyOriginal, placement);
+  });
+}
+
+function deliveryPlacement(database: DatabaseSync, activity: ReadingActivity, input: QuestionDeliveryInput, slot: DeliverySlot) {
+  if ((input.source === "whole") !== (slot.delivery.mode === "whole")) throw new LearningError(422, "INVALID_SLOT");
+  const submitted = submittedSlots(database, activity.stepAttemptId);
+  if (input.source === "question") {
+    const [question] = input.questions;
+    requireFrozenQuestion(activity, question);
+    const slotId = questionDeliveryPosition(slot, input.slotId, question.questionId);
+    if (submitted.has(slotId)) throw new LearningError(409, "ALREADY_SUBMITTED");
+    return { slotId, finishes: submitted.size + 1 === activity.practice.questions.length, selected: [question], requestQuestions: [question] };
+  }
+  const requestQuestions = mapConfirmationQuestions(activity, input.questions, question => question);
+  const selected = requestQuestions.filter(question => !submitted.has(questionDeliveryPosition(slot, input.slotId, question.questionId)));
+  if (!selected.length) throw new LearningError(409, "ALREADY_SUBMITTED");
+  return { slotId: input.slotId, finishes: true, selected, requestQuestions };
+}
+
+function freezeDeliveryDraft(
+  database: DatabaseSync, activity: ReadingActivity, logicalSlotId: string, slot: DeliverySlot, question: RequestQuestion,
+) {
+  const slotId = questionDeliveryPosition(slot, logicalSlotId, question.questionId);
+  const head = deliveryDraftHead(database, activity, slotId, question.questionId);
+  const { revision, value } = head ?? { revision: 0, value: null };
+  if (revision !== question.revision) throw new QuestionDeliveryConflict({ revision, value }, "ANSWER_REVISION_CONFLICT", question.questionId);
+  if (!hasStoredResponse(value) && !slot.confirmFromDrafts.allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
+  return { ...question, value };
+}
+
+export function recoverQuestionDelivery(
+  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey,
+  authorize: AuthorizeConfirmationRecovery | undefined, registered: PublicationEvaluators,
+) {
+  return writeTransaction(database, () => {
+    const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
+    requireConfirmationRecovery({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }, authorize);
+    const recovered = confirmedWorkForOperation(database, activityId, key);
+    const content = recovered && readQuestionDelivery(recovered.content);
+    if (!recovered || !content) throw new LearningError(404, "CONFIRMATION_NOT_FOUND");
+    const { receipt } = recovered;
+    const { id, version } = activity.practice;
+    const slot = requireQuestionDeliverySlot(activity, content.slotId);
+    const draftChangeCounts = content.questions.map(question => {
+      const slotId = questionDeliveryPosition(slot, content.slotId, question.questionId);
+      const draft = deliveryDraftHead(database, activity, slotId, question.questionId);
+      return { questionId: question.questionId, changeCount: confirmedDraftChangeCount(question, draft || undefined, "value") };
+    });
+    const evaluation = recoverQuestionDeliveryEvaluation(database, activity, receipt, content, registered);
+    return {
+      receipt, practice: { id, version }, confirmation: questionDeliveryView(content), requestQuestions: questionDeliveryIntent(content),
+      draftChangeCounts, evaluation,
+    };
+  });
+}

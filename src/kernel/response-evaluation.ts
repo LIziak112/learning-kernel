@@ -10,7 +10,7 @@ import { loadEvaluationKey, recordEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import { assessmentTarget, readAutomaticVerdicts } from "./verdict-state.ts";
 
-type EvaluationQuestion<Value> = { questionId: string; questionVersion: number; value: Value | null };
+export type EvaluationQuestion<Value> = { questionId: string; questionVersion: number; value: Value | null };
 type EvaluationContext = Omit<ResponseEvaluationInput, keyof EvaluationQuestion<StoredResponseValue> | "acceptedResponse">;
 type PrepareEvaluation<Value> = (ref: VersionRef, key: unknown, context: EvaluationContext) => (question: EvaluationQuestion<Value>) => ResponseVerdict;
 
@@ -53,8 +53,15 @@ function recoverResponseEvaluation<Value extends StoredResponseValue>(
   database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt, confirmed: readonly EvaluationQuestion<Value>[],
   prepareEvaluation: PrepareEvaluation<Value>,
 ) {
-  const assessment = activity.practice.grading.assessment;
   const target = assessmentTarget(database, activity.activityId);
+  return recoverEvaluatedResponses(database, activity, receipt, confirmed, prepareEvaluation, target);
+}
+
+export function recoverEvaluatedResponses<Value extends StoredResponseValue>(
+  database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt, confirmed: readonly EvaluationQuestion<Value>[],
+  prepareEvaluation: PrepareEvaluation<Value>, target: ReturnType<typeof assessmentTarget>,
+) {
+  const assessment = activity.practice.grading.assessment;
   if (!assessment || target?.submissionId !== receipt.id) throw new Error("已确认的原值评分任务不存在");
   const evaluator = assessment.evaluator;
   if (target.status === "pending") {

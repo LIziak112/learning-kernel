@@ -1,6 +1,6 @@
 import type { VersionRef } from "../contracts/reading.ts";
 
-type StudentValue = "material" | "questions" | "textRange" | "passageSelection" | "oneChoicePerQuestion" | "oneResponsePerQuestion";
+type StudentValue = "material" | "questions" | "textRange" | "passageSelection" | "oneChoicePerQuestion" | "oneResponsePerQuestion" | "questionDelivery";
 export type ValueType = StudentValue | "scoringKey" | "questionVerdict";
 
 type ReadingCapability = Readonly<VersionRef> & (
@@ -64,6 +64,14 @@ const capabilities: readonly ReadingCapability[] = [
     outputs: ["oneChoicePerQuestion"],
   },
   responseGroupCapability,
+  {
+    id: "question-delivery",
+    version: 1,
+    audience: "student",
+    requiredInputs: ["questions"],
+    optionalInputs: [],
+    outputs: ["questionDelivery"],
+  },
   choiceKeyCapability,
 ];
 

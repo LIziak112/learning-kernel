@@ -49,7 +49,8 @@ export function readQuestionDrafts<T extends DraftValue>(
 }
 
 export function readQuestionDraftHead<T extends DraftValue>(
-  database: DatabaseSync, activityId: string, { stepAttemptId, slotId, questionId }: ChoiceDraftScope, schema: z.ZodType<T>,
+  database: DatabaseSync, activityId: string, { stepAttemptId, slotId, questionId }: Pick<ChoiceDraftScope, "stepAttemptId" | "slotId" | "questionId">,
+  schema: z.ZodType<T>,
 ) {
   const row = database.prepare(currentDrafts + "AND w.slot_id = ? AND w.question_id = ?")
     .get(activityId, stepAttemptId, slotId, questionId);

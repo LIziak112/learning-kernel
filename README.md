@@ -99,6 +99,20 @@ const activity = runtime.read(principal, receipt.activityId);
 
 `saveIndexResponseDraft` 保存索引原序与重复项。显式 `[]` 有草稿修订，无草稿为 `null`，两者均不计已答表现，并受 `allowUnanswered` 约束。`confirmIndexResponses` 保留一次正式回执，可信宿主经当前授权用 `recoverIndexResponseConfirmation` 执行或复读评估。学生本人草稿在 `indexResponseDrafts`，声明 `ownResponses` 后可在确认记录中读到自己的 `indexResponseConfirmation`。私有评分集合仅交给评估器。复用版本 16 的持久结构。可参看[独立宿主示例](tests/fixtures/index-response-confirmation-consumer.mts)。
 
+### 混合整卷与逐题交付
+
+单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString` 或 `optionIndexArray`。私有 `scoringKey.acceptedByQuestion` 固定同一题型和对应的选项 ID、布尔键或索引集合。声明的评估器标识和版本必须在实际使用的每种既有评估注册中存在；评估时只取得该确认中的题、原值和该题评分键。
+
+`saveQuestionDeliveryDraft` 使用原题版本、当前修订和操作标识保护草稿，保留字符串原样、布尔值及数组原序与重复项。传给 `confirmQuestionDelivery` 的请求附同一逻辑槽、操作标识、题版本、所见修订和原稿声明：
+
+- `delivery.mode: "whole"` 使用 `source: "whole"` 一次确认冻结全题。
+- `delivery.mode: "perQuestion"` 的 `questionSlots` 为每题固定互异的交付位置。`source: "question"` 只确认一题，其他题可继续保存，最后一题确认后完成活动。显式空交也有本题确认位置。
+- 逐题活动可用 `source: "finish"` 发出全题版本与修订清单。内核核对全部题版本，仅以未交题当前稿或空值组成收尾提交。先交题保留原作品、回执与判定。确认来源区分主动单题空交和收尾时的被动空值。保存的空数组保有草稿修订；无稿值为 `null`，空值不登记表现。
+
+活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和该次评分。未评任务可在首次获准恢复时执行，已有正式判定和待评状态可直接复读。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。私有评分键和恢复专用的请求清单留在可信服务端。
+
+新声明复用 SQLite v16。旧活动和原接口沿原口径，K17 新声明需以支持它的运行时解释。[独立宿主示例](tests/fixtures/question-delivery-consumer.mts)
+
 ### 材料版本与使用位置
 
 单步整卷单选可在发布时提供顶层 `materials`。每项 `from:"material"` 输入各自声明唯一的 `positionId` 和精确的 `material:{id,version}`。同一份材料可在多个位置使用。每个引用须对应同一次发布中提供的不可变定义，所有定义都须在当前练法使用。此项声明与旧版顶层及练法的单数 `material` 互斥。

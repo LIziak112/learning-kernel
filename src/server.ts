@@ -8,6 +8,8 @@ import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftIn
 import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
 import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
+import { questionDeliveryDraftInput, questionDeliveryInput } from "./contracts/question-delivery.ts";
+import type { QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
@@ -24,6 +26,8 @@ import { reviseChoiceSnapshot } from "./kernel/choice-snapshot.ts";
 import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
+import { confirmQuestionDelivery, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
+import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
 import { registerPublication } from "./kernel/publication.ts";
 import { confirmResponses, indexResponses, recoverResponseConfirmation, scalarResponses } from "./kernel/response-confirmation.ts";
 import { indexResponseDrafts, saveResponseDraft, scalarResponseDrafts } from "./kernel/response-drafts.ts";
@@ -54,6 +58,8 @@ export type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDr
 export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
 export type { ActivityBindingClaims, TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
+export type { QuestionDeliveryDraftInput, QuestionDeliveryInput };
+export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
 export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
@@ -80,13 +86,12 @@ function principalId(schema: z.ZodType<{ id: string }>, principal: unknown) {
 export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const settings = runtimeOptions.parse(options);
   const database = openDatabase(settings.databasePath);
+  const registered = { choice: settings.choiceEvaluators, scalar: settings.responseEvaluators, indexes: settings.indexResponseEvaluators };
   const evaluateScalarResponse = scalarResponseEvaluation(database, settings.responseEvaluators);
   const evaluateIndexResponse = indexResponseEvaluation(database, settings.indexResponseEvaluators);
   return {
     publish(input: PublicationInput) {
-      registerPublication(database, input, {
-        choice: settings.choiceEvaluators, scalar: settings.responseEvaluators, indexes: settings.indexResponseEvaluators,
-      });
+      registerPublication(database, input, registered);
     },
     start(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, principalId(studentPrincipal, principal), publishedStartInput.parse(input), clock);
@@ -163,6 +168,20 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     recoverIndexResponseConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
       return recoverResponseConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
         settings.authorizeConfirmationRecovery, indexResponses, evaluateIndexResponse);
+    },
+    saveQuestionDeliveryDraft(
+      principal: StudentPrincipal, activityId: string, input: QuestionDeliveryDraftInput, mode: CurrentChoiceDraftMode = "save",
+    ) {
+      return saveQuestionDeliveryDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        questionDeliveryDraftInput.parse(input), currentChoiceDraftMode.parse(mode), clock);
+    },
+    confirmQuestionDelivery(principal: StudentPrincipal, activityId: string, input: QuestionDeliveryInput) {
+      return confirmQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery);
+    },
+    recoverQuestionDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
+      return recoverQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        confirmationKey.parse(key), settings.authorizeConfirmationRecovery, registered);
     },
     close() {
       database.close();

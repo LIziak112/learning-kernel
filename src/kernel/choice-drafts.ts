@@ -7,6 +7,7 @@ import { recordChoiceDraftChange } from "./choice-draft-activity.ts";
 import { choiceRevisionBeforeAnswers } from "./choice-snapshot-store.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
+import { questionDeliverySlot } from "./question-delivery-publication.ts";
 import { boundOutput } from "./reading-progress.ts";
 import { saveWorkVersion } from "./work-versions.ts";
 import {
@@ -30,7 +31,9 @@ export function saveChoiceDraft(
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, student, activityId, input.stepAttemptId);
-    if (activity.step.submit.slots[input.slotId]?.type === "oneResponsePerQuestion") throw new LearningError(422, "INVALID_SLOT");
+    if (questionDeliverySlot(activity.step) || activity.step.submit.slots[input.slotId]?.type === "oneResponsePerQuestion") {
+      throw new LearningError(422, "INVALID_SLOT");
+    }
     if (input.operationId !== undefined) return draftReceipt(saveVersionedChoice(database, activity, input, clock));
     requireWritableChoice(requireDraftQuestion(activity, input), input.choice);
     return draftReceipt(saveUnversionedChoice(database, activityId, input, clock));

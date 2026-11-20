@@ -9,11 +9,18 @@ const storedAutomatic = z.strictObject({
 });
 
 export function assessmentTarget(database: DatabaseSync, activityId: string) {
+  return findAssessmentTarget(database, "submission_id = (SELECT submission_id FROM completions WHERE activity_id = ?)", activityId);
+}
+
+export function submissionAssessmentTarget(database: DatabaseSync, submissionId: string) {
+  return findAssessmentTarget(database, "submission_id = ?", submissionId);
+}
+
+function findAssessmentTarget(database: DatabaseSync, condition: string, id: string) {
   const target = database.prepare(`
-    SELECT t.submission_id AS submissionId, t.target_id AS targetId, t.status
-    FROM evaluation_tasks t JOIN completions c ON c.submission_id = t.submission_id
-    WHERE c.activity_id = ?
-  `).get(activityId);
+    SELECT submission_id AS submissionId, target_id AS targetId, status
+    FROM evaluation_tasks WHERE ${condition}
+  `).get(id);
   return target ? assessment.parse(target) : undefined;
 }
 

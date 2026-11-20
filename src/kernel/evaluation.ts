@@ -5,6 +5,7 @@ import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { readingPracticeSchema, scoringKeySchema } from "../contracts/reading-publication.ts";
 import { readingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
+import { questionDeliverySlot } from "./question-delivery-publication.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 
 const storedKey = z.object({ definition: z.string() });
@@ -22,10 +23,10 @@ export function queueEvaluation(
   database: DatabaseSync,
   activity: ReadingActivity,
   receipt: SubmissionReceipt,
-  targetId: string,
+  targetId: string, assessmentSlotId = receipt.slotId,
 ) {
   const { assessment } = activity.practice.grading;
-  if (!assessment || assessment.from.stepId !== activity.step.id || assessment.from.slotId !== receipt.slotId) return;
+  if (!assessment || assessment.from.stepId !== activity.step.id || assessment.from.slotId !== assessmentSlotId) return;
   database.prepare(`
     INSERT INTO evaluation_tasks (submission_id, key_id, key_version, target_id, status)
     VALUES (?, ?, ?, ?, 'pending')
@@ -65,7 +66,11 @@ function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, check
 function usesHostEvaluation(practice: z.infer<typeof readingPracticeSchema>, { stepId, slotId }: z.infer<typeof task>) {
   const step = practice.steps.find(step => step.id === stepId);
   const slot = step?.submit.slots[slotId];
-  return slot?.type === "oneResponsePerQuestion" || (slot?.type === "oneChoicePerQuestion" && slot.confirmFromDrafts !== undefined);
+  switch (slot?.type) {
+    case "oneResponsePerQuestion": return true;
+    case "oneChoicePerQuestion": return slot.confirmFromDrafts !== undefined;
+    default: return Boolean(step && questionDeliverySlot(step));
+  }
 }
 
 export function loadEvaluationKey(database: DatabaseSync, submissionId: string): unknown {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { orderedQuestionValues, questionDeliveryFormat, questionDeliveryMode, questionDeliveryScoringKey } from "./question-delivery.ts";
 import { id, materialSchema, versionRef } from "./reading.ts";
 import { optionIndex, responseFormat } from "./response.ts";
 
@@ -24,6 +25,11 @@ const slot = z.discriminatedUnion("type", [
   }),
   newEvidence.extend({
     type: z.literal("oneResponsePerQuestion"), input: responseFormat,
+    confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }),
+  }),
+  newEvidence.extend({
+    type: z.literal("questionDelivery"),
+    delivery: questionDeliveryMode,
     confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }),
   }),
   z.strictObject({ type: z.literal("reuse"), source: id }),
@@ -84,6 +90,7 @@ const policy = z.strictObject({
 
 export const readingQuestion = z.strictObject({
   id, version: versionRef.shape.version.optional(), prompt: nonempty, options: descriptions,
+  response: questionDeliveryFormat.optional(),
 });
 
 export const readingPracticeSchema = versionRef.extend({
@@ -106,26 +113,22 @@ export const readingPracticeSchema = versionRef.extend({
   policy,
 });
 
-function orderQuestionValues<T>(values: Record<string, T>) {
-  return Object.fromEntries(Object.entries(values).sort(([left], [right]) => left === right ? 0 : left < right ? -1 : 1));
-}
-
 export const scoringKeySchema = versionRef.extend({
-  acceptedChoices: z.record(id, id).transform(orderQuestionValues),
+  acceptedChoices: z.record(id, id).transform(orderedQuestionValues),
 });
 
 export const responseScoringKeySchema = versionRef.extend({
-  acceptedResponses: z.record(id, z.boolean()).transform(orderQuestionValues),
+  acceptedResponses: z.record(id, z.boolean()).transform(orderedQuestionValues),
 });
 export const indexResponseScoringKeySchema = versionRef.extend({
-  acceptedIndexes: z.record(id, z.array(optionIndex).min(1)).transform(orderQuestionValues),
+  acceptedIndexes: z.record(id, z.array(optionIndex).min(1)).transform(orderedQuestionValues),
 });
 
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema.optional(),
   materials: z.array(materialSchema).min(1).optional(),
   practice: readingPracticeSchema,
-  scoringKey: z.union([scoringKeySchema, responseScoringKeySchema, indexResponseScoringKeySchema]).optional(),
+  scoringKey: z.union([scoringKeySchema, responseScoringKeySchema, indexResponseScoringKeySchema, questionDeliveryScoringKey]).optional(),
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

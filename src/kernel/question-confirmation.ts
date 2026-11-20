@@ -3,6 +3,7 @@ import type {
   AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
   ConfirmationScope, VerifyOriginal,
 } from "../contracts/choice-confirmation.ts";
+import type { QuestionDelivery } from "../contracts/question-delivery.ts";
 import { hasStoredResponse, sameStoredResponse } from "../contracts/response.ts";
 import type { IndexResponseConfirmation, ResponseConfirmation, StoredResponseValue } from "../contracts/response.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
@@ -48,23 +49,32 @@ export function mapConfirmationQuestions<T>(
 
 export function writeQuestionConfirmation(
   database: DatabaseSync, activity: ReadingActivity, studentId: string, input: ChoiceConfirmationInput, targetId: string,
-  content: ChoiceConfirmation | ResponseConfirmation | IndexResponseConfirmation, now: Date, verify?: VerifyOriginal,
+  content: ChoiceConfirmation | ResponseConfirmation | IndexResponseConfirmation | QuestionDelivery, now: Date, verify?: VerifyOriginal,
+  { slotId = input.slotId, finishes = true }: { slotId?: string; finishes?: boolean } = {},
 ) {
   const { activityId } = activity;
-  const { stepAttemptId, slotId, operationId } = input;
-  for (const { questionId, questionVersion, original } of content.questions) {
+  const write = { ...input, slotId };
+  const { stepAttemptId } = write;
+  verifyQuestionOriginals(studentId, activityId, write, content.questions, verify);
+  const draft = saveWorkVersion(database, workScope(activityId, stepAttemptId, slotId), content);
+  const observations = content.questions.flatMap(question => hasStoredResponse("choice" in question ? question.choice : question.value)
+    ? [{ targetId, unitId: `question:${question.questionId}` }] : []);
+  const receipt = recordSubmission(database, { ...write, draft }, observations, now);
+  queueEvaluation(database, activity, receipt, targetId, input.slotId);
+  if (finishes) finishActivity(database, activityId, receipt.id);
+  return receipt;
+}
+
+function verifyQuestionOriginals(
+  studentId: string, activityId: string, { stepAttemptId, slotId, operationId }: Pick<ChoiceConfirmationInput, "stepAttemptId" | "slotId" | "operationId">,
+  questions: readonly QuestionRevision[], verify?: VerifyOriginal,
+) {
+  for (const { questionId, questionVersion, original } of questions) {
     if (!verify && original.state === "uncollected") continue;
     if (verify?.({ studentId, activityId, stepAttemptId, slotId, operationId, questionId, questionVersion, original: { ...original } }) !== true) {
       throw new LearningError(409, "ORIGINAL_NOT_VERIFIED");
     }
   }
-  const draft = saveWorkVersion(database, workScope(activityId, stepAttemptId, slotId), content);
-  const observations = content.questions.flatMap(question => hasStoredResponse("choice" in question ? question.choice : question.value)
-    ? [{ targetId, unitId: `question:${question.questionId}` }] : []);
-  const receipt = recordSubmission(database, { ...input, draft }, observations, now);
-  queueEvaluation(database, activity, receipt, targetId);
-  finishActivity(database, activityId, receipt.id);
-  return receipt;
 }
 
 export function confirmedWorkForOperation(database: DatabaseSync, activityId: string, input: ConfirmationKey) {
@@ -75,13 +85,17 @@ export function confirmedWorkForOperation(database: DatabaseSync, activityId: st
 }
 
 export function replayQuestionConfirmation(receipt: SubmissionReceipt, intent: QuestionRevision[] | undefined, input: ChoiceConfirmationInput) {
-  if (receipt.slotId !== input.slotId || !intent || questionIntent(intent) !== questionIntent(input.questions)) {
+  if (receipt.slotId !== input.slotId || !intent || !sameQuestionIntent(intent, input.questions)) {
     throw new LearningError(409, "OPERATION_CONFLICT");
   }
   return receipt;
 }
 
-function questionIntent(questions: ChoiceConfirmationInput["questions"]) {
+export function sameQuestionIntent(left: QuestionRevision[], right: QuestionRevision[]) {
+  return questionIntent(left) === questionIntent(right);
+}
+
+function questionIntent(questions: QuestionRevision[]) {
   return JSON.stringify(questions.toSorted((a, b) => a.questionId === b.questionId ? 0 : a.questionId < b.questionId ? -1 : 1));
 }
 

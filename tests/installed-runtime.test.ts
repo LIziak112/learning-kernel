@@ -154,6 +154,20 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         for (const phase of ["write", "recover", "read-stored"]) {
           execFileSync(process.execPath, [indexes, phase], { cwd: directory, stdio: "inherit" });
         }
+        const delivery = "question-delivery-consumer.mts";
+        cpSync(new URL("./fixtures/question-delivery-consumer.mts", import.meta.url), join(directory, delivery));
+        inputs.push(delivery);
+        execFileSync(process.execPath, [delivery, "write"], { cwd: directory, stdio: "inherit" });
+        const [question, finish] = await Promise.all([
+          run(process.execPath, [delivery, "race-question"], { cwd: directory }),
+          run(process.execPath, [delivery, "race-finish"], { cwd: directory }),
+        ]);
+        const status = question.stdout.trim();
+        assert.ok(status === "confirmed" || status === "closed");
+        assert.equal(finish.stdout.trim(), "finished");
+        for (const phase of ["recover", "read-stored"]) {
+          execFileSync(process.execPath, [delivery, phase, status], { cwd: directory, stdio: "inherit" });
+        }
         const materialPositions = "material-positions-consumer.mts";
         cpSync(new URL("./fixtures/material-positions-consumer.mts", import.meta.url), join(directory, materialPositions));
         inputs.push(materialPositions);
