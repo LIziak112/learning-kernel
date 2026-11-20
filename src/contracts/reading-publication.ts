@@ -5,7 +5,7 @@ const nonempty = z.string().min(1);
 const descriptions = z.record(id, nonempty).refine(value => Object.keys(value).length > 0);
 const slotReference = z.strictObject({ stepId: id, slotId: id });
 const input = z.discriminatedUnion("from", [
-  z.strictObject({ from: z.literal("material"), positionId: id }),
+  z.strictObject({ from: z.literal("material"), positionId: id, material: versionRef.optional() }),
   z.strictObject({ from: z.literal("questions") }),
   slotReference.extend({ from: z.literal("submission"), readOnly: z.literal(true) }),
 ]);
@@ -119,6 +119,7 @@ export const responseScoringKeySchema = versionRef.extend({
 
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema.optional(),
+  materials: z.array(materialSchema).min(1).optional(),
   practice: readingPracticeSchema,
   scoringKey: z.union([scoringKeySchema, responseScoringKeySchema]).optional(),
 });

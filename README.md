@@ -93,6 +93,12 @@ const activity = runtime.read(principal, receipt.activityId);
 
 版本 16 为该模式增加独立待评记录。旧版 15 升级保留既有作品、回执和布尔判定，升级后的数据库需由支持版本 16 的运行时打开。
 
+### 材料版本与使用位置
+
+单步整卷单选可在发布时提供顶层 `materials`。每项 `from:"material"` 输入各自声明唯一的 `positionId` 和精确的 `material:{id,version}`。同一份材料可在多个位置使用。每个引用须对应同一次发布中提供的不可变定义，所有定义都须在当前练法使用。此项声明与旧版顶层及练法的单数 `material` 互斥。
+
+活动固定公开版本和该版本的材料引用。只换一份材料时，发布该材料的新版本并更新对应位置，再发布练法的新版本。恢复旧活动仍使用原位置和原材料版本。 `read` 在当前步骤 `inputs` 的相应材料输入下返回 `positionId` 和 `material`。旧单材料练法继续在活动顶层返回 `material`，无材料练法照常工作。资料展示布局与附加附件留宿主处理。可参看[独立宿主示例](tests/fixtures/material-positions-consumer.mts)。
+
 ## 浏览器演示
 
 安装依赖后运行 `pnpm run dev`。学生和教师使用不同的浏览器配置，例如普通窗口与无痕窗口，以便同时保留两种会话。

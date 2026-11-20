@@ -148,6 +148,15 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         for (const phase of ["write", "recover", "read-stored"]) {
           execFileSync(process.execPath, [responses, phase], { cwd: directory, stdio: "inherit" });
         }
+        const materialPositions = "material-positions-consumer.mts";
+        cpSync(new URL("./fixtures/material-positions-consumer.mts", import.meta.url), join(directory, materialPositions));
+        inputs.push(materialPositions);
+        execFileSync(process.execPath, [materialPositions, "write"], { cwd: directory, stdio: "inherit" });
+        const materialReopens = await Promise.allSettled([0, 1].map(() =>
+          run(process.execPath, [materialPositions, "recover"], { cwd: directory })));
+        for (const reopened of materialReopens) {
+          if (reopened.status === "rejected") throw reopened.reason;
+        }
         const timing = "choice-draft-activity-consumer.mts";
         cpSync(new URL("./fixtures/choice-draft-activity-consumer.mts", import.meta.url), join(directory, timing));
         inputs.push(timing);

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
 import type { ResponseEvaluatorRegistration } from "../contracts/response-evaluation.ts";
 import { publicationSchema } from "../contracts/reading.ts";
-import type { VersionRef } from "../contracts/reading.ts";
+import type { Material, VersionRef } from "../contracts/reading.ts";
 import { readingPublicationSchema } from "../contracts/reading-publication.ts";
 import { writeTransaction } from "./database.ts";
 import { validateBindings } from "./publication-bindings.ts";
@@ -23,20 +23,13 @@ export function registerPublication(
   responses: readonly ResponseEvaluatorRegistration[] = [],
 ) {
   const { practice: format } = publicationFormat.parse(input);
-  const { material, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
+  const { material, materials, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
     ? parseReadingPublication(input, registered, responses)
-    : { ...publicationSchema.parse(input), scoringKey: undefined };
+    : { ...publicationSchema.parse(input), materials: undefined, scoringKey: undefined };
   requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);
   writeTransaction(database, () => {
-    if (material) {
-      const definition = JSON.stringify(material);
-      database.prepare(`
-        INSERT INTO materials (id, version, definition) VALUES (?, ?, ?)
-        ON CONFLICT (id, version) DO NOTHING
-      `).run(material.id, material.version, definition);
-      requireUnchanged(database, "materials", material, definition);
-    }
+    registerMaterials(database, material, materials);
     database.prepare(`
       INSERT INTO practices (id, version, material_id, material_version, definition) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT (id, version) DO NOTHING
@@ -51,6 +44,18 @@ export function registerPublication(
       requireUnchanged(database, "scoring_keys", scoringKey, definition);
     }
   });
+}
+
+function registerMaterials(database: DatabaseSync, single: Material | undefined, multiple: readonly Material[] | undefined) {
+  const materials = multiple ?? (single ? [single] : []);
+  for (const material of materials) {
+    const definition = JSON.stringify(material);
+    database.prepare(`
+      INSERT INTO materials (id, version, definition) VALUES (?, ?, ?)
+      ON CONFLICT (id, version) DO NOTHING
+    `).run(material.id, material.version, definition);
+    requireUnchanged(database, "materials", material, definition);
+  }
 }
 
 function requireMatchingMaterial(reference: VersionRef | undefined, material: VersionRef | undefined) {

@@ -6,13 +6,14 @@ import { readResponseConfirmation } from "../contracts/response.ts";
 import type { ResponseConfirmation } from "../contracts/response.ts";
 import { studentTool } from "../builtins/reading-capabilities.ts";
 import { selectedText } from "../builtins/selection.ts";
-import type { ActivityDetail, SubmitInput } from "../contracts/reading.ts";
+import type { ActivityDetail, Material, SubmitInput } from "../contracts/reading.ts";
 import type { ReadingStep } from "../contracts/reading-publication.ts";
 import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingAnswer, ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
+import { loadMaterialAtVersion } from "./material-positions.ts";
 import { answerObservations, findSource, verifyAnswerReferences } from "./reading-answers.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 import { studentResults } from "./student-results.ts";
@@ -152,7 +153,7 @@ export function readingActivityView(database: DatabaseSync, activity: ReadingAct
     title: practice.title,
     step: { id: step.id, instructions: step.instructions, tool: step.tool, submit: step.submit },
     status,
-    inputs: readingInputs(activity, submissions),
+    inputs: readingInputs(database, activity, submissions),
     submission: submitted ? studentSubmissionView(activity, submitted) : undefined,
     ...studentResults(database, activity),
   };
@@ -167,15 +168,19 @@ type StudentSubmissionView = {
 };
 
 type ReadingInputView =
-  | { from: "material"; positionId: string }
+  | { from: "material"; positionId: string; material?: Material }
   | { from: "questions"; questions: ReadingActivity["practice"]["questions"] }
   | ({ from: "submission" } & StudentSubmissionView);
 
-function readingInputs(activity: ReadingActivity, submissions: StoredSubmission[]) {
+function readingInputs(database: DatabaseSync, activity: ReadingActivity, submissions: StoredSubmission[]) {
   const { completed, practice, step } = activity;
   return Object.fromEntries(Object.entries(step.inputs).flatMap<[string, ReadingInputView]>(([name, input]) => {
     switch (input.from) {
-      case "material": return [[name, { from: input.from, positionId: input.positionId }]];
+      case "material": {
+        const { from, positionId, material } = input;
+        const binding = material ? { material: loadMaterialAtVersion(database, material) } : {};
+        return [[name, { from, positionId, ...binding }]];
+      }
       case "questions": return [[name, { from: input.from, questions: practice.questions }]];
       case "submission": {
         const submitted = findSource(submissions, input);

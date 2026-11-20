@@ -6,13 +6,15 @@ import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
 import type { ResponseEvaluatorRegistration } from "../contracts/response-evaluation.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
+import { validateMaterialPositions } from "./material-positions.ts";
 
 type Issue = (path: (string | number)[], message: string) => void;
 
 export function validateBindings(
-  { practice, scoringKey }: ReadingPublication, issue: Issue, registered: readonly ChoiceEvaluatorRegistration[],
+  publication: ReadingPublication, issue: Issue, registered: readonly ChoiceEvaluatorRegistration[],
   responses: readonly ResponseEvaluatorRegistration[] = [],
 ) {
+  const { practice, scoringKey } = publication;
   const earlierSteps = new Map<string, ReadingStep>();
   const positions = new Set<string>();
   for (const [index, step] of practice.steps.entries()) {
@@ -27,7 +29,7 @@ export function validateBindings(
     validateDraftConfirmation(step, practice, report);
     earlierSteps.set(step.id, step);
   }
-  if (positions.size > 0 && !practice.material) issue(["practice", "material"], "绑定材料输入时须声明材料版本");
+  validateMaterialPositions(publication, issue);
   validateGrading(practice.grading, earlierSteps, registered, responses, issue);
   const response = practice.steps.some(step => Object.values(step.submit.slots).some(slot => slot.type === "oneResponsePerQuestion"));
   validateResponsePolicy(practice, response, issue);
