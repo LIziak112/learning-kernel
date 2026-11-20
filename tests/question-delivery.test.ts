@@ -1233,6 +1233,14 @@ test("切换失败回滚草稿和回执，成功往返拒绝陈旧步骤并跨�
       assert.throws(() => replace({ ...forward, expectedPracticeVersion: 2 }), { status: 409, code: "ACTIVITY_VERSION_CONFLICT" });
 
       using inject = new DatabaseSync(databasePath);
+      const draftRows = inject.prepare("SELECT id, step_attempt_id, slot_id FROM works WHERE activity_id = ? ORDER BY id");
+      const move = inject.prepare("UPDATE works SET slot_id = ? WHERE step_attempt_id = ? AND question_id = ?");
+      move.run("misplaced", activity.stepAttemptId, judgeQuestion.id);
+      const misplaced = draftRows.all(activity.activityId);
+      assert.throws(() => replace(forward), { status: 409, code: "QUESTION_DELIVERY_MODE_CONFLICT" });
+      assert.deepEqual(draftRows.all(activity.activityId), misplaced);
+      assert.deepEqual(deliveredView(runtime, activity), before);
+      move.run("answers", activity.stepAttemptId, judgeQuestion.id);
       inject.exec(`CREATE TRIGGER deny_mode_receipt BEFORE INSERT ON prepared_activity_version_changes
         BEGIN SELECT RAISE(ABORT, 'mode receipt unavailable'); END`);
       assert.throws(() => replace(forward), /mode receipt unavailable/);
