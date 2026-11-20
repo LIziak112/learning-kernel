@@ -9,18 +9,61 @@ import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
 import { indexResponseValue, orderedTextResponseValue, responseValue, titledTextResponseValue } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { loadEvaluationKey } from "./evaluation.ts";
+import { loadEvaluationKey, queueEvaluation, registerTeacherReviewTarget } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import type { PublicationEvaluators } from "./publication-bindings.ts";
-import { readResponseReviewRequirements, recoverEvaluatedResponses } from "./response-evaluation.ts";
+import { readResponseReviewRequirements, recordResponseReviewRequirements, recoverEvaluatedResponses } from "./response-evaluation.ts";
 import type { EvaluationQuestion } from "./response-evaluation.ts";
 import { submissionAssessmentTarget } from "./verdict-state.ts";
 
-export function recoverQuestionDeliveryEvaluation(
-  database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt, delivery: QuestionDelivery, registered: PublicationEvaluators,
+export function confirmedDeliveryAssessment(
+  { practice: { grading: { assessment, manualReview, teacherReview } } }: ReadingActivity, { questions }: QuestionDelivery,
+) {
+  const teacherIds = new Set(teacherReview?.questionIds);
+  const review = manualReview ? questions : questions.filter(({ questionId }) => teacherIds.has(questionId));
+  const automatic = assessment ? questions.filter(({ questionId }) => !teacherIds.has(questionId)) : [];
+  return { automatic, review };
+}
+
+export function registerDeliveryAssessment(
+  database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt, content: QuestionDelivery, targetId: string,
+) {
+  const { automatic, review } = confirmedDeliveryAssessment(activity, content);
+  if (automatic.length || activity.practice.grading.manualReview) {
+    queueEvaluation(database, activity, receipt, targetId, content.slotId);
+  } else if (review.length) {
+    registerTeacherReviewTarget(database, receipt.id, targetId);
+  }
+  if (review.length) recordResponseReviewRequirements(database, receipt.id, review.map(({ questionId }) => questionId));
+}
+
+export function recoverQuestionDeliveryAssessment(
+  database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt, content: QuestionDelivery,
+  registered: PublicationEvaluators, mode: "automatic" | "declared",
+) {
+  const { automatic, review } = confirmedDeliveryAssessment(activity, content);
+  if (automatic.length) {
+    const evaluation = recoverQuestionDeliveryEvaluation(database, activity, receipt, automatic, registered);
+    const questions = mode === "declared" && review.length > 0
+      ? readManualReviewQuestions(database, receipt, review, true)
+      : undefined;
+    return { assessment: "automatic" as const, evaluation, ...questions && { review: { questions } } };
+  }
+  if (mode === "automatic") throw new LearningError(409, "ASSESSMENT_MODE_MISMATCH");
+  if (review.length) {
+    const questions = readManualReviewQuestions(database, receipt, review);
+    if (activity.practice.grading.manualReview) return { assessment: "manual" as const, review: { questions } };
+    return { assessment: "teacherReview" as const, review: { questions } };
+  }
+  return { assessment: "none" as const };
+}
+
+function recoverQuestionDeliveryEvaluation(
+  database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt,
+  questions: QuestionDelivery["questions"], registered: PublicationEvaluators,
 ) {
   const target = submissionAssessmentTarget(database, receipt.id);
-  return recoverEvaluatedResponses(database, activity, receipt, delivery.questions, (reference, key, context) => {
+  return recoverEvaluatedResponses(database, activity, receipt, questions, (reference, key, context) => {
     const { acceptedByQuestion } = questionDeliveryScoringKey.parse(key);
     return question => {
       const basis = Object.hasOwn(acceptedByQuestion, question.questionId) ? acceptedByQuestion[question.questionId] : undefined;
@@ -31,12 +74,14 @@ export function recoverQuestionDeliveryEvaluation(
   }, target);
 }
 
-export function readManualReviewQuestions(database: DatabaseSync, receipt: SubmissionReceipt, delivery: QuestionDelivery) {
+export function readManualReviewQuestions(
+  database: DatabaseSync, receipt: SubmissionReceipt, questions: QuestionDelivery["questions"], mixed = false,
+) {
   const required = new Set(readResponseReviewRequirements(database, receipt.id));
-  if (required.size !== delivery.questions.length || delivery.questions.some(({ questionId }) => !required.has(questionId))) {
+  if ((!mixed && required.size !== questions.length) || questions.some(({ questionId }) => !required.has(questionId))) {
     throw new Error("人工待评位置与冻结提交不一致");
   }
-  return delivery.questions.map(({ questionId, questionVersion }) => ({ questionId, questionVersion, status: "needsReview" as const }));
+  return questions.map(({ questionId, questionVersion }) => ({ questionId, questionVersion, status: "needsReview" as const }));
 }
 
 export function readManualReviewBasis(database: DatabaseSync, receipt: SubmissionReceipt, reference: VersionRef) {

@@ -374,7 +374,7 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
     assert.equal(restored.evaluation?.questions[0]?.correct, true);
     assert.throws(() => upgraded.recoverResponseConfirmation(student, open.activityId, key), { status: 404, code: "CONFIRMATION_NOT_FOUND" });
     using database = new DatabaseSync(databasePath);
-    assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version, 16);
+    assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version, 17);
     assert.equal(database.prepare("PRAGMA foreign_key_check").get(), undefined);
   } finally {
     upgraded.close();

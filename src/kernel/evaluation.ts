@@ -35,6 +35,12 @@ export function queueEvaluation(
   `).run(receipt.id, keyRef.id, keyRef.version, targetId);
 }
 
+export function registerTeacherReviewTarget(database: DatabaseSync, submissionId: string, targetId: string) {
+  database.prepare(`
+    INSERT INTO evaluation_tasks (submission_id, target_id, status) VALUES (?, ?, 'done')
+  `).run(submissionId, targetId);
+}
+
 export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeCheckpoint) {
   const pending = database.prepare(`
     SELECT t.submission_id AS submissionId, t.target_id AS targetId, a.step_id AS stepId, s.slot_id AS slotId, k.definition AS keyJSON,

@@ -32,3 +32,20 @@ export const evaluationMigration = `
     selection_feedback TEXT
   ) STRICT;
 `;
+
+export const teacherReviewTargetMigration = `
+  CREATE TABLE assessment_targets_replacement (
+    submission_id TEXT PRIMARY KEY REFERENCES submissions (id),
+    key_id TEXT,
+    key_version INTEGER,
+    target_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'done')),
+    CHECK ((key_id IS NULL) = (key_version IS NULL)),
+    CHECK (key_id IS NOT NULL OR status = 'done'),
+    FOREIGN KEY (key_id, key_version) REFERENCES scoring_keys (id, version)
+  ) STRICT;
+  INSERT INTO assessment_targets_replacement (submission_id, key_id, key_version, target_id, status)
+    SELECT submission_id, key_id, key_version, target_id, status FROM evaluation_tasks;
+  DROP TABLE evaluation_tasks;
+  ALTER TABLE assessment_targets_replacement RENAME TO evaluation_tasks;
+`;

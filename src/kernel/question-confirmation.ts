@@ -63,7 +63,7 @@ export function writeQuestionConfirmation(
     : hasStoredResponse("choice" in question ? question.choice : question.value)
   ).map(({ questionId }) => ({ targetId, unitId: `question:${questionId}` }));
   const receipt = recordSubmission(database, { ...write, draft }, observations, now);
-  queueEvaluation(database, activity, receipt, targetId, input.slotId);
+  if (content.kind !== "questionDelivery") queueEvaluation(database, activity, receipt, targetId, input.slotId);
   if (finishes) finishActivity(database, activityId, receipt.id);
   return receipt;
 }

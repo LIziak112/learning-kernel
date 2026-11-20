@@ -23,33 +23,54 @@ export function validateQuestionDeliveryPublication(
     if (practice.questionAnswerRules !== undefined) {
       issue(["practice", "questionAnswerRules"], "题目已答规则须绑定逐题交付槽");
     }
+    if (practice.grading.teacherReview) {
+      issue(["practice", "grading", "teacherReview"], "教师评阅须绑定题组交付槽");
+    }
     rejectUnboundQuestionFormats(practice.questions, issue);
     return false;
   }
   const { step, slotId } = delivery;
   const ids = new Set(practice.questions.map(question => question.id));
   validateDeliveryLocations(delivery, practice.steps.length, ids, issue);
-  const formats = validateQuestionFormats(practice.questions, issue);
+  validateQuestionFormats(practice.questions, issue);
   validateAnswerRuleBindings(practice, answerRules, issue);
-  validateDeliveryGrading(publication, { stepId: step.id, slotId }, formats, ids, registered, issue);
+  validateDeliveryGrading(publication, { stepId: step.id, slotId }, ids, registered, issue);
   return true;
 }
 
 function validateDeliveryGrading(
-  { practice, scoringKey }: ReadingPublication, output: Assessment["from"], formats: ReadonlySet<QuestionDeliveryFormat>,
+  { practice, scoringKey }: ReadingPublication, output: Assessment["from"],
   ids: ReadonlySet<string>, registered: PublicationEvaluators, issue: Issue,
 ) {
-  const { assessment, manualReview } = practice.grading;
+  const { assessment, manualReview, teacherReview } = practice.grading;
+  const teacherIds = new Set(teacherReview?.questionIds);
+  validateTeacherReviewQuestions(teacherIds, ids, issue);
   if (manualReview) {
     if (assessment) issue(["practice", "grading", "manualReview"], "同一次题组交付只声明一种评估方式");
+    if (teacherReview) issue(["practice", "grading", "teacherReview"], "教师评阅与整组人工评阅不能同时声明");
     validateManualReviewBasis(scoringKey, manualReview.keyRef, issue);
   } else if (assessment) {
-    validateDeliveryAssessment(assessment, output, formats, registered, issue);
-    if (validateDeliveryKey(scoringKey, assessment.keyRef, issue)) {
-      validateQuestionKeys(practice.questions, scoringKey.acceptedByQuestion, ids, issue);
-    }
+    validateAutomaticQuestions(practice.questions.filter(({ id }) => !teacherIds.has(id)), scoringKey, assessment, output, ids, registered, issue);
   } else if (scoringKey) {
     issue(["practice", "grading", "assessment"], "冻结的评分依据须有对应的评估声明");
+  }
+}
+
+function validateTeacherReviewQuestions(teacherIds: ReadonlySet<string>, ids: ReadonlySet<string>, issue: Issue) {
+  for (const id of teacherIds) {
+    if (!ids.has(id)) issue(["practice", "grading", "teacherReview", "questionIds"], "教师评阅须绑定已发布的题");
+  }
+}
+
+function validateAutomaticQuestions(
+  questions: readonly Question[], scoringKey: ReadingPublication["scoringKey"], assessment: Assessment, output: Assessment["from"],
+  ids: ReadonlySet<string>, registered: PublicationEvaluators, issue: Issue,
+) {
+  if (!questions.length) issue(["practice", "grading", "assessment"], "自动评估须绑定至少一道题");
+  const formats = new Set(questions.map(question => question.response).filter(format => format !== undefined));
+  validateDeliveryAssessment(assessment, output, formats, registered, issue);
+  if (validateDeliveryKey(scoringKey, assessment.keyRef, issue)) {
+    validateQuestionKeys(questions, scoringKey.acceptedByQuestion, ids, issue);
   }
 }
 
@@ -112,7 +133,6 @@ function validateDeliveryKey(key: ReadingPublication["scoringKey"], reference: V
 }
 
 function validateQuestionFormats(questions: readonly Question[], issue: Issue) {
-  const formats = new Set<QuestionDeliveryFormat>();
   for (const [index, { version, response, options }] of questions.entries()) {
     if (version === undefined) issue(["practice", "questions", index, "version"], "逐题交付须固定题版");
     if (!response) {
@@ -122,9 +142,7 @@ function validateQuestionFormats(questions: readonly Question[], issue: Issue) {
     if (response === "optionIndexArray" && Object.keys(options).some((id, index) => id !== String(index))) {
       issue(["practice", "questions", index, "options"], "索引题须冻结从零连续编号的选项");
     }
-    formats.add(response);
   }
-  return formats;
 }
 
 function validateQuestionSlots(slots: Readonly<Record<string, string>>, logicalSlot: string, ids: ReadonlySet<string>, issue: Issue) {
@@ -168,8 +186,10 @@ function validateQuestionKeys(questions: readonly Question[], keys: Readonly<Rec
       issue(pathFor(question.id), "私有键须匹配本题的冻结形态、选项或空位");
     }
   }
+  const automaticIds = new Set(questions.map(question => question.id));
   for (const id of Object.keys(keys)) {
     if (!ids.has(id)) issue(pathFor(id), "私有键引用了不存在的题");
+    else if (!automaticIds.has(id)) issue(pathFor(id), "教师评阅题不得提供自动评分键");
   }
 }
 

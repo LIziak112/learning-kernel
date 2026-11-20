@@ -18,10 +18,9 @@ import {
 import {
   deliveryDraftHead, QuestionDeliveryConflict, questionDeliveryPosition, requireFrozenQuestion, requireQuestionDeliverySlot,
 } from "./question-delivery-drafts.ts";
-import { readManualReviewQuestions, recoverQuestionDeliveryEvaluation } from "./question-delivery-evaluation.ts";
+import { recoverQuestionDeliveryAssessment, registerDeliveryAssessment } from "./question-delivery-evaluation.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
 import { requireBeforeDeadline } from "./reading-progress.ts";
-import { recordResponseReviewRequirements } from "./response-evaluation.ts";
 import { submittedSlots } from "./submission-store.ts";
 
 type RequestQuestion = QuestionDeliveryInput["questions"][number];
@@ -53,9 +52,7 @@ export function confirmQuestionDelivery(
     const submitted = input.source === "finish" ? { ...content, source: input.source, requestQuestions } : { ...content, source: input.source };
     const receipt = writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, submitted, now, verifyOriginal,
       { ...placement, answeredQuestionIds });
-    if (activity.practice.grading.manualReview) {
-      recordResponseReviewRequirements(database, receipt.id, questions.map(({ questionId }) => questionId));
-    }
+    registerDeliveryAssessment(database, activity, receipt, submitted, slot.targetId);
     return receipt;
   });
 }
@@ -123,16 +120,6 @@ export function recoverQuestionDelivery(
       receipt, practice: { id, version }, confirmation: questionDeliveryView(content), requestQuestions: questionDeliveryIntent(content),
       draftChangeCounts,
     };
-    const { assessment, manualReview } = activity.practice.grading;
-    if (assessment) {
-      const evaluation = recoverQuestionDeliveryEvaluation(database, activity, receipt, content, registered);
-      return { ...confirmation, assessment: "automatic" as const, evaluation };
-    }
-    if (mode === "automatic") throw new LearningError(409, "ASSESSMENT_MODE_MISMATCH");
-    if (manualReview) {
-      const questions = readManualReviewQuestions(database, receipt, content);
-      return { ...confirmation, assessment: "manual" as const, review: { questions } };
-    }
-    return { ...confirmation, assessment: "none" as const };
+    return { ...confirmation, ...recoverQuestionDeliveryAssessment(database, activity, receipt, content, registered, mode) };
   });
 }

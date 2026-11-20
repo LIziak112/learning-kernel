@@ -560,3 +560,246 @@ test("题组教师改判｜写入失败可重试，迟到初判不覆盖教师�
       effective: { source: "automatic", correct: true }, automatic: { correct: true, valid: true } });
   } finally { runtime.close(); }
 });
+
+const ordering = { id: "ordering", version: 5, prompt: "排列甲、乙，并提交原顺序。", response: "orderedTextBlanks", blankCount: 2 } as const;
+const teacherReview = { questionIds: [ordering.id] };
+const judgeKey = { ...keyRef, acceptedByQuestion: { [judge.id]: { response: judge.response, acceptedResponse: true } } };
+
+test("按题教师评阅｜混合回执只调用有私钥的评估器，无参考原答可先判后撤", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("declared-mixed-review");
+  let canReview = true;
+  let failEvaluation = true;
+  const received: unknown[] = [];
+  const runtime = openLearningRuntime({
+    databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id,
+    authorizeQuestionDeliveryVerdict: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id
+      && scope.questionVersion === ordering.version && scope.slotId === slotId,
+    responseEvaluators: [{ ...evaluator, evaluate: input => {
+      received.push(input);
+      if (failEvaluation) throw new Error("temporary evaluation failure");
+      return { status: "judged", correct: input.value === input.acceptedResponse };
+    } }],
+  });
+  try {
+    runtime.publish({ ...base, practice: { ...base.practice, questions: [judge, ordering], grading: { ...automatic, teacherReview } },
+      scoringKey: judgeKey });
+    const activity = start(runtime, base.practice.id);
+    const answer = save(runtime, activity, judge, true);
+    const blank = save(runtime, activity, ordering, []);
+    const input = confirmation(activity, [revision(ordering, blank.revision), revision(judge, answer.revision)]);
+    const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    const key = recoveryKey(input);
+    const read = () => runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
+    const submit = (command: Parameters<typeof runtime.writeQuestionDeliveryVerdict>[3]) =>
+      runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command);
+    const automaticPosition = { questionId: judge.id, questionVersion: judge.version, revision: 0 };
+    const manualPosition = { questionId: ordering.id, questionVersion: ordering.version };
+    const registered = [{ ...manualPosition, status: "needsReview" }];
+    assert.deepEqual(read().questions, [{ ...automaticPosition, status: "pendingEvaluation" }, { ...registered[0], revision: 0 }]);
+    assert.deepEqual(read().confirmation.questions.map(({ value }) => value), [true, []]);
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 1, evaluation_tasks: 1,
+      automatic_verdicts: 0, response_review_requirements: 1, performances: 1 });
+    const correction = { protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId: ordering.id,
+      operationId: "mark-ordering", action: "override", correct: false, reason: "已核实学生本次明确空交", expectedRevision: 0 } as const;
+    assert.throws(() => submit({ ...correction, targetId: "wrong-target" }), { code: "FORBIDDEN" });
+    assert.throws(() => submit({ ...correction, reason: "   " }), ZodError);
+    const marked = submit(correction);
+    assert.deepEqual(submit(correction), marked);
+    assert.throws(() => submit({ ...correction, correct: true }), { code: "OPERATION_CONFLICT" });
+    assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared"), /temporary evaluation failure/);
+    assert.deepEqual(read().questions[1]?.status, "judged");
+    failEvaluation = false;
+    const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared");
+    assert.equal(recovered.assessment, "automatic");
+    assert.deepEqual(recovered.review?.questions, registered);
+    const evaluation = { evaluator, questionCount: 1, correctCount: 1, needsReviewCount: 0, questions: [
+      { questionId: judge.id, questionVersion: judge.version, result: { status: "judged", correct: true } },
+    ] };
+    assert.deepEqual(recovered.evaluation, evaluation);
+    assert.deepEqual(runtime.recoverQuestionDelivery(student, activity.activityId, key).evaluation, evaluation);
+    assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, input), receipt);
+    assert.deepEqual(received, Array.from({ length: 2 }, () => ({
+      activityId: activity.activityId, stepAttemptId: activity.stepAttemptId, slotId, practice: { id: base.practice.id, version: 1 },
+      questionId: judge.id, questionVersion: judge.version, value: true, acceptedResponse: true,
+    })));
+    const { correct: _correct, ...location } = correction;
+    submit({ ...location, action: "withdraw", operationId: "withdraw-ordering", withdrawId: marked.id, expectedRevision: 1 });
+    assert.deepEqual(read().questions, [
+      { ...automaticPosition, status: "judged", automatic: { correct: true, valid: true }, effective: { source: "automatic", correct: true } },
+      { ...manualPosition, revision: 2, status: "needsReview" },
+    ]);
+    canReview = false;
+    assert.throws(() => submit(correction), { code: "FORBIDDEN" });
+    assert.throws(read, { code: "FORBIDDEN" });
+    assert.throws(() => runtime.recoverQuestionDelivery(outsider, activity.activityId, key, "declared"), { code: "FORBIDDEN" });
+    assert.doesNotMatch(JSON.stringify({ recovered, student: runtime.read(student, activity.activityId) }),
+      /acceptedResponse|teacherReview|已核实学生|private-reflection-rubric/);
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 1, evaluation_tasks: 1,
+      automatic_verdicts: 1, response_review_requirements: 1, performances: 1 });
+    using broken = new DatabaseSync(databasePath);
+    broken.prepare("DELETE FROM response_review_requirements WHERE submission_id = ?").run(receipt.id);
+    assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared"), /人工待评位置与冻结提交不一致/);
+  } finally { runtime.close(); }
+});
+
+test("按题教师评阅｜无参考教师只读写声明题位，重开保留空答和判定", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("declared-teacher-only");
+  let allowed = true;
+  const settings = { databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: () => allowed, authorizeQuestionDeliveryVerdict: () => allowed };
+  const runtime = openLearningRuntime(settings);
+  const frozen = (() => {
+    try {
+      runtime.publish({ ...base, practice: { ...base.practice, questions: [ordering, optional], grading: { teacherReview } } });
+      const activity = start(runtime, base.practice.id);
+      const input = confirmation(activity, [revision(ordering, 0), revision(optional, 0)]);
+      const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+      const key = recoveryKey(input);
+      const pending = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
+      assert.equal(pending.assessment, "teacherReview");
+      assert.equal(Object.hasOwn(pending, "basis"), false);
+      assert.deepEqual(pending.questions, [{ questionId: ordering.id, questionVersion: ordering.version, revision: 0, status: "needsReview" }]);
+      assert.deepEqual(pending.confirmation.questions.map(({ questionId, value }) => ({ questionId, value })), [{ questionId: ordering.id, value: null }]);
+      assert.throws(() => runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key), { code: "REVIEW_NOT_FOUND" });
+      const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared");
+      assert.equal(recovered.assessment, "teacherReview");
+      assert.deepEqual(recovered.confirmation.questions.map(({ questionId, value }) => ({ questionId, value })),
+        [{ questionId: ordering.id, value: null }, { questionId: optional.id, value: null }]);
+      assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, key), { code: "ASSESSMENT_MODE_MISMATCH" });
+      const command = { protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId: ordering.id,
+        operationId: "teacher-only", action: "override", correct: false, reason: "教师已核对冻结的空答", expectedRevision: 0 } as const;
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, { ...command, questionId: optional.id }),
+        { code: "FORBIDDEN" });
+      const marked = runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command);
+      return { activity, key, command, marked, recovered };
+    } finally { runtime.close(); }
+  })();
+  const { activity, key, command, marked, recovered } = frozen;
+  const reopened = openLearningRuntime(settings);
+  try {
+    assert.deepEqual(reopened.recoverQuestionDelivery(student, activity.activityId, key, "declared"), recovered);
+    assert.deepEqual(reopened.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command), marked);
+    const review = reopened.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
+    assert.deepEqual(review.questions, [{ questionId: ordering.id, questionVersion: ordering.version, revision: 1,
+      status: "judged", effective: { source: "teacherReview", id: marked.id, correct: false } }]);
+    allowed = false;
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command), { code: "FORBIDDEN" });
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 0, evaluation_tasks: 1,
+      automatic_verdicts: 0, response_review_requirements: 1, performances: 0 });
+    using database = new DatabaseSync(databasePath);
+    const target = database.prepare("SELECT key_id, key_version, status FROM evaluation_tasks").get();
+    assert.deepEqual({ ...target }, { key_id: null, key_version: null, status: "done" });
+    assert.throws(() => database.exec("UPDATE evaluation_tasks SET key_id = 'half-key'"), /CHECK constraint failed/);
+    assert.throws(() => database.exec("UPDATE evaluation_tasks SET key_version = 1"), /CHECK constraint failed/);
+    assert.throws(() => database.exec("UPDATE evaluation_tasks SET status = 'pending'"), /CHECK constraint failed/);
+    assert.throws(() => database.exec("UPDATE evaluation_tasks SET key_id = 'missing', key_version = 1"), /FOREIGN KEY constraint failed/);
+  } finally { reopened.close(); }
+});
+
+test("按题教师评阅｜逐题仅为本次确认的声明位置建目标", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("declared-per-question");
+  const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true });
+  try {
+    const individual = { ...step, submit: { ...step.submit, slots: { [slotId]: { ...step.submit.slots[slotId],
+      delivery: { mode: "perQuestion", questionSlots: { [ordering.id]: "sort", [optional.id]: "collect" } } as const,
+    } } } };
+    runtime.publish({ ...base, practice: { ...base.practice, questions: [ordering, optional], steps: [individual], grading: { teacherReview } } });
+    const activity = start(runtime, base.practice.id);
+    const collected = revision(optional, 0);
+    const input: QuestionDeliveryInput = { ...confirmation(activity, [collected]), source: "question", questions: [collected], operationId: "collect" };
+    const collectedReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    const collectedKey = recoveryKey(input);
+    assert.equal(collectedReceipt.slotId, "collect");
+    assert.equal(runtime.recoverQuestionDelivery(student, activity.activityId, collectedKey, "declared").assessment, "none");
+    assert.throws(() => runtime.readQuestionDeliveryReview(reviewer, activity.activityId, collectedKey, "verdicts"), { code: "REVIEW_NOT_FOUND" });
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 0, scoring_keys: 0, evaluation_tasks: 0,
+      automatic_verdicts: 0, response_review_requirements: 0, performances: 0 });
+    const finish = confirmation(activity, [collected, revision(ordering, 0)], "finish");
+    const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, finish);
+    const review = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, recoveryKey(finish), "verdicts");
+    assert.deepEqual(review.receipt, receipt);
+    assert.deepEqual(review.questions, [{ questionId: ordering.id, questionVersion: ordering.version, revision: 0, status: "needsReview" }]);
+    assert.deepEqual(facts(databasePath), { submissions: 2, completions: 1, scoring_keys: 0, evaluation_tasks: 1,
+      automatic_verdicts: 0, response_review_requirements: 1, performances: 0 });
+  } finally { runtime.close(); }
+});
+
+test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("declared-separate-receipts");
+  const inputs: unknown[] = [];
+  const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
+    responseEvaluators: [{ ...evaluator, evaluate: input => {
+      inputs.push(input);
+      return { status: "needsReview" };
+    } }],
+  });
+  try {
+    const individual = { ...step, submit: { ...step.submit, slots: { [slotId]: { ...step.submit.slots[slotId],
+      delivery: { mode: "perQuestion", questionSlots: { [ordering.id]: "sort", [judge.id]: "auto" } } as const,
+    } } } };
+    runtime.publish({ ...base, practice: { ...base.practice, questions: [ordering, judge], steps: [individual], grading: { ...automatic, teacherReview } },
+      scoringKey: judgeKey });
+    const activity = start(runtime, base.practice.id);
+    const request: QuestionDeliveryInput = { ...confirmation(activity, [revision(ordering, 0)]),
+      source: "question", questions: [revision(ordering, 0)], operationId: "sort" };
+    const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, request);
+    const key = recoveryKey(request);
+    assert.equal(receipt.slotId, "sort");
+    assert.equal(runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared").assessment, "teacherReview");
+    assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, key), { code: "ASSESSMENT_MODE_MISMATCH" });
+    assert.deepEqual(inputs, []);
+    const finished = confirmation(activity, [revision(ordering, 0), revision(judge, 0)], "finish");
+    const finishReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, finished);
+    const result = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(finished), "declared");
+    assert.equal(result.assessment, "automatic");
+    assert.equal(result.review, undefined);
+    assert.deepEqual(result.evaluation.questions, [{ questionId: judge.id, questionVersion: judge.version, result: { status: "needsReview" } }]);
+    assert.equal(inputs.length, 1);
+    assert.equal(result.confirmation.questions.length, 1);
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    const task = database.prepare("SELECT key_id, key_version, status FROM evaluation_tasks WHERE submission_id = ?");
+    assert.deepEqual({ ...task.get(receipt.id) }, { key_id: null, key_version: null, status: "done" });
+    assert.deepEqual({ ...task.get(finishReceipt.id) }, { key_id: keyRef.id, key_version: keyRef.version, status: "done" });
+  } finally { runtime.close(); }
+});
+
+test("按题教师评阅｜发布拒绝占位键、未绑定题位、重复、旧人工方式及无自动题的自动声明", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime({ databasePath, responseEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" }) }] });
+  const { practice } = publication("declared-invalid");
+  const questions = [judge, ordering];
+  try {
+    const publish = (grading: typeof automatic | { teacherReview: { questionIds: string[] } }, scoringKey?: typeof judgeKey) =>
+      runtime.publish({ practice: { ...practice, questions, grading }, ...scoringKey && { scoringKey } });
+    assert.throws(() => publish({ teacherReview: { questionIds: [] } }), ZodError);
+    assert.throws(() => publish({ teacherReview: { questionIds: [ordering.id, ordering.id] } }), /评阅题标识重复/);
+    assert.throws(() => publish({ teacherReview: { questionIds: ["unknown"] } }), /教师评阅须绑定已发布的题/);
+    const grading = { ...automatic, teacherReview };
+    assert.throws(() => runtime.publish({ practice: { ...practice, questions, grading }, scoringKey: { ...judgeKey, acceptedByQuestion: {
+      ...judgeKey.acceptedByQuestion, [ordering.id]: { response: ordering.response, acceptedBlanks: [[], []] },
+    } } }), /教师评阅题不得提供自动评分键/);
+    assert.throws(() => publish({ teacherReview }, judgeKey), /冻结的评分依据须有对应的评估声明/);
+    assert.throws(() => runtime.publish({ practice: { ...practice, questions, grading: { teacherReview, manualReview } }, scoringKey: basis }),
+      /教师评阅与整组人工评阅不能同时声明/);
+    assert.throws(() => runtime.publish({ practice: { ...practice, questions: [ordering], grading }, scoringKey: judgeKey }),
+      /自动评估须绑定至少一道题/);
+    const { response: _response, ...missingFormat } = judge;
+    assert.throws(() => runtime.publish({ practice: { ...practice, questions: [missingFormat], grading: {
+      teacherReview: { questionIds: [missingFormat.id] },
+    } } }), /逐题交付须声明题的原值形态/);
+    const singleChoice = { ...step, tool: { id: "single-choice-group", version: 1 },
+      submit: { ...step.submit, slots: { [slotId]: { type: "oneChoicePerQuestion", source: "questions", targetId: "observe" } } },
+    } as const;
+    assert.throws(() => runtime.publish({ practice: { ...practice, questions: [missingFormat], steps: [singleChoice], grading: {
+      teacherReview: { questionIds: [missingFormat.id] },
+    } } }), /教师评阅须绑定题组交付槽/);
+    assert.throws(() => start(runtime, practice.id), { code: "PRACTICE_NOT_FOUND" });
+  } finally { runtime.close(); }
+});

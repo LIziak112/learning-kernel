@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { readingMigration } from "./reading-migration.ts";
-import { evaluationMigration } from "./evaluation-migration.ts";
+import { evaluationMigration, teacherReviewTargetMigration } from "./evaluation-migration.ts";
 import { verdictMigration } from "./verdict-migration.ts";
 import { questionPublicationMigration } from "./question-publication-migration.ts";
 import { choiceDraftMigration, currentChoiceDraftMigration } from "./choice-draft-migration.ts";
@@ -50,6 +50,7 @@ const migrations = [
   choiceAmendmentMigration,
   choiceSnapshotMigration,
   responseEvaluationMigration,
+  teacherReviewTargetMigration,
 ];
 export const latestDatabaseVersion = migrations.length + 1;
 

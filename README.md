@@ -101,7 +101,7 @@ const activity = runtime.read(principal, receipt.activityId);
 
 ### 混合整卷与逐题交付
 
-单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。仅收作品时声明 `grading: {}`，省略 `scoringKey`。确认照常写入回执和完成记录，评估任务为零。自动评分使用 `grading.assessment`，私有 `scoringKey.acceptedByQuestion` 固定每题的形态和评分数据。评估器标识和版本必须在实际使用的每种评估注册中存在。评估器只收到该次确认中的题、原值和该题评分键。
+单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。仅收作品时声明 `grading: {}`，省略 `scoringKey`。确认照常写入回执和完成记录，评估任务为零。自动评分使用 `grading.assessment`，私有 `scoringKey.acceptedByQuestion` 为参与自动评分的题固定形态和评分数据。评估器标识和版本必须在自动评分实际使用的每种题型注册中存在。评估器逐题收到该次确认中的原值和对应评分键。
 
 有序填空题声明正整数 `blankCount`，可省略 `options`。私有条目为 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
 
@@ -113,11 +113,13 @@ const activity = runtime.read(principal, receipt.activityId);
 
 活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery(principal, activityId, key)` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和 `evaluation`，适用于自动评分题组。待自动评分的任务可在首次获准恢复时执行，已记录的判定和待评状态可直接复读。
 
-可信宿主可传第四参数 `"declared"`，按 `assessment` 字段识别 `"none"`、`"manual"` 和 `"automatic"`。三种模式都带原回执与确认事实，并按现行授权交付。人工模式的 `review.questions` 交付确认时登记的待评题与冻结版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
+可信宿主可传第四参数 `"declared"`，按该回执的 `assessment` 字段识别 `"none"`、`"manual"`、`"teacherReview"` 和 `"automatic"`。各模式都带原回执与确认事实，并按现行授权交付。有预先声明的待评题时，`review.questions` 交付确认时登记的题与冻结版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
 
 需要人工评阅时，在 `grading.manualReview.keyRef` 引用本次私有 `scoringKey: { id, version, reviewCriteria }`。填写实际的量表或评阅准则文本。每个确认覆盖的位置都登记待评，含已确认的空答。表现记录继续遵守已答规则。宿主配置同步 `authorizeQuestionDeliveryReview`，凭已验证的 `{ role: "reviewer", id }`、活动 ID 和原确认键调用 `readQuestionDeliveryReview`。授权收到真实评阅者、学生、活动、步骤尝试、操作标识、提交 ID 和回执槽位。已有内核评阅指派也须有效。该读口交付冻结原值、待评题和精确版本的 `basis`，私有量表仅随获准的评阅读取交付。
 
-读题组当前判定时传入 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "verdicts")`。它按原确认交付实际回执、冻结题与任务目标，逐题返回判定修订和状态。自动评估尚未执行显示 `pendingEvaluation`，需要人工判定显示 `needsReview`，已有有效判定显示 `judged`。自动原判通过 `automatic` 返回，`effective.source` 区分生效的 `teacherReview` 与 `automatic`。人工题组仍有私有 `basis`。原三参评阅读口及人工模式的确认恢复继续交付原始待评登记。人工任务保留这项登记，宿主通过 `"verdicts"` 读取当前是否仍需评阅。
+无参考答案的题可在 `grading.teacherReview.questionIds` 列出互异的冻结题标识。确认时立即登记该回执中的这些题，含显式空交和未存稿。若同时声明 `grading.assessment`，其余题使用真实的自动评分键，混合回执的 `evaluation` 只包含自动子集及其计数，`"declared"` 恢复同时交付 `review.questions`。仅教师评阅的回执返回 `assessment: "teacherReview"`，其目标无评分键。练法只声明 `teacherReview` 时，其余题仅收作品。`teacherReview` 与引用实际量表的 `manualReview` 互斥。默认确认恢复仅用于带自动评估的回执。
+
+读题组当前判定时传入 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "verdicts")`。它按原确认交付回执、获准评阅的题位原值与任务目标，逐题返回判定修订和状态。自动评估尚未执行显示 `pendingEvaluation`，需要人工判定显示 `needsReview`，已有有效判定显示 `judged`。自动原判通过 `automatic` 返回，`effective.source` 区分生效的 `teacherReview` 与 `automatic`。`basis` 仅随 `manualReview` 的实际量表交付。原三参评阅读口及声明式确认恢复交付原始待评登记，当前状态通过 `"verdicts"` 读取。
 
 改判使用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command)`。宿主须另配同步 `authorizeQuestionDeliveryVerdict`，使用真实提交、槽位、冻结题及版本、评价目标和动作裁决每次写入与重放。命令使用 `protocolVersion: 1`、`operationId`、`submissionId`、`targetId`、`questionId`、`expectedRevision` 和 `reason`，按 `action: "override"` 传 `correct` 或按 `action: "withdraw"` 传当前生效判定的 `withdrawId`。先用 `"verdicts"` 读到当前修订，初次为 0。成功得到含判定事件 ID 和新修订的回执。相同命令重发取回原回执，内容变更返回 `OPERATION_CONFLICT`，过旧修订或撤销非当前判定返回 `VERDICT_CONFLICT`。
 
@@ -129,7 +131,7 @@ const activity = runtime.read(principal, receipt.activityId);
 
 宿主可在冻结练法上通过私有 `questionAnswerRules: { [questionId]: { id, version } }` 为单题声明已答规则。注册项通过 `openLearningRuntime({ questionAnswerRules: [{ id, version, response, isAnswered }], ... })` 配置。发布时必须匹配题的原值形态和规则的精确版本。确认时，函数同步读取该题已存的原值并返回布尔值。缺稿按未答处理。必答校验与表现写入共用这一次结果。新确认缺少精确注册时返回 `ANSWER_RULE_UNAVAILABLE`，可在补齐配置后重试。已确认回执按当前授权取回，沿用原结果。省略绑定沿用该值形态的原确认行为，规则配置留在可信服务端。
 
-混合槽复用 SQLite v16。宿主须使用支持所发布值形态的运行时。[混合题独立宿主示例](tests/fixtures/question-delivery-consumer.mts) · [文字题独立宿主示例](tests/fixtures/titled-text-consumer.mts)
+SQLite v17 允许用无键的评阅目标保存教师评阅，迁移保留已存自动任务、判定历史及待评题。升级后的数据库须由支持 v17 的运行时打开。[混合题独立宿主示例](tests/fixtures/question-delivery-consumer.mts) · [文字题独立宿主示例](tests/fixtures/titled-text-consumer.mts)
 
 ### 材料版本与使用位置
 

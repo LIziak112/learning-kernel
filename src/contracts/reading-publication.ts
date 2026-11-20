@@ -119,6 +119,10 @@ export const readingPracticeSchema = versionRef.extend({
       effectiveVerdictOrder: z.tuple([z.literal("teacherReview"), z.literal("automatic")]),
     }).optional(),
     manualReview: z.strictObject({ keyRef: versionRef }).optional(),
+    teacherReview: z.strictObject({
+      questionIds: z.array(id).min(1).refine(ids => new Set(ids).size === ids.length, "评阅题标识重复")
+        .transform(ids => ids.toSorted()),
+    }).optional(),
   }).default({}),
   policy,
 });

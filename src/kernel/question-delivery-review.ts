@@ -10,7 +10,7 @@ import { readTransaction, writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { confirmedWorkForOperation } from "./question-confirmation.ts";
 import { requireQuestionDeliverySlot } from "./question-delivery-drafts.ts";
-import { readManualReviewBasis, readManualReviewQuestions } from "./question-delivery-evaluation.ts";
+import { confirmedDeliveryAssessment, readManualReviewBasis, readManualReviewQuestions } from "./question-delivery-evaluation.ts";
 import { appendReview, repeatedReview } from "./verdict-history.ts";
 import { questionVerdictStates, submissionAssessmentTarget } from "./verdict-state.ts";
 
@@ -22,7 +22,7 @@ export function readQuestionDeliveryReview(
     const manualReview = activity.practice.grading.manualReview;
     if (!manualReview) throw new LearningError(404, "REVIEW_NOT_FOUND");
     const basis = readManualReviewBasis(database, receipt, manualReview.keyRef);
-    const questions = readManualReviewQuestions(database, receipt, content);
+    const questions = readManualReviewQuestions(database, receipt, content.questions);
     return { ...reviewedDelivery(activity, receipt, content), basis, questions };
   });
 }
@@ -32,19 +32,23 @@ export function readQuestionDeliveryVerdicts(
 ) {
   return readTransaction(database, () => {
     const { activity, receipt, content } = authorizedReview(database, reviewerId, activityId, key, authorize);
-    const target = requireAssessment(database, activity, receipt.id);
+    const target = requireAssessment(database, receipt.id);
     const manualReview = activity.practice.grading.manualReview;
-    const positions = content.questions.map(({ questionId, questionVersion }) => ({ questionId, questionVersion }));
+    const { automatic, review } = confirmedDeliveryAssessment(activity, content);
+    const assessmentIds = new Set([...automatic, ...review].map(({ questionId }) => questionId));
+    const confirmed = content.questions.filter(({ questionId }) => assessmentIds.has(questionId));
+    const positions = confirmed.map(({ questionId, questionVersion }) => ({ questionId, questionVersion }));
     const states = questionVerdictStates(database, target, positions, "replace");
-    const pending = !manualReview && target.status === "pending";
+    const pending = new Set(target.status === "pending" ? automatic.map(({ questionId }) => questionId) : []);
     const questions = states.map(({ questionId, questionVersion, revision, automatic, effective }) => {
       const state = { questionId, questionVersion, revision, ...automatic && { automatic } };
       if (effective) return { ...state, status: "judged" as const, effective };
-      return { ...state, status: pending ? "pendingEvaluation" as const : "needsReview" as const };
+      return { ...state, status: pending.has(questionId) ? "pendingEvaluation" as const : "needsReview" as const };
     });
-    const review = { ...reviewedDelivery(activity, receipt, content), targetId: target.targetId, questions };
-    if (manualReview) return { ...review, assessment: "manual" as const, basis: readManualReviewBasis(database, receipt, manualReview.keyRef) };
-    return { ...review, assessment: "automatic" as const };
+    const reviewed = { ...reviewedDelivery(activity, receipt, { ...content, questions: confirmed }), targetId: target.targetId, questions };
+    if (manualReview) return { ...reviewed, assessment: "manual" as const, basis: readManualReviewBasis(database, receipt, manualReview.keyRef) };
+    if (automatic.length) return { ...reviewed, assessment: "automatic" as const };
+    return { ...reviewed, assessment: "teacherReview" as const };
   });
 }
 
@@ -54,20 +58,27 @@ export function writeQuestionDeliveryVerdict(
 ) {
   return writeTransaction(database, () => {
     const { activity, receipt, content, scope } = reviewConfirmation(database, reviewerId, activityId, key);
-    const delivery = readQuestionDelivery(content);
-    if (!delivery || command.submissionId !== receipt.id) throw new LearningError(403, "FORBIDDEN");
-    const { targetId } = requireQuestionDeliverySlot(activity, delivery.slotId);
+    const { delivery, question, targetId } = requireVerdictPosition(activity, receipt, content, command);
     const { questionId, action } = command;
-    const question = delivery.questions.find(frozen => frozen.questionId === questionId);
-    if (!question || command.targetId !== targetId) throw new LearningError(403, "FORBIDDEN");
     if (authorize?.({ ...scope, targetId, questionId, questionVersion: question.questionVersion, action }) !== true) {
       throw new LearningError(403, "FORBIDDEN");
     }
-    const target = requireAssessment(database, activity, receipt.id);
+    const target = requireAssessment(database, receipt.id);
     if (target.targetId !== targetId) throw new Error("评估目标与冻结提交不一致");
+    const { automatic, review } = confirmedDeliveryAssessment(activity, delivery);
+    if (![...automatic, ...review].includes(question)) throw new LearningError(403, "FORBIDDEN");
     return repeatedReview(database, activityId, reviewerId, command)
       ?? appendReview(database, activityId, reviewerId, command, clock, "replace");
   });
+}
+
+function requireVerdictPosition(activity: ReadingActivity, receipt: SubmissionReceipt, content: unknown, command: VerdictCommand) {
+  const delivery = readQuestionDelivery(content);
+  if (!delivery || command.submissionId !== receipt.id) throw new LearningError(403, "FORBIDDEN");
+  const { targetId } = requireQuestionDeliverySlot(activity, delivery.slotId);
+  const question = delivery.questions.find(frozen => frozen.questionId === command.questionId);
+  if (!question || command.targetId !== targetId) throw new LearningError(403, "FORBIDDEN");
+  return { delivery, targetId, question };
 }
 
 function authorizedReview(
@@ -84,8 +95,7 @@ function reviewedDelivery({ practice: { id, version } }: ReadingActivity, receip
   return { receipt, practice: { id, version }, confirmation: questionDeliveryView(content) };
 }
 
-function requireAssessment(database: DatabaseSync, { practice: { grading } }: ReadingActivity, submissionId: string) {
-  if (!grading.manualReview && !grading.assessment) throw new LearningError(404, "REVIEW_NOT_FOUND");
+function requireAssessment(database: DatabaseSync, submissionId: string) {
   const target = submissionAssessmentTarget(database, submissionId);
   if (!target) throw new LearningError(404, "REVIEW_NOT_FOUND");
   return target;
