@@ -16,18 +16,30 @@ export type ResponseEvaluationInput = Readonly<Omit<ChoiceEvaluationInput, "choi
   acceptedResponse: boolean;
 }>;
 export type ResponseEvaluator = (input: ResponseEvaluationInput) => ResponseVerdict;
+export type IndexResponseEvaluationInput = Readonly<Omit<ResponseEvaluationInput, "value" | "acceptedResponse"> & {
+  value: readonly number[] | null;
+  acceptedIndexes: readonly number[];
+}>;
+export type IndexResponseEvaluator = (input: IndexResponseEvaluationInput) => ResponseVerdict;
 
 const registration = versionRef.extend({
   evaluate: z.custom<ResponseEvaluator>(value => typeof value === "function"),
 });
 
-export const responseEvaluators = z.array(registration).refine(registered =>
-  new Set(registered.map(({ id, version }) => JSON.stringify([id, version]))).size === registered.length
-  && registered.every(({ id }) => !isReservedReadingCapability(id)),
-"须注册唯一且非内置的原值评估器版本");
+function validRegistrations(registered: readonly VersionRef[]) {
+  const identities = new Set(registered.map(({ id, version }) => JSON.stringify([id, version])));
+  return identities.size === registered.length && registered.every(({ id }) => !isReservedReadingCapability(id));
+}
+
+const registrationIssue = "须注册唯一且非内置的原值评估器版本";
+export const responseEvaluators = z.array(registration).refine(validRegistrations, registrationIssue);
+export const indexResponseEvaluators = z.array(registration.extend({
+  evaluate: z.custom<IndexResponseEvaluator>(value => typeof value === "function"),
+})).refine(validRegistrations, registrationIssue);
 
 export type ResponseEvaluatorRegistration = z.infer<typeof registration>;
+export type IndexResponseEvaluatorRegistration = z.infer<typeof indexResponseEvaluators>[number];
 
-export function findResponseEvaluator(registered: readonly ResponseEvaluatorRegistration[], { id, version }: VersionRef) {
+export function findResponseEvaluator<T extends VersionRef & { evaluate: unknown }>(registered: readonly T[], { id, version }: VersionRef): T["evaluate"] | undefined {
   return registered.find(evaluator => evaluator.id === id && evaluator.version === version)?.evaluate;
 }

@@ -4,8 +4,9 @@ import type { ActivityDetail, SaveInput, SubmitInput } from "../contracts/readin
 import type { ReadingAnswerInput, ReadingSaveInput } from "../contracts/reading-runtime.ts";
 import { selectText } from "../builtins/selection.ts";
 import { loadStudentActivity } from "./activity.ts";
+import type { ReadingActivity } from "./activity.ts";
 import { readChoiceDrafts } from "./choice-drafts.ts";
-import { readResponseDrafts } from "./response-drafts.ts";
+import { indexResponseDrafts, readResponseDrafts, scalarResponseDrafts } from "./response-drafts.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
 import { confirmReadingDraft, readingActivityView, saveReadingAnswer, saveReadingSelection, studentSubmissionView } from "./reading-progress.ts";
@@ -55,25 +56,34 @@ export function submitDraft(
 export function readActivity(database: DatabaseSync, student: string, activityId: string) {
   const activity = loadStudentActivity(database, student, activityId);
   const submissions = activitySubmissions(database, activityId);
-  if (activity.kind === "reading") {
-    const view = readingActivityView(database, activity, submissions);
-    if (activity.completed) return view;
-    if (Object.values(activity.step.submit.slots).some(slot => slot.type === "oneResponsePerQuestion")) {
-      const responseDrafts = readResponseDrafts(database, activityId, activity.stepAttemptId);
-      return responseDrafts.length > 0 ? { ...view, responseDrafts } : view;
+  if (activity.kind !== "reading") return singleActivityView(activity, submissions);
+
+  const view = readingActivityView(database, activity, submissions);
+  if (activity.completed) return view;
+  const response = Object.values(activity.step.submit.slots).find(slot => slot.type === "oneResponsePerQuestion");
+  if (response) {
+    if (response.input === "optionIndexArray") {
+      const indexResponseDraftsView = readResponseDrafts(database, activityId, activity.stepAttemptId, indexResponseDrafts);
+      return indexResponseDraftsView.length > 0 ? { ...view, indexResponseDrafts: indexResponseDraftsView } : view;
     }
-    const { choiceSnapshotRevisions } = activity;
-    const active = choiceSnapshotRevisions.length > 0 ? { ...view, choiceSnapshotRevisions } : view;
-    const choiceDrafts = readChoiceDrafts(database, activityId, activity.stepAttemptId);
-    return choiceDrafts.length > 0 ? { ...active, choiceDrafts } : active;
+    const responseDrafts = readResponseDrafts(database, activityId, activity.stepAttemptId, scalarResponseDrafts);
+    return responseDrafts.length > 0 ? { ...view, responseDrafts } : view;
   }
+  const { stepAttemptId, choiceSnapshotRevisions } = activity;
+  const active = choiceSnapshotRevisions.length > 0 ? { ...view, choiceSnapshotRevisions } : view;
+  const choiceDrafts = readChoiceDrafts(database, activityId, stepAttemptId);
+  return choiceDrafts.length > 0 ? { ...active, choiceDrafts } : active;
+}
+
+type SingleActivity = Exclude<ReturnType<typeof loadStudentActivity>, ReadingActivity>;
+
+function singleActivityView(activity: SingleActivity, [first]: StoredSubmission[]): ActivityDetail {
   const { kind, completed, ...previous } = activity;
-  const view: ActivityDetail = {
+  return {
     ...previous,
     status: completed ? "completed" : "active",
-    submission: submissions[0] ? submissionView(submissions[0]) : null,
+    submission: first ? submissionView(first) : null,
   };
-  return view;
 }
 
 export function readSubmission(database: DatabaseSync, student: string, activityId: string, submissionId: string) {

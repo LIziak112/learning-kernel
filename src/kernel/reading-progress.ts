@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { ChoiceConfirmation } from "../contracts/choice-confirmation.ts";
-import { readResponseConfirmation } from "../contracts/response.ts";
-import type { ResponseConfirmation } from "../contracts/response.ts";
+import { readIndexResponseConfirmation, readResponseConfirmation } from "../contracts/response.ts";
+import type { IndexResponseConfirmation, ResponseConfirmation } from "../contracts/response.ts";
 import { studentTool } from "../builtins/reading-capabilities.ts";
 import { selectedText } from "../builtins/selection.ts";
 import type { ActivityDetail, Material, SubmitInput } from "../contracts/reading.ts";
@@ -163,6 +163,7 @@ type StudentSubmissionView = {
   receipt?: StoredSubmission["receipt"];
   confirmation?: ChoiceConfirmation;
   responseConfirmation?: ResponseConfirmation;
+  indexResponseConfirmation?: IndexResponseConfirmation;
   selection?: ReadingSelection;
   answer?: Omit<ReadingAnswer, "references"> & { references?: ReadingAnswer["references"] };
 };
@@ -199,6 +200,8 @@ export function studentSubmissionView(activity: ReadingActivity, submitted: Stor
   if (confirmation) return fields.has("ownChoices") ? { ...receipt, confirmation } : receipt;
   const responseConfirmation = readResponseConfirmation(submitted.content);
   if (responseConfirmation) return fields.has("ownResponses") ? { ...receipt, responseConfirmation } : receipt;
+  const indexResponseConfirmation = readIndexResponseConfirmation(submitted.content);
+  if (indexResponseConfirmation) return fields.has("ownResponses") ? { ...receipt, indexResponseConfirmation } : receipt;
   return studentReadingEvidence(submitted, fields, receipt);
 }
 

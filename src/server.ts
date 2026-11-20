@@ -12,9 +12,9 @@ import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
-import { responseDraftInput } from "./contracts/response.ts";
-import type { ResponseConfirmationInput, ResponseDraftInput } from "./contracts/response.ts";
-import { responseEvaluators } from "./contracts/response-evaluation.ts";
+import { indexResponseDraftInput, responseDraftInput } from "./contracts/response.ts";
+import type { IndexResponseDraftInput, ResponseConfirmationInput, ResponseDraftInput } from "./contracts/response.ts";
+import { indexResponseEvaluators, responseEvaluators } from "./contracts/response-evaluation.ts";
 import { startActivity } from "./kernel/activity.ts";
 import { amendChoiceDraft, readChoiceDraftForAmendment } from "./kernel/choice-amendment.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
@@ -25,14 +25,16 @@ import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./kernel/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
 import { registerPublication } from "./kernel/publication.ts";
-import { confirmResponses, recoverResponseConfirmation } from "./kernel/response-confirmation.ts";
-import { saveResponseDraft } from "./kernel/response-drafts.ts";
+import { confirmResponses, indexResponses, recoverResponseConfirmation, scalarResponses } from "./kernel/response-confirmation.ts";
+import { indexResponseDrafts, saveResponseDraft, scalarResponseDrafts } from "./kernel/response-drafts.ts";
+import { indexResponseEvaluation, scalarResponseEvaluation } from "./kernel/response-evaluation.ts";
 import { readActivity } from "./kernel/submission.ts";
 
 const runtimeOptions = z.strictObject({
   databasePath: z.string().min(1),
   choiceEvaluators: choiceEvaluators.default([]),
   responseEvaluators: responseEvaluators.default([]),
+  indexResponseEvaluators: indexResponseEvaluators.default([]),
   authorizeChoiceDraftAmendment: z.custom<AuthorizeChoiceDraftAmendment>(value => typeof value === "function").optional(),
   authorizeChoiceSnapshotRevision: z.custom<AuthorizeChoiceSnapshotRevision>(value => typeof value === "function").optional(),
   hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
@@ -58,9 +60,11 @@ export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 export { ChoiceSnapshotRevisionConflict } from "./kernel/choice-snapshot.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export { ResponseConfirmationConflict } from "./kernel/response-confirmation.ts";
-export { ResponseDraftConflict } from "./kernel/response-drafts.ts";
+export { IndexResponseDraftConflict, ResponseDraftConflict } from "./kernel/response-drafts.ts";
 export type { ResponseConfirmation, ResponseConfirmationInput, ResponseDraftInput, ResponseValue } from "./contracts/response.ts";
+export type { IndexResponseConfirmation, IndexResponseDraftInput } from "./contracts/response.ts";
 export type { ResponseEvaluationInput, ResponseEvaluator, ResponseEvaluatorRegistration, ResponseVerdict } from "./contracts/response-evaluation.ts";
+export type { IndexResponseEvaluationInput, IndexResponseEvaluator, IndexResponseEvaluatorRegistration } from "./contracts/response-evaluation.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
 export type StudentPrincipal = z.input<typeof studentPrincipal>;
@@ -76,9 +80,13 @@ function principalId(schema: z.ZodType<{ id: string }>, principal: unknown) {
 export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const settings = runtimeOptions.parse(options);
   const database = openDatabase(settings.databasePath);
+  const evaluateScalarResponse = scalarResponseEvaluation(database, settings.responseEvaluators);
+  const evaluateIndexResponse = indexResponseEvaluation(database, settings.indexResponseEvaluators);
   return {
     publish(input: PublicationInput) {
-      registerPublication(database, input, settings.choiceEvaluators, settings.responseEvaluators);
+      registerPublication(database, input, {
+        choice: settings.choiceEvaluators, scalar: settings.responseEvaluators, indexes: settings.indexResponseEvaluators,
+      });
     },
     start(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, principalId(studentPrincipal, principal), publishedStartInput.parse(input), clock);
@@ -132,15 +140,29 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
       principal: StudentPrincipal, activityId: string, input: ResponseDraftInput, mode: CurrentChoiceDraftMode = "save",
     ) {
       return saveResponseDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId), responseDraftInput.parse(input),
-        currentChoiceDraftMode.parse(mode), clock);
+        currentChoiceDraftMode.parse(mode), clock, scalarResponseDrafts);
     },
     confirmResponses(principal: StudentPrincipal, activityId: string, input: ResponseConfirmationInput) {
       return confirmResponses(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
-        clock, settings.verifyOriginal);
+        clock, scalarResponses, settings.verifyOriginal);
     },
     recoverResponseConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
       return recoverResponseConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
-        settings.authorizeConfirmationRecovery, settings.responseEvaluators);
+        settings.authorizeConfirmationRecovery, scalarResponses, evaluateScalarResponse);
+    },
+    saveIndexResponseDraft(
+      principal: StudentPrincipal, activityId: string, input: IndexResponseDraftInput, mode: CurrentChoiceDraftMode = "save",
+    ) {
+      return saveResponseDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId), indexResponseDraftInput.parse(input),
+        currentChoiceDraftMode.parse(mode), clock, indexResponseDrafts);
+    },
+    confirmIndexResponses(principal: StudentPrincipal, activityId: string, input: ResponseConfirmationInput) {
+      return confirmResponses(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
+        clock, indexResponses, settings.verifyOriginal);
+    },
+    recoverIndexResponseConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
+      return recoverResponseConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
+        settings.authorizeConfirmationRecovery, indexResponses, evaluateIndexResponse);
     },
     close() {
       database.close();

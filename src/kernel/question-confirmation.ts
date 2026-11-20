@@ -3,7 +3,8 @@ import type {
   AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
   ConfirmationScope, VerifyOriginal,
 } from "../contracts/choice-confirmation.ts";
-import type { ResponseConfirmation } from "../contracts/response.ts";
+import { hasStoredResponse, sameStoredResponse } from "../contracts/response.ts";
+import type { IndexResponseConfirmation, ResponseConfirmation, StoredResponseValue } from "../contracts/response.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { queueEvaluation } from "./evaluation.ts";
@@ -13,13 +14,13 @@ import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
 
 type QuestionRevision = ChoiceConfirmationInput["questions"][number];
 type ConfirmedValue<Key extends "choice" | "value"> = Pick<QuestionRevision, "revision" | "questionVersion">
-  & Record<Key, string | boolean | null>;
+  & Record<Key, StoredResponseValue | null>;
 
 export function confirmedDraftChangeCount<Key extends "choice" | "value">(
   question: ConfirmedValue<Key>, draft: (ConfirmedValue<Key> & { changeCount: number }) | undefined, field: Key,
 ) {
   if (question[field] === null) return 0;
-  if (draft?.revision !== question.revision || draft[field] !== question[field] || draft.questionVersion !== question.questionVersion) {
+  if (draft?.revision !== question.revision || !sameStoredResponse(draft[field], question[field]) || draft.questionVersion !== question.questionVersion) {
     throw new Error("已确认作答缺少对应的草稿版本");
   }
   return draft.changeCount;
@@ -47,7 +48,7 @@ export function mapConfirmationQuestions<T>(
 
 export function writeQuestionConfirmation(
   database: DatabaseSync, activity: ReadingActivity, studentId: string, input: ChoiceConfirmationInput, targetId: string,
-  content: ChoiceConfirmation | ResponseConfirmation, now: Date, verify?: VerifyOriginal,
+  content: ChoiceConfirmation | ResponseConfirmation | IndexResponseConfirmation, now: Date, verify?: VerifyOriginal,
 ) {
   const { activityId } = activity;
   const { stepAttemptId, slotId, operationId } = input;
@@ -58,8 +59,8 @@ export function writeQuestionConfirmation(
     }
   }
   const draft = saveWorkVersion(database, workScope(activityId, stepAttemptId, slotId), content);
-  const observations = content.questions.flatMap(question => ("choice" in question ? question.choice : question.value) === null
-    ? [] : [{ targetId, unitId: `question:${question.questionId}` }]);
+  const observations = content.questions.flatMap(question => hasStoredResponse("choice" in question ? question.choice : question.value)
+    ? [{ targetId, unitId: `question:${question.questionId}` }] : []);
   const receipt = recordSubmission(database, { ...input, draft }, observations, now);
   queueEvaluation(database, activity, receipt, targetId);
   finishActivity(database, activityId, receipt.id);

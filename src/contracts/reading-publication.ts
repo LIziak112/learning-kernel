@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { id, materialSchema, versionRef } from "./reading.ts";
+import { optionIndex, responseFormat } from "./response.ts";
 
 const nonempty = z.string().min(1);
 const descriptions = z.record(id, nonempty).refine(value => Object.keys(value).length > 0);
@@ -22,7 +23,7 @@ const slot = z.discriminatedUnion("type", [
     confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }).optional(),
   }),
   newEvidence.extend({
-    type: z.literal("oneResponsePerQuestion"), input: z.literal("booleanOrString"),
+    type: z.literal("oneResponsePerQuestion"), input: responseFormat,
     confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }),
   }),
   z.strictObject({ type: z.literal("reuse"), source: id }),
@@ -105,7 +106,7 @@ export const readingPracticeSchema = versionRef.extend({
   policy,
 });
 
-function orderQuestionValues<T extends string | boolean>(values: Record<string, T>) {
+function orderQuestionValues<T>(values: Record<string, T>) {
   return Object.fromEntries(Object.entries(values).sort(([left], [right]) => left === right ? 0 : left < right ? -1 : 1));
 }
 
@@ -116,12 +117,15 @@ export const scoringKeySchema = versionRef.extend({
 export const responseScoringKeySchema = versionRef.extend({
   acceptedResponses: z.record(id, z.boolean()).transform(orderQuestionValues),
 });
+export const indexResponseScoringKeySchema = versionRef.extend({
+  acceptedIndexes: z.record(id, z.array(optionIndex).min(1)).transform(orderQuestionValues),
+});
 
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema.optional(),
   materials: z.array(materialSchema).min(1).optional(),
   practice: readingPracticeSchema,
-  scoringKey: z.union([scoringKeySchema, responseScoringKeySchema]).optional(),
+  scoringKey: z.union([scoringKeySchema, responseScoringKeySchema, indexResponseScoringKeySchema]).optional(),
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

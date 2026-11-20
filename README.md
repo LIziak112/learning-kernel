@@ -93,6 +93,12 @@ const activity = runtime.read(principal, receipt.activityId);
 
 版本 16 为该模式增加独立待评记录。旧版 15 升级保留既有作品、回执和布尔判定，升级后的数据库需由支持版本 16 的运行时打开。
 
+### 整卷索引数组
+
+普通整卷可在相同 `response-group@1` 单步交付中明确声明 `input: "optionIndexArray"`。每道题的选项键使用从零开始的连续十进制编号。私有评分键的 `acceptedIndexes` 为每道题提供非空正确索引集合。`grading.assessment` 固定 `indexResponseEvaluators` 中的版本，评估器逐题接收原数组或 `null`、实际冻结的正确集合和题版本，由宿主决定判定。发布、保存均以冻结选项范围校验下标。普通标量原值和单选使用各自既有入口。
+
+`saveIndexResponseDraft` 保存索引原序与重复项。显式 `[]` 有草稿修订，无草稿为 `null`，两者均不计已答表现，并受 `allowUnanswered` 约束。`confirmIndexResponses` 保留一次正式回执，可信宿主经当前授权用 `recoverIndexResponseConfirmation` 执行或复读评估。学生本人草稿在 `indexResponseDrafts`，声明 `ownResponses` 后可在确认记录中读到自己的 `indexResponseConfirmation`。私有评分集合仅交给评估器。复用版本 16 的持久结构。可参看[独立宿主示例](tests/fixtures/index-response-confirmation-consumer.mts)。
+
 ### 材料版本与使用位置
 
 单步整卷单选可在发布时提供顶层 `materials`。每项 `from:"material"` 输入各自声明唯一的 `positionId` 和精确的 `material:{id,version}`。同一份材料可在多个位置使用。每个引用须对应同一次发布中提供的不可变定义，所有定义都须在当前练法使用。此项声明与旧版顶层及练法的单数 `material` 互斥。

@@ -1,30 +1,24 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
-import type { ResponseEvaluatorRegistration } from "../contracts/response-evaluation.ts";
 import { publicationSchema } from "../contracts/reading.ts";
 import type { Material, VersionRef } from "../contracts/reading.ts";
 import { readingPublicationSchema } from "../contracts/reading-publication.ts";
 import { writeTransaction } from "./database.ts";
 import { validateBindings } from "./publication-bindings.ts";
+import type { PublicationEvaluators } from "./publication-bindings.ts";
 
 const storedDefinition = z.object({ definition: z.string() });
 const publicationFormat = z.object({ practice: z.object({ formatVersion: z.unknown().optional() }) });
-function parseReadingPublication(
-  input: unknown, registered: readonly ChoiceEvaluatorRegistration[], responses: readonly ResponseEvaluatorRegistration[],
-) {
+function parseReadingPublication(input: unknown, registered: PublicationEvaluators) {
   return readingPublicationSchema.superRefine((value, context) => {
-    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered, responses);
+    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered);
   }).parse(input);
 }
 
-export function registerPublication(
-  database: DatabaseSync, input: unknown, registered: readonly ChoiceEvaluatorRegistration[] = [],
-  responses: readonly ResponseEvaluatorRegistration[] = [],
-) {
+export function registerPublication(database: DatabaseSync, input: unknown, registered: PublicationEvaluators = {}) {
   const { practice: format } = publicationFormat.parse(input);
   const { material, materials, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
-    ? parseReadingPublication(input, registered, responses)
+    ? parseReadingPublication(input, registered)
     : { ...publicationSchema.parse(input), materials: undefined, scoringKey: undefined };
   requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);
