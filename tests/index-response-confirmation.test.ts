@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
+import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { IndexResponseDraftConflict, openLearningRuntime } from "../src/server.ts";
 import type { IndexResponseEvaluator, PublicationInput, ResponseConfirmationInput } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
@@ -121,6 +122,10 @@ test("不允许未作答时显式空选仍保稿，确认后依声明限制作�
     const done = runtime.read(student, activity.activityId);
     assert.ok("formatVersion" in done);
     assert.deepEqual(done.submission, { receipt });
+    using db = new DatabaseSync(databasePath, { readOnly: true });
+    const confirmedWork = db.prepare("SELECT work_id FROM submissions WHERE id = ?").get(receipt.id)?.work_id;
+    assert.ok(typeof confirmedWork === "string");
+    assert.throws(() => readPersonalDraft(db, student.id, confirmedWork), { status: 403, code: "FORBIDDEN" });
   } finally { runtime.close(); }
 });
 

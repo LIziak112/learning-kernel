@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
-import { readResponseConfirmation } from "../contracts/response.ts";
+import { readIndexResponseConfirmation, readResponseConfirmation } from "../contracts/response.ts";
 import { selectionSchema } from "../contracts/reading.ts";
 import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
 import { LearningError } from "./learning-error.ts";
@@ -49,7 +49,9 @@ export function readPersonalDraft(database: DatabaseSync, student: string, workI
   if (!row) throw new LearningError(403, "FORBIDDEN");
   const stored = z.object({ version: z.int().positive(), selection: z.string() }).parse(row);
   const content: unknown = JSON.parse(stored.selection);
-  if (readChoiceConfirmation(content) || readResponseConfirmation(content)) throw new LearningError(403, "FORBIDDEN");
+  if (readChoiceConfirmation(content) || readResponseConfirmation(content) || readIndexResponseConfirmation(content)) {
+    throw new LearningError(403, "FORBIDDEN");
+  }
   return { draft: { id: workId, version: stored.version }, content: authorInput(content) };
 }
 
