@@ -65,6 +65,9 @@ test("备份勘误对账核精确操作、作者和归属，读取保留字节�
     verifyActivityBindings(path, withAmendments(bindings, completed, pending));
   assert.equal(compare([accepted.proof], [scheduled.proof]), undefined);
   assert.equal(compare([], [accepted.proof, scheduled.proof]), undefined);
+  assert.throws(() => compare([{ ...accepted.proof, activityId: scheduled.proof.activityId }]), mismatch);
+  assert.throws(() => compare([{ ...accepted.proof, stepAttemptId: scheduled.proof.stepAttemptId }]), mismatch);
+  assert.throws(() => compare([{ ...accepted.proof, slotId: "unknown" }]), mismatch);
   assert.throws(() => compare([], [scheduled.proof]), mismatch);
   assert.throws(() => compare([accepted.proof, scheduled.proof]), mismatch);
   assert.throws(() => compare([accepted.proof], [{ ...accepted.proof, revision: 2 }]), mismatch);
