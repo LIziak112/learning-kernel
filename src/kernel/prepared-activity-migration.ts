@@ -13,3 +13,7 @@ export const preparedActivityMigration = `
     PRIMARY KEY (activity_id, operation_id)
   ) STRICT;
 `;
+
+export const preparedActivityIntentMigration = `
+  ALTER TABLE prepared_activity_version_changes ADD COLUMN intent TEXT CHECK (intent = 'questionDeliveryMode');
+`;

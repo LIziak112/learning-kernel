@@ -1,15 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { preparedVersionReceipt } from "../contracts/prepared-activity.ts";
+import { preparedVersionIntent, preparedVersionReceipt } from "../contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput } from "../contracts/prepared-activity.ts";
 import { readingPracticeSchema } from "../contracts/reading-publication.ts";
 import { loadStudentActivity } from "./activity.ts";
+import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "./learning-error.ts";
+import { rebindQuestionDeliveryDrafts } from "./question-delivery-mode-switch.ts";
 
 const storedChange = preparedVersionReceipt.pick({ stepAttemptId: true, practiceVersion: true }).extend({
-  fromStepAttemptId: z.uuid(), fromPracticeVersion: z.int().positive(),
+  fromStepAttemptId: z.uuid(), fromPracticeVersion: z.int().positive(), intent: preparedVersionIntent.nullable(),
 });
 const storedPractice = z.object({ definition: z.string() });
 
@@ -22,15 +24,14 @@ export function replacePreparedActivityVersion(database: DatabaseSync, student: 
     if (activity.stepAttemptId !== input.stepAttemptId || activity.practiceVersion !== input.expectedPracticeVersion) {
       throw new LearningError(409, "ACTIVITY_VERSION_CONFLICT");
     }
-    requireNoLearningFacts(database, activityId);
-    const { practiceVersion } = input;
-    const stepAttemptId = practiceVersion === activity.practiceVersion ? activity.stepAttemptId
-      : rebindVersion(database, activityId, activity.stepAttemptId, activity.practice.id, practiceVersion, activity.step.id);
+    const { practiceVersion, intent } = input;
+    requireNoLearningFacts(database, activityId, intent === "questionDeliveryMode");
+    const stepAttemptId = rebindVersion(database, activity, practiceVersion, intent);
     database.prepare(`
       INSERT INTO prepared_activity_version_changes (
-        activity_id, operation_id, from_step_attempt_id, from_practice_version, step_attempt_id, practice_version
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(activityId, input.operationId, input.stepAttemptId, input.expectedPracticeVersion, stepAttemptId, practiceVersion);
+        activity_id, operation_id, from_step_attempt_id, from_practice_version, step_attempt_id, practice_version, intent
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(activityId, input.operationId, input.stepAttemptId, input.expectedPracticeVersion, stepAttemptId, practiceVersion, intent ?? null);
     return { activityId, startedAt: activity.startedAt, stepAttemptId, practiceVersion };
   });
 }
@@ -38,21 +39,22 @@ export function replacePreparedActivityVersion(database: DatabaseSync, student: 
 function recoverVersionChange(database: DatabaseSync, activityId: string, input: PreparedActivityVersionInput) {
   const row = database.prepare(`
     SELECT from_step_attempt_id AS fromStepAttemptId, from_practice_version AS fromPracticeVersion,
-      step_attempt_id AS stepAttemptId, practice_version AS practiceVersion
+      step_attempt_id AS stepAttemptId, practice_version AS practiceVersion, intent
     FROM prepared_activity_version_changes WHERE activity_id = ? AND operation_id = ?
   `).get(activityId, input.operationId);
   if (!row) return undefined;
-  const { fromStepAttemptId, fromPracticeVersion, stepAttemptId, practiceVersion } = storedChange.parse(row);
-  if (fromStepAttemptId !== input.stepAttemptId || fromPracticeVersion !== input.expectedPracticeVersion || practiceVersion !== input.practiceVersion) {
+  const { fromStepAttemptId, fromPracticeVersion, stepAttemptId, practiceVersion, intent } = storedChange.parse(row);
+  if (fromStepAttemptId !== input.stepAttemptId || fromPracticeVersion !== input.expectedPracticeVersion
+    || practiceVersion !== input.practiceVersion || intent !== (input.intent ?? null)) {
     throw new LearningError(409, "OPERATION_CONFLICT");
   }
   return { stepAttemptId, practiceVersion };
 }
 
-function requireNoLearningFacts(database: DatabaseSync, activityId: string) {
+function requireNoLearningFacts(database: DatabaseSync, activityId: string, allowQuestionDrafts: boolean) {
   const used = database.prepare(`
     SELECT 1
-    WHERE EXISTS (SELECT 1 FROM works WHERE activity_id = ?)
+    WHERE (? = 0 AND EXISTS (SELECT 1 FROM works WHERE activity_id = ?))
        OR EXISTS (SELECT 1 FROM completions WHERE activity_id = ?)
        OR EXISTS (
          SELECT 1 FROM choice_snapshot_revisions r JOIN step_attempts s ON s.id = r.step_attempt_id
@@ -63,19 +65,21 @@ function requireNoLearningFacts(database: DatabaseSync, activityId: string) {
          SELECT 1 FROM submissions JOIN step_attempts ON submissions.step_attempt_id = step_attempts.id
          WHERE step_attempts.activity_id = ?
        )
-  `).get(activityId, activityId, activityId, activityId, activityId);
+  `).get(Number(allowQuestionDrafts), activityId, activityId, activityId, activityId, activityId);
   if (used) throw new LearningError(409, "ACTIVITY_ALREADY_STARTED");
 }
 
 function rebindVersion(
-  database: DatabaseSync, activityId: string, previousStepAttemptId: string, practiceId: string, practiceVersion: number, stepId: string,
+  database: DatabaseSync, activity: ReadingActivity, practiceVersion: number, intent: PreparedActivityVersionInput["intent"],
 ) {
-  const row = database.prepare("SELECT definition FROM practices WHERE id = ? AND version = ?").get(practiceId, practiceVersion);
+  if (intent === undefined && practiceVersion === activity.practiceVersion) return activity.stepAttemptId;
+  const row = database.prepare("SELECT definition FROM practices WHERE id = ? AND version = ?").get(activity.practice.id, practiceVersion);
   if (!row) throw new LearningError(404, "PRACTICE_NOT_FOUND");
   const published = readingPracticeSchema.safeParse(JSON.parse(storedPractice.parse(row).definition));
-  if (!published.success || published.data.steps[0].id !== stepId) throw new LearningError(409, "PREPARED_STEP_CHANGED");
+  if (!published.success || published.data.steps[0].id !== activity.step.id) throw new LearningError(409, "PREPARED_STEP_CHANGED");
   const stepAttemptId = randomUUID();
-  database.prepare("UPDATE activities SET practice_version = ? WHERE id = ?").run(practiceVersion, activityId);
-  database.prepare("UPDATE step_attempts SET id = ? WHERE id = ? AND activity_id = ?").run(stepAttemptId, previousStepAttemptId, activityId);
+  if (intent === "questionDeliveryMode") rebindQuestionDeliveryDrafts(database, activity, published.data, stepAttemptId);
+  database.prepare("UPDATE activities SET practice_version = ? WHERE id = ?").run(practiceVersion, activity.activityId);
+  database.prepare("UPDATE step_attempts SET id = ? WHERE id = ? AND activity_id = ?").run(stepAttemptId, activity.stepAttemptId, activity.activityId);
   return stepAttemptId;
 }

@@ -1136,3 +1136,248 @@ test("文字值和私有形态严格隔离，空标题变化单独推进修订",
     assert.deepEqual(deliveredView(runtime, legacy).questionDeliveryDrafts, []);
   } finally { runtime.close(); }
 });
+
+function switchableDelivery(mode: "whole" | "perQuestion", version: number) {
+  const { practice, scoringKey, materials } = mixedMaterials(mode);
+  return {
+    materials,
+    practice: { ...practice, id: "switchable-delivery", version,
+      grading: { assessment: { ...practice.grading.assessment, keyRef: { id: scoringKey.id, version } } },
+    },
+    scoringKey: { ...scoringKey, version },
+  } satisfies PublicationInput;
+}
+
+function switchDelivery(activity: Activity, expectedPracticeVersion: number, practiceVersion: number, operationId = "switch") {
+  return { protocolVersion: 1, intent: "questionDeliveryMode", stepAttemptId: activity.stepAttemptId,
+    expectedPracticeVersion, practiceVersion, operationId } as const;
+}
+
+test("有未确认题组草稿也可换交付范围并保留原答和修订", t => {
+  const databasePath = scenarioDatabase(t);
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-20T08:00:00.000Z") });
+  const runtime = openLearningRuntime(settings(databasePath));
+  try {
+    const original = switchableDelivery("whole", 1);
+    runtime.publish(original);
+    runtime.publish(switchableDelivery("perQuestion", 2));
+    const openRequest = { protocolVersion: 1, practiceId: original.practice.id, practiceVersion: 1, operationId: "open-switchable" } as const;
+    const activity = runtime.prepare(student, openRequest);
+    const first = { ...target(activity, strictChoice), value: "0" };
+    runtime.saveQuestionDeliveryDraft(student, activity.activityId, first);
+    t.mock.timers.setTime(Date.parse("2026-11-20T08:03:00.000Z"));
+    const last = { ...first, operationId: "revise-choice", baseRevision: 1, value: "1" };
+    const latest = runtime.saveQuestionDeliveryDraft(student, activity.activityId, last);
+    const timing = runtime.readChoiceDraftActivity(student, activity.activityId);
+    assert.deepEqual(timing, { firstChangedAt: "2026-11-20T08:00:00.000Z", lastChangedAt: "2026-11-20T08:03:00.000Z" });
+    const before = deliveredView(runtime, activity);
+    assert.deepEqual(before.questionDeliveryDrafts, [latest]);
+    assert.deepEqual(before.questionDeliveries, []);
+    const command = switchDelivery(activity, 1, 2);
+    const changed = runtime.replacePreparedActivityVersion(student, activity.activityId, command);
+    assert.equal(changed.activityId, activity.activityId);
+    assert.equal(changed.startedAt, activity.startedAt);
+    assert.notEqual(changed.stepAttemptId, activity.stepAttemptId);
+    assert.equal(changed.practiceVersion, 2);
+    assert.deepEqual(runtime.prepare(student, openRequest), activity);
+    assert.deepEqual(runtime.replacePreparedActivityVersion(student, activity.activityId, command), changed);
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, last), { status: 403, code: "FORBIDDEN" });
+    assert.deepEqual(runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...last, stepAttemptId: changed.stepAttemptId }, "replayLatestOnly"), latest);
+    const after = deliveredView(runtime, activity);
+    assert.deepEqual(after.inputs, before.inputs);
+    assert.deepEqual(after.material, before.material);
+    assert.deepEqual(after.questionDeliveryDrafts, before.questionDeliveryDrafts);
+    assert.deepEqual(after.questionDeliveries, []);
+    assertMaterialPositions(after);
+    assert.deepEqual(runtime.readChoiceDraftActivity(student, activity.activityId), timing);
+    const firstDelivery = byQuestion(changed, revision(strictChoice, 2), "first-delivery");
+    const firstReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, firstDelivery);
+    assert.equal(firstReceipt.slotId, "choice-delivery");
+    const partial = deliveredView(runtime, activity);
+    assert.equal(partial.status, "active");
+    assert.deepEqual(partial.questionDeliveries.map(delivery => delivery.receipt), [firstReceipt]);
+    const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(firstDelivery));
+    assert.equal(recovered.evaluation.correctCount, 1);
+    assert.deepEqual(recovered.draftChangeCounts, [{ questionId: strictChoice.id, changeCount: 2 }]);
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(changed, 2, 1, "switch-partial")),
+      { status: 409, code: "ACTIVITY_ALREADY_STARTED" });
+    assert.deepEqual(deliveredView(runtime, activity), partial);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("切换失败回滚草稿和回执，成功往返拒绝陈旧步骤并跨开库恢复原回执", t => {
+  const databasePath = scenarioDatabase(t);
+  const options = settings(databasePath);
+  const request = { protocolVersion: 1, practiceId: "switchable-delivery", practiceVersion: 1, operationId: "rollback-open" } as const;
+  const originalDrafts = [{ question: strictChoice, value: "1" }, { question: judgeQuestion, value: true }] as const;
+  const runtime = openLearningRuntime(options);
+  const saved = (() => {
+    try {
+      runtime.publish(switchableDelivery("whole", 1));
+      runtime.publish(switchableDelivery("perQuestion", 2));
+      const activity = runtime.prepare(student, request);
+      const forward = switchDelivery(activity, 1, 2, "switch-out");
+      assert.throws(() => runtime.replacePreparedActivityVersion(student, activity.activityId, forward),
+        { status: 409, code: "QUESTION_DELIVERY_MODE_CONFLICT" });
+      const drafts = originalDrafts.map(({ question, value }) => ({ ...target(activity, question), value }));
+      drafts.forEach(draft => runtime.saveQuestionDeliveryDraft(student, activity.activityId, draft));
+      const before = deliveredView(runtime, activity);
+      const timing = runtime.readChoiceDraftActivity(student, activity.activityId);
+      const { intent: removed, ...legacy } = forward;
+      const replace = (command: Parameters<Runtime["replacePreparedActivityVersion"]>[2]) =>
+        runtime.replacePreparedActivityVersion(student, activity.activityId, command);
+      assert.throws(() => replace(legacy), { status: 409, code: "ACTIVITY_ALREADY_STARTED" });
+      assert.throws(() => runtime.replacePreparedActivityVersion(outsider, activity.activityId, forward), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => replace({ ...forward, expectedPracticeVersion: 2 }), { status: 409, code: "ACTIVITY_VERSION_CONFLICT" });
+
+      using inject = new DatabaseSync(databasePath);
+      inject.exec(`CREATE TRIGGER deny_mode_receipt BEFORE INSERT ON prepared_activity_version_changes
+        BEGIN SELECT RAISE(ABORT, 'mode receipt unavailable'); END`);
+      assert.throws(() => replace(forward), /mode receipt unavailable/);
+      assert.deepEqual(deliveredView(runtime, activity), before);
+      assert.deepEqual(runtime.readChoiceDraftActivity(student, activity.activityId), timing);
+      assert.equal(inject.prepare("SELECT count(*) AS n FROM prepared_activity_version_changes").get()?.n, 0);
+      inject.exec("DROP TRIGGER deny_mode_receipt");
+      const perQuestion = replace(forward);
+      assert.throws(() => replace(legacy), { status: 409, code: "OPERATION_CONFLICT" });
+      const backward = switchDelivery(perQuestion, 2, 1, "switch-back");
+      const whole = replace(backward);
+      assert.notEqual(whole.stepAttemptId, activity.stepAttemptId);
+      assert.notEqual(whole.stepAttemptId, perQuestion.stepAttemptId);
+      assert.deepEqual(deliveredView(runtime, activity), { ...before, stepAttemptId: whole.stepAttemptId });
+      assert.throws(() => replace({ ...forward, operationId: "stale-after-return" }), { status: 409, code: "ACTIVITY_VERSION_CONFLICT" });
+      const staleConfirmation = { ...intent(activity, originalDrafts.map(({ question }) => revision(question, 1))), source: "whole" } as const;
+      assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, staleConfirmation), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId,
+        { ...target(activity, strictChoice), value: "1", operationId: "stale-write" }),
+        { status: 403, code: "FORBIDDEN" });
+      assert.deepEqual(inject.prepare("PRAGMA foreign_key_check").all(), []);
+      return { activity, perQuestion, whole, forward, backward, before, timing, drafts };
+    } finally {
+      runtime.close();
+    }
+  })();
+
+  const { activity, perQuestion, whole, forward, backward, before, timing, drafts } = saved;
+  const reopened = openLearningRuntime(options);
+  try {
+    assert.deepEqual(reopened.prepare(student, request), activity);
+    assert.deepEqual(reopened.replacePreparedActivityVersion(student, activity.activityId, forward), perQuestion);
+    assert.deepEqual(reopened.replacePreparedActivityVersion(student, activity.activityId, backward), whole);
+    assert.deepEqual(reopened.readChoiceDraftActivity(student, activity.activityId), timing);
+    assert.throws(() => reopened.replacePreparedActivityVersion(outsider, activity.activityId, forward), { status: 403, code: "FORBIDDEN" });
+    const replayed = drafts.map(draft => reopened.saveQuestionDeliveryDraft(student, activity.activityId,
+      { ...draft, stepAttemptId: whole.stepAttemptId }, "replayLatestOnly"));
+    assert.deepEqual(replayed, before.questionDeliveryDrafts);
+    const confirmation = { ...intent(whole, originalDrafts.map(({ question }) => revision(question, 1))), source: "whole" } as const;
+    const receipt = reopened.confirmQuestionDelivery(student, activity.activityId, confirmation);
+    assert.deepEqual(reopened.confirmQuestionDelivery(student, activity.activityId, confirmation), receipt);
+    const recovered = reopened.recoverQuestionDelivery(student, activity.activityId, recoveryKey(confirmation));
+    assert.equal(recovered.evaluation.correctCount, 2);
+    assert.deepEqual(recovered.draftChangeCounts, originalDrafts.map(({ question }) => ({ questionId: question.id, changeCount: 1 })));
+    assert.equal(deliveredView(reopened, activity).questionDeliveries.length, 1);
+    assert.throws(() => reopened.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(whole, 1, 2, "switch-closed")),
+      { status: 409, code: "ACTIVITY_ALREADY_STARTED" });
+    assert.deepEqual(reopened.replacePreparedActivityVersion(student, activity.activityId, forward), perQuestion);
+  } finally {
+    reopened.close();
+  }
+});
+
+test("切换只能改变题组交付范围，目标题面、材料、评估器和私有评分键仍按原冻结", t => {
+  const databasePath = scenarioDatabase(t);
+  const fixture = settings(databasePath);
+  const extraEvaluators = fixture.choiceEvaluators?.map(item => ({ ...item, version: 2 })) ?? [];
+  const extraResponses = fixture.responseEvaluators?.map(item => ({ ...item, version: 2 })) ?? [];
+  const runtime = openLearningRuntime({ ...fixture,
+    choiceEvaluators: [...fixture.choiceEvaluators ?? [], ...extraEvaluators],
+    responseEvaluators: [...fixture.responseEvaluators ?? [], ...extraResponses],
+  });
+  try {
+    const original = switchableDelivery("whole", 1);
+    runtime.publish(original);
+    runtime.publish(switchableDelivery("whole", 2));
+    const keyChange = switchableDelivery("perQuestion", 3);
+    keyChange.scoringKey.acceptedByQuestion.choice.acceptedChoice = "2";
+    runtime.publish(keyChange);
+    const questionChange = switchableDelivery("perQuestion", 4);
+    const question = questionChange.practice.questions[0];
+    assert.ok(question);
+    question.prompt = "改变了冻结题面。";
+    runtime.publish(questionChange);
+    const materialChange = switchableDelivery("perQuestion", 5);
+    if (materialChange.practice.steps[0].inputs.second.from === "material") {
+      materialChange.practice.steps[0].inputs.second.material.version = revisedMaterial.version;
+      materialChange.materials[1] = revisedMaterial;
+    }
+    runtime.publish(materialChange);
+    const evaluatorChange = switchableDelivery("perQuestion", 6);
+    evaluatorChange.practice.grading.assessment.evaluator = { ...evaluator, version: 2 };
+    runtime.publish(evaluatorChange);
+    const unrelatedChoice = choiceGroup(original.practice.id);
+    const unrelatedKey = { id: keyRef.id, version: 7 };
+    runtime.publish({ practice: { ...unrelatedChoice.practice, version: 7,
+      grading: { assessment: { ...unrelatedChoice.practice.grading.assessment, keyRef: unrelatedKey } } },
+      scoringKey: { ...unrelatedChoice.scoringKey, ...unrelatedKey } });
+    const parameters = { protocolVersion: 1, practiceId: original.practice.id, practiceVersion: 7, operationId: "reject-unrelated" } as const;
+    const unrelatedActivity = runtime.prepare(student, parameters);
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, unrelatedActivity.activityId, switchDelivery(unrelatedActivity, 7, 1)),
+      { status: 409, code: "QUESTION_DELIVERY_MODE_CONFLICT" });
+    const activity = runtime.prepare(student, { protocolVersion: 1, practiceId: original.practice.id, practiceVersion: 1, operationId: "reject-editions" });
+    runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...target(activity, strictChoice), value: "1" });
+    const before = deliveredView(runtime, activity);
+    for (const version of [1, 2, 3, 4, 5, 6, 7]) {
+      assert.throws(() => runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, version)),
+        { status: 409, code: "QUESTION_DELIVERY_MODE_CONFLICT" });
+      assert.deepEqual(deliveredView(runtime, activity), before);
+    }
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, 8)),
+      { status: 404, code: "PRACTICE_NOT_FOUND" });
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT count(*) AS n FROM prepared_activity_version_changes").get()?.n, 0);
+    assert.equal(database.prepare("SELECT count(*) AS n FROM submissions").get()?.n, 0);
+  } finally {
+    runtime.close();
+  }
+});
+
+test("无自动评分的题组可切换，人工评阅依据只接受同内容换版", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime({ databasePath, authorizeConfirmationRecovery: () => true });
+  try {
+    const { practice: first, materials } = switchableDelivery("whole", 1);
+    const { practice: next } = switchableDelivery("perQuestion", 2);
+    const teacherReview = { questionIds: [strictChoice.id, judgeQuestion.id] };
+    runtime.publish({ materials, practice: { ...first, id: "teacher-review-switch", grading: { teacherReview } } });
+    runtime.publish({ materials, practice: { ...next, id: "teacher-review-switch", grading: { teacherReview } } });
+    const manual = (practice: typeof first, reviewCriteria: string) => {
+      const keyRef = { id: "manual-switch-key", version: practice.version };
+      return { materials, practice: { ...practice, grading: { manualReview: { keyRef } } },
+        scoringKey: { ...keyRef, reviewCriteria } } satisfies PublicationInput;
+    };
+    runtime.publish(manual(first, "核对原答。"));
+    runtime.publish(manual(next, "核对原答。"));
+    runtime.publish(manual({ ...next, version: 3 }, "采用不同依据。"));
+
+    for (const [practiceId, expectedAssessment] of [[first.id, "manual"], ["teacher-review-switch", "teacherReview"]] as const) {
+      const activity = runtime.prepare(student, { protocolVersion: 1, practiceId, practiceVersion: 1, operationId: practiceId });
+      runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...target(activity, strictChoice), value: "1" });
+      if (expectedAssessment === "manual") {
+        assert.throws(() => runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, 3)),
+          { status: 409, code: "QUESTION_DELIVERY_MODE_CONFLICT" });
+      }
+      const changed = runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, 2));
+      const confirmation = byQuestion(changed, revision(strictChoice, 1), "answer");
+      runtime.confirmQuestionDelivery(student, changed.activityId, confirmation);
+      const recovered = runtime.recoverQuestionDelivery(student, changed.activityId, recoveryKey(confirmation), "declared");
+      assert.equal(recovered.assessment, expectedAssessment);
+      assert.ok("review" in recovered && recovered.review);
+      assert.deepEqual(recovered.review.questions, [{ questionId: strictChoice.id, questionVersion: strictChoice.version, status: "needsReview" }]);
+      assert.doesNotMatch(JSON.stringify(recovered), /核对原答|manual-switch-key|reviewCriteria/);
+    }
+  } finally {
+    runtime.close();
+  }
+});

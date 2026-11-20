@@ -59,6 +59,8 @@ const activity = runtime.read(principal, receipt.activityId);
 
 可信宿主可用 `prepare(principal, input)` 显式预备阅读活动，沿用 `start` 的输入及原始回执。在首个作品、确认或步骤推进前，`replacePreparedActivityVersion(principal, activityId, input)` 可切换到同一练法已发布的另一版本，首个逻辑步骤须一致。传入 `protocolVersion`、`operationId`、当前 `stepAttemptId`、`expectedPracticeVersion` 和目标 `practiceVersion`。换版保留活动标识及原起算时刻，发行新的步骤尝试凭据，旧凭据无法保存或确认。指定当前版本时沿用当前步骤凭据。`read` 在同一快照返回当前 `practiceVersion`、步骤凭据和题面。重发按当前授权交付对应的原回执。普通 `start` 创建的活动固定原教学版本。
 
+已保存草稿且还未确认任何题的预备题组可在同一练法的 `whole` 和 `perQuestion` 发布版本之间换版。调用 `replacePreparedActivityVersion` 时加上 `intent: "questionDeliveryMode"`。目标版本须保留冻结题目、材料引用、评分内容及其他练法声明，私有评分键可引用内容等值的另一版本。切换保留活动标识、原作答开始时刻、草稿原值、修订和改答计数，并轮换步骤凭据。若调用方需要恢复最新的草稿保存操作，使用当前步骤凭据和原操作 ID 重发原请求。已交付的题组拒绝新切换，成功切换可按原操作重放取回回执。
+
 可信宿主在配套备份或恢复时可直接从服务端包调用 `verifyActivityBindings(databasePath, claims)`。传入 `protocolVersion: 1`、已绑定活动 `bindings: [{ activityId, studentId, operationId }]` 和持久开卷意图 `openingIntents: [{ studentId, operationId }]`。每个已绑定活动须精确存在，内核的每个活动须由一条绑定或已持久化的开卷意图覆盖。尚未开卷的意图可以暂时没有内核活动。绑定、意图及两者之间的重复开卷键，任何遗漏或身份不符，均返回 `ACTIVITY_BINDINGS_MISMATCH`。通过时无返回数据。核验直接只读打开指定快照，缺失或不可读的文件报错。宿主从同一份配套快照提取绑定和意图，核验通过后再使用该配套备份。
 
 配套备份也可传入 `teacherAmendments: { completed, pending }`。每条勘误声明包含 `kind`（`answer` 或 `snapshot`）、`activityId`、`studentId`、`stepAttemptId`、`slotId`、`questionId`、`reviewerId`、`operationId` 和回执的对外 `revision`。待处理意图可用命令的 `baseRevision + 1` 确定预期修订。每条已完成声明须对应一条内核勘误。待处理意图可覆盖已提交到内核或尚未提交的勘误；后者须绑定库中实际的学生、活动、步骤、题目和槽位。同一个操作只能占一个位置。遗漏、重复或身份及修订冲突均返回 `TEACHER_AMENDMENTS_MISMATCH`。明确传空声明会核实迁移账和勘误表，仅在可证没有记录时通过。省略该字段保留原有开卷核验。两层检查在同一个只读快照中完成。
