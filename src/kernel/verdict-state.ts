@@ -31,9 +31,15 @@ export function readAutomaticVerdicts(database: DatabaseSync, { submissionId, ta
   `).all(submissionId, targetId).map(row => storedAutomatic.parse(row));
 }
 
+export function assessmentVerdictMode(activity: ReadingActivity): TeacherVerdictMode {
+  const from = activity.practice.grading.assessment?.from;
+  const slot = from?.stepId === activity.step.id ? activity.step.submit.slots[from.slotId] : undefined;
+  return slot?.type === "oneChoicePerQuestion" && slot.confirmFromDrafts ? "replace" : "undo";
+}
+
 export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: z.infer<typeof assessment>) {
   const questions = activity.practice.questions.map(({ id: questionId, prompt }) => ({ questionId, prompt }));
-  return questionVerdictStates(database, target, questions, "undo");
+  return questionVerdictStates(database, target, questions, assessmentVerdictMode(activity));
 }
 
 export function questionVerdictStates<Question extends { questionId: string }>(

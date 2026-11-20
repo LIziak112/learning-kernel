@@ -9,7 +9,7 @@ import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
 import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { ChoiceConfirmationConflict, LearningError, openLearningRuntime } from "../src/server.ts";
-import type { ChoiceConfirmationInput, PublicationInput, VerifyOriginal } from "../src/server.ts";
+import type { AuthorizeChoiceConfirmationReview, AuthorizeChoiceConfirmationVerdict, ChoiceConfirmationInput, ChoiceEvaluationInput, PublicationInput, VerdictCommand, VerifyOriginal } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
@@ -263,7 +263,9 @@ function inputKey({ protocolVersion, stepAttemptId, operationId }: ChoiceConfirm
 
 test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐题确认权限", t => {
   const path = scenarioDatabase(t);
-  const runtime = openLearningRuntime({ databasePath: path });
+  const runtime = openLearningRuntime({ databasePath: path,
+    authorizeChoiceConfirmationReview: () => true, authorizeChoiceConfirmationVerdict: () => true,
+  });
   try {
     runtime.publish(frozenChoicePublication);
     const old = runtime.start(student, open);
@@ -272,11 +274,21 @@ test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐�
     const legacy = saveDraft(database, student.id, old.activityId, {
       protocolVersion: 1, stepAttemptId: old.stepAttemptId, slotId: "answers", choices: { [firstId]: "1", [secondId]: "0" }, references: {},
     });
-    submitDraft(database, student.id, old.activityId, {
+    const legacyReceipt = submitDraft(database, student.id, old.activityId, {
       protocolVersion: 1, stepAttemptId: old.stepAttemptId, operationId: "confirm", slotId: "answers", draft: legacy.draft,
     }, () => new Date());
     assert.throws(() => runtime.confirmChoices(student, old.activityId, intent(old.stepAttemptId, [0, 0])), denial(409, "OPERATION_CONFLICT"));
     assert.deepEqual(facts(database).slice(6), [1, 0]);
+    const teacher = { role: "reviewer", id: "teacher" } as const;
+    const override = (submissionId: string): VerdictCommand => ({
+      protocolVersion: 1, submissionId, targetId: "answer", questionId: firstId,
+      operationId: "mark", expectedRevision: 0, action: "override", correct: true, reason: "核对原作答",
+    });
+    const legacyKey = inputKey(intent(old.stepAttemptId, []));
+    assert.throws(() => runtime.readQuestionDeliveryReview(teacher, old.activityId, legacyKey, "choiceConfirmation"),
+      denial(404, "REVIEW_NOT_FOUND"));
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(teacher, old.activityId, legacyKey, override(legacyReceipt.id), "choiceConfirmation"),
+      denial(403, "FORBIDDEN"));
     const strict = declaration(false);
     runtime.publish({ practice: { ...strict.practice, version: 2 } });
     const answerRequired = runtime.start(student, { ...open, practiceVersion: 2, operationId: "strict-open" });
@@ -290,6 +302,12 @@ test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐�
     const legacyEvidence = { ...supported, questions: supported.questions.map(question => ({ ...question, original: originals.uncollected })) };
     const receipt = runtime.confirmChoices(student, activityId, legacyEvidence);
     assert.equal(authorizedView(runtime, activityId).submission?.receipt?.id, receipt.id);
+    const ungradedKey = inputKey(legacyEvidence);
+    assert.throws(() => runtime.readQuestionDeliveryReview(teacher, activityId, ungradedKey, "choiceConfirmation"),
+      denial(404, "REVIEW_NOT_FOUND"));
+    assert.throws(() => runtime.writeQuestionDeliveryVerdict(teacher, activityId, ungradedKey, override(receipt.id), "choiceConfirmation"),
+      denial(404, "REVIEW_NOT_FOUND"));
+    assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 0);
   } finally {
     runtime.close();
   }
@@ -318,5 +336,162 @@ test("收尾写入失败保留个人草稿，重发后仅确认一次", t => {
     assert.deepEqual(facts(database), [2, 2, 1, 1, 1, 1, 0, 0]);
   } finally {
     runtime.close();
+  }
+});
+
+test("原单选交卷在同一确认上独立改判和清除，原稿、评分与学生回执稳定", t => {
+  const path = scenarioDatabase(t);
+  const teacher = { role: "reviewer", id: "teacher" } as const;
+  const evaluator = { id: "host-choice-check", version: 1 };
+  const reasons = { mark: "教师复核原作答", clear: "清除教师判定" };
+  const secondVersion = 7;
+  let reviewAllowed = true;
+  let mayWrite = false;
+  let evaluated = 0;
+  const registered = {
+    databasePath: path,
+    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }: ChoiceEvaluationInput) => {
+      evaluated++;
+      return choice === acceptedChoice;
+    } }],
+    verifyOriginal: ({ original }: Parameters<VerifyOriginal>[0]) => original.state === "none"
+      || (original.state === "frozen" && original.versionId === originals.verified.versionId),
+    authorizeConfirmationRecovery: ({ studentId }: { studentId: string }) => studentId === student.id,
+  };
+  const { practice } = declaration();
+  const seed = openLearningRuntime(registered);
+  const confirmed = (() => {
+    try {
+      seed.publish({
+        practice: { ...practice, questions: practice.questions.map(question =>
+          question.id === secondId ? { ...question, version: secondVersion } : question), grading: {
+          assessment: { ...frozenChoicePublication.practice.grading.assessment, evaluator },
+        } },
+        scoringKey: frozenChoicePublication.scoringKey,
+      });
+      const { activityId, stepAttemptId } = seed.start(student, open);
+      save(seed, activityId, stepAttemptId, firstId, "1");
+      seed.saveChoiceDraft(student, activityId, { protocolVersion: 1, stepAttemptId, slotId: "answers",
+        questionId: secondId, questionVersion: secondVersion, baseRevision: 0, operationId: "draft", choice: "0" });
+      const base = intent(stepAttemptId, [1, 1]);
+      const input = { ...base, questions: base.questions.map(question =>
+        question.questionId === secondId ? { ...question, questionVersion: secondVersion } : question) };
+      return { activityId, input, receipt: seed.confirmChoices(student, activityId, input) };
+    } finally {
+      seed.close();
+    }
+  })();
+  const { activityId, input, receipt } = confirmed;
+  const key = inputKey(input);
+  const targetId = "answer";
+  const readScope: Parameters<AuthorizeChoiceConfirmationReview>[0] = {
+    stepAttemptId: key.stepAttemptId, operationId: key.operationId,
+    reviewerId: teacher.id, studentId: student.id, activityId, submissionId: receipt.id, slotId: receipt.slotId,
+  };
+  const mayRead: AuthorizeChoiceConfirmationReview = scope => reviewAllowed && scope.reviewerId === readScope.reviewerId
+    && scope.studentId === readScope.studentId && scope.activityId === readScope.activityId && scope.stepAttemptId === readScope.stepAttemptId
+    && scope.operationId === readScope.operationId && scope.submissionId === readScope.submissionId && scope.slotId === readScope.slotId;
+  const scoped: AuthorizeChoiceConfirmationVerdict = scope => mayWrite && mayRead(scope) && scope.targetId === targetId
+    && scope.questionId === secondId && scope.questionVersion === secondVersion;
+  const settings = { ...registered, authorizeChoiceConfirmationReview: mayRead, authorizeChoiceConfirmationVerdict: scoped };
+  const runtime = openLearningRuntime(settings);
+  const override: VerdictCommand = { protocolVersion: 1, operationId: "mark", submissionId: receipt.id, targetId,
+    questionId: secondId, expectedRevision: 0, action: "override", correct: true, reason: reasons.mark };
+  const denied = denial(403, "FORBIDDEN");
+  const assertStable = (opened: typeof runtime, original: ReturnType<typeof runtime.recoverChoiceConfirmation>,
+    studentView: ReturnType<typeof runtime.read>) => {
+    assert.deepEqual(opened.confirmChoices(student, activityId, input), receipt);
+    assert.deepEqual(opened.recoverChoiceConfirmation(student, activityId, key), original);
+    assert.deepEqual(opened.read(student, activityId), studentView);
+    assert.doesNotMatch(JSON.stringify({ studentView, original }), /teacherReview|教师复核原作答|清除教师判定|acceptedChoices/);
+    assert.equal(evaluated, 2);
+  };
+  const completed = (() => {
+    try {
+      const read = () => runtime.readQuestionDeliveryReview(teacher, activityId, key, "choiceConfirmation");
+      const write = (command: VerdictCommand) => runtime.writeQuestionDeliveryVerdict(teacher, activityId, key, command, "choiceConfirmation");
+      assert.deepEqual(read().questions.map(({ status, revision }) => [status, revision]),
+        [["pendingEvaluation", 0], ["pendingEvaluation", 0]]);
+      const original = runtime.recoverChoiceConfirmation(student, activityId, key);
+      const studentView = runtime.read(student, activityId);
+      assert.equal(original.evaluation?.correctCount, 1);
+      const baseline = read();
+      assert.deepEqual(baseline.receipt, receipt);
+      assert.deepEqual(baseline.practice, { id: practiceId, version: 1 });
+      assert.equal(baseline.targetId, targetId);
+      assert.deepEqual(baseline.confirmation, original.confirmation);
+      assert.deepEqual(baseline.confirmation.questions.map(({ original }) => original), [originals.verified, originals.none]);
+      assert.deepEqual(baseline.questions, [true, false].map((correct, index) => ({
+        questionId: index === 0 ? firstId : secondId, questionVersion: index === 0 ? 1 : secondVersion, revision: 0, status: "judged",
+        automatic: { correct, valid: true }, effective: { source: "automatic", correct },
+      })));
+      assert.doesNotMatch(JSON.stringify(baseline), /acceptedChoices|scoringKey/);
+      using database = new DatabaseSync(path, { readOnly: true });
+      const originalFacts = facts(database);
+      assert.throws(() => write(override), denied);
+      mayWrite = true;
+      const outsider = { role: "reviewer", id: "outside" } as const;
+      assert.throws(() => runtime.readQuestionDeliveryReview(outsider, activityId, key, "choiceConfirmation"), denied);
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(outsider, activityId, key, override, "choiceConfirmation"), denied);
+      assert.throws(() => Reflect.apply(runtime.readQuestionDeliveryReview, runtime, [student, activityId, key, "choiceConfirmation"]), denied);
+      assert.throws(() => runtime.readQuestionDeliveryReview(teacher, activityId, { ...key, operationId: "unknown" }, "choiceConfirmation"), denied);
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict(teacher, activityId, { ...key, stepAttemptId: receipt.id }, override, "choiceConfirmation"), denied);
+      for (const position of [{ questionId: "unrelated" }, { questionId: firstId }, { targetId: "unrelated" }, { submissionId: receipt.stepAttemptId }]) {
+        assert.throws(() => write({ ...override, ...position }), denied);
+      }
+      assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 0);
+      const marked = write(override);
+      assert.deepEqual({ ...marked, id: undefined }, { id: undefined, submissionId: receipt.id, targetId, questionId: secondId, revision: 1 });
+      assert.deepEqual(write(override), marked);
+      assert.deepEqual(read().questions, [baseline.questions[0], { ...baseline.questions[1], revision: 1,
+        effective: { source: "teacherReview", id: marked.id, correct: true } }]);
+      assert.throws(() => write({ ...override, correct: false }), denial(409, "OPERATION_CONFLICT"));
+      assert.throws(() => write({ ...override, operationId: "stale" }), denial(409, "VERDICT_CONFLICT"));
+      assertStable(runtime, original, studentView);
+      assert.throws(() => runtime.saveChoiceDraft(student, activityId, { ...key, operationId: "new-answer", slotId: receipt.slotId,
+        questionId: secondId, questionVersion: secondVersion, choice: "2", baseRevision: 1,
+      }), denial(409, "ALREADY_SUBMITTED"));
+      const { correct: _, ...location } = override;
+      const withdraw: VerdictCommand = { ...location, action: "withdraw", withdrawId: marked.id,
+        operationId: "clear", expectedRevision: 1, reason: reasons.clear };
+      assert.throws(() => write({ ...withdraw, withdrawId: receipt.id }), denial(409, "VERDICT_CONFLICT"));
+      const cleared = write(withdraw);
+      assert.equal(cleared.revision, 2);
+      assert.deepEqual(write(withdraw), cleared);
+      const final = read();
+      assert.deepEqual(final.questions, [baseline.questions[0], { ...baseline.questions[1], revision: 2 }]);
+      assert.deepEqual(facts(database), originalFacts);
+      assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 2);
+      assertStable(runtime, original, studentView);
+      return { original, studentView, marked, withdraw, cleared, final };
+    } finally {
+      runtime.close();
+    }
+  })();
+
+  const reopened = openLearningRuntime(settings);
+  try {
+    assert.deepEqual(reopened.readQuestionDeliveryReview(teacher, activityId, key, "choiceConfirmation"), completed.final);
+    assert.deepEqual(reopened.writeQuestionDeliveryVerdict(teacher, activityId, key, override, "choiceConfirmation"), completed.marked);
+    assert.deepEqual(reopened.writeQuestionDeliveryVerdict(teacher, activityId, key, completed.withdraw, "choiceConfirmation"), completed.cleared);
+    reviewAllowed = false;
+    assert.throws(() => reopened.readQuestionDeliveryReview(teacher, activityId, key, "choiceConfirmation"), denied);
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(teacher, activityId, key, override, "choiceConfirmation"), denied);
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(teacher, activityId, key, completed.withdraw, "choiceConfirmation"), denied);
+    assertStable(reopened, completed.original, completed.studentView);
+  } finally {
+    reopened.close();
+  }
+
+  const typedOnly = openLearningRuntime({ ...registered, authorizeQuestionDeliveryReview: () => true,
+    authorizeQuestionDeliveryVerdict: () => true });
+  try {
+    assert.throws(() => typedOnly.readQuestionDeliveryReview(teacher, activityId, key, "choiceConfirmation"), denied);
+    assert.throws(() => typedOnly.writeQuestionDeliveryVerdict(teacher, activityId, key, override, "choiceConfirmation"), denied);
+    assert.throws(() => typedOnly.readQuestionDeliveryReview(teacher, activityId, key, "verdicts"), denial(404, "REVIEW_NOT_FOUND"));
+    assert.throws(() => typedOnly.writeQuestionDeliveryVerdict(teacher, activityId, key, override), denied);
+    assertStable(typedOnly, completed.original, completed.studentView);
+  } finally {
+    typedOnly.close();
   }
 });

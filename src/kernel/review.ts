@@ -9,7 +9,7 @@ import { readingSubmissionView } from "./reading-progress.ts";
 import { assignedReading } from "./review-access.ts";
 import { activitySubmissions } from "./submission-store.ts";
 import { appendReview, eventView, repeatedReview } from "./verdict-history.ts";
-import { assessmentTarget, questionVerdicts } from "./verdict-state.ts";
+import { assessmentTarget, assessmentVerdictMode, questionVerdicts } from "./verdict-state.ts";
 
 export const selectionFeedbackInput = z.strictObject({
   protocolVersion: z.literal(1),
@@ -76,7 +76,7 @@ export function writeVerdict(
     const past = repeatedReview(database, activityId, reviewer, command);
     if (past) return past;
     requireVerdictTarget(database, activity, command);
-    return appendReview(database, activityId, reviewer, command, clock);
+    return appendReview(database, activityId, reviewer, command, clock, assessmentVerdictMode(activity));
   });
 }
 

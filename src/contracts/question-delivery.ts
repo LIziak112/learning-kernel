@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { choiceConfirmationInput, confirmedQuestionRevision } from "./choice-confirmation.ts";
-import type { ConfirmationScope } from "./choice-confirmation.ts";
 import { id, versionRef } from "./reading.ts";
 import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue, titledTextResponseValue } from "./response.ts";
-import type { VerdictCommand } from "./verdict.ts";
+import { choiceConfirmationVerdictMode } from "./verdict.ts";
+import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict } from "./verdict.ts";
 
 export const orderedTextFormat = z.literal("orderedTextBlanks");
 export const titledTextFormat = z.literal("textWithOptionalTitle");
@@ -32,19 +32,9 @@ export const questionDeliveryScoringKey = versionRef.extend({
 export const questionDeliveryReviewBasis = versionRef.extend({
   reviewCriteria: z.string().refine(criteria => criteria.trim().length > 0),
 });
-export const questionDeliveryReviewMode = z.literal("verdicts").optional();
-type QuestionDeliveryReviewScope = ConfirmationScope & {
-  reviewerId: string;
-  submissionId: string;
-  slotId: string;
-};
-export type AuthorizeQuestionDeliveryReview = (scope: Readonly<QuestionDeliveryReviewScope>) => boolean;
-export type AuthorizeQuestionDeliveryVerdict = (scope: Readonly<QuestionDeliveryReviewScope & {
-  targetId: string;
-  questionId: string;
-  questionVersion: number;
-  action: VerdictCommand["action"];
-}>) => boolean;
+export const questionDeliveryReviewMode = z.union([z.literal("verdicts"), choiceConfirmationVerdictMode]).optional();
+export type AuthorizeQuestionDeliveryReview = AuthorizeConfirmedReview;
+export type AuthorizeQuestionDeliveryVerdict = AuthorizeConfirmedVerdict;
 
 export const questionDeliveryDraftInput = responseDraftInput.extend({ value: deliveryValue });
 export const questionDeliveryDraftValue = questionDeliveryDraftInput.pick({ questionVersion: true, value: true });

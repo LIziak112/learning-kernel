@@ -1,6 +1,8 @@
 import { z } from "zod";
+import type { ConfirmationScope } from "./choice-confirmation.ts";
 import { id } from "./reading.ts";
 
+export const choiceConfirmationVerdictMode = z.literal("choiceConfirmation");
 export const verdictLocation = z.strictObject({ submissionId: z.uuid(), targetId: id, questionId: id });
 const review = verdictLocation.extend({
   protocolVersion: z.literal(1),
@@ -18,3 +20,16 @@ export const verdictReceipt = verdictLocation.extend({ id: z.uuid(), revision: z
 export type VerdictCommand = z.infer<typeof verdictCommand>;
 export type VerdictReceipt = z.infer<typeof verdictReceipt>;
 export type VerdictLocation = z.infer<typeof verdictLocation>;
+
+type ConfirmedReviewScope = ConfirmationScope & {
+  reviewerId: string;
+  submissionId: string;
+  slotId: string;
+};
+export type AuthorizeConfirmedReview = (scope: Readonly<ConfirmedReviewScope>) => boolean;
+export type AuthorizeConfirmedVerdict = (scope: Readonly<ConfirmedReviewScope & {
+  targetId: string;
+  questionId: string;
+  questionVersion: number;
+  action: VerdictCommand["action"];
+}>) => boolean;

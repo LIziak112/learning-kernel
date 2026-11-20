@@ -3,7 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { z } from "zod";
 import reading from "../practices/reading-library.json" with { type: "json" };
-import { submissionReceipt } from "../src/contracts/reading.ts";
+import { startReceipt, submissionReceipt } from "../src/contracts/reading.ts";
+import { openLearningRuntime } from "../src/server.ts";
+import type { VerdictCommand } from "../src/server.ts";
+import { frozenChoicePublication, questionVersions } from "./fixtures/frozen-choice.ts";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
 import {
   countFacts, firstChoices, get, post, prepareAnswers, prepareScenario, readingState, rejection, result,
@@ -225,3 +228,92 @@ async function score(origin: string, path: string, expected: number) {
   const state = await result(get(origin, path), readingState);
   assert.deepEqual(state.assessment, { status: "complete", correctCount: expected, questionCount: 3 });
 }
+
+test("原单选连续改判后清除与内置师生读面及撤销规则一致", async t => {
+  const file = scenarioDatabase(t);
+  const student = { role: "student", id: "student-1" } as const;
+  const reviewer = { role: "reviewer", id: "teacher-1" } as const;
+  const evaluator = { id: "choice-review-check", version: 1 };
+  const { practice, scoringKey } = frozenChoicePublication;
+  const [step] = practice.steps;
+  const questions = practice.questions.map(question => ({ ...question, version: questionVersions.get(question.id) ?? 1 }));
+  const [first, second] = questions;
+  assert.ok(first && second);
+  const runtime = openLearningRuntime({
+    databasePath: file,
+    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }) => choice === acceptedChoice }],
+    authorizeConfirmationRecovery: ({ studentId }) => studentId === student.id,
+    authorizeChoiceConfirmationReview: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+    authorizeChoiceConfirmationVerdict: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+  });
+  try {
+    runtime.publish({
+      practice: {
+        ...practice, questions,
+        steps: [{ ...step, submit: { ...step.submit, slots: { answers: {
+          ...step.submit.slots.answers, confirmFromDrafts: { allowUnanswered: false },
+        } } } }],
+        grading: { assessment: { ...practice.grading.assessment, evaluator } },
+        policy: {
+          ...practice.policy,
+          student: { ...practice.policy.student, passageScore: { whenAll: ["finalConfirmed", "allQuestionsJudged"],
+            group: "wholePassage", fields: ["correctCount", "questionCount"], allowSubsets: false, drilldown: false },
+          },
+          reviewer: { ...practice.policy.reviewer, fields: ["gradingBasis", "verdictHistory"], actions: ["reviseQuestionVerdict"] },
+        },
+      },
+      scoringKey,
+    });
+    await withScenarioServer(file, {}, async origin => {
+      const { activityId, stepAttemptId } = await result(post(origin, "/api/activities", {
+        practiceId: practice.id, operationId: "open-choice",
+      }), startReceipt);
+      const slotId = "answers";
+      const key = { protocolVersion: 1, stepAttemptId, operationId: "confirm-choice" } as const;
+      const revisions = [first, second].map(({ id: questionId, version: questionVersion }, index) => {
+        const draft = runtime.saveChoiceDraft(student, activityId, { ...key, operationId: "save", baseRevision: 0,
+          slotId, questionId, questionVersion, choice: index === 0 ? "1" : "0",
+        });
+        return { questionId, questionVersion, revision: draft.revision, original: { state: "uncollected" } as const };
+      });
+      const receipt = runtime.confirmChoices(student, activityId, { ...key, slotId, questions: revisions });
+      const original = runtime.recoverChoiceConfirmation(student, activityId, key);
+      assert.equal(original.evaluation?.correctCount, 1);
+      const studentPath = "/api/activities/" + activityId + "/assessment";
+      const teacherPath = "/api/reviews/" + activityId;
+      const teacherWrite = (command: VerdictCommand) => post(origin, teacherPath + "/verdicts", command, "teacher");
+      const readScore = async (correctCount: number) => {
+        const response = await result(get(origin, studentPath), readingState.pick({ assessment: true }));
+        assert.deepEqual(response.assessment, { status: "complete", questionCount: 2, correctCount });
+      };
+      await readScore(1);
+      const position = { protocolVersion: 1, submissionId: receipt.id, targetId: step.id, questionId: second.id } as const;
+      const early = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, {
+        ...position, operationId: "first-override", action: "override", expectedRevision: 0, correct: true, reason: "复核原答",
+      }, "choiceConfirmation");
+      await readScore(2);
+      const late = await result(teacherWrite({
+        ...position, operationId: "second-override", action: "override", expectedRevision: 1, correct: false, reason: "再次核对",
+      }), reviewReceipt);
+      await readScore(1);
+      const clear = { ...position, operationId: "clear-override", action: "withdraw", expectedRevision: 2,
+        withdrawId: late.id, reason: "清除覆盖判定" } as const;
+      const cleared = await result(teacherWrite(clear), reviewReceipt);
+      assert.equal(cleared.revision, 3);
+      assert.deepEqual(await result(teacherWrite(clear), reviewReceipt), cleared);
+      await readScore(1);
+      const teacherView = await result(get(origin, teacherPath, "teacher"), verdicts);
+      const expected = { source: "automatic", correct: false };
+      assert.deepEqual(teacherView.verdicts.find(item => item.questionId === second.id)?.effective, expected);
+      const publicView = runtime.readQuestionDeliveryReview(reviewer, activityId, key, "choiceConfirmation");
+      const verdict = publicView.questions.find(item => item.questionId === second.id);
+      assert.ok(verdict?.status === "judged");
+      assert.deepEqual(verdict.effective, expected);
+      await rejection(teacherWrite({ ...clear, operationId: "clear-superseded", expectedRevision: 3, withdrawId: early.id }),
+        409, "VERDICT_CONFLICT");
+      assert.deepEqual(runtime.recoverChoiceConfirmation(student, activityId, key), original);
+    });
+  } finally {
+    runtime.close();
+  }
+});

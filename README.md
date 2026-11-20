@@ -83,6 +83,10 @@ const activity = runtime.read(principal, receipt.activityId);
 
 宿主可在 `openLearningRuntime({ databasePath, choiceEvaluators: [{ id, version, evaluate }], authorizeConfirmationRecovery })` 注册同步纯函数评估器。在草稿确认槽的 `grading.assessment` 指定同一评估器版本和本次发布的评分键。确认时持久化评估任务。可信宿主使用原确认操作标识调用 `recoverChoiceConfirmation`，经现行授权后完成待评任务，并在 `evaluation` 取回评估器版本、冻结题数、正确题数及逐题布尔判定。回调逐题收到活动、步骤尝试、槽、练法和题目版本，以及本人的选项和私有正确选项。空答为 `null`，也参与评估。等待评估时缺少精确版本返回 `EVALUATOR_UNAVAILABLE`，修复配置后可用同一操作恢复。评估异常会回滚整份判定并保留待评任务。任务完成后直接读取已存判定。学生结果仍遵守发布时的公布条件，历史 `choice-key` 声明仍使用原评估规则。
 
+正式单选卷的教师判定按原活动和原确认键进行。宿主分别配置 `authorizeChoiceConfirmationReview` 和 `authorizeChoiceConfirmationVerdict`，按当前教师、学生、活动、步骤、确认操作、提交和槽位裁决。写入及重放的授权还包含评估目标、题号、冻结题版本和动作。用 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "choiceConfirmation")` 取原 `choiceConfirmation`、回执、评估目标和逐题修订。未配置相应授权时拒绝。
+
+用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command, "choiceConfirmation")` 改判或清除，命令沿用[题组判定](#混合整卷与逐题交付)的提交、目标、题号、预期修订和幂等语义。改判优先于自动评估，清除仅接受当前生效的教师事件，随后恢复有效自动判定。学生原答、原稿引用、自动评估及原确认回执保留。教师判定的有效来源和事件标识仅向获准的教师交付。可信宿主按当前公布和访问权限投影生效结果。现有三参评阅读取与 `"verdicts"` 模式用于题组交付。此能力复用版本 18 的存储。
+
 `node --test tests/installed-runtime.test.ts` 在两个独立临时项目安装同一个固定包，通过包名开卷和读取，在新进程打开原库，并验证严格类型检查、冻结版本和学生隔离。
 
 ### 逐题原值与待人工判定
