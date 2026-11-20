@@ -69,7 +69,7 @@ const capabilities: readonly ReadingCapability[] = [
     version: 1,
     audience: "student",
     requiredInputs: ["questions"],
-    optionalInputs: [],
+    optionalInputs: ["material"],
     outputs: ["questionDelivery"],
   },
   choiceKeyCapability,

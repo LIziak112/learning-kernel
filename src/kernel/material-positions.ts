@@ -17,7 +17,7 @@ export function validateMaterialPositions({ material, materials, practice }: Rea
     return;
   }
   if (material || practice.material) issue(["materials"], "显式材料位置不能与旧单材料声明混用");
-  requireSingleChoiceStep(practice.steps, issue);
+  requireSingleAnswerStep(practice.steps, issue);
   validateMaterialClosure(materials, uses, issue);
 }
 
@@ -27,10 +27,11 @@ function materialUses(steps: readonly ReadingStep[]): MaterialUse[] {
     : []));
 }
 
-function requireSingleChoiceStep(steps: ReadingPublication["practice"]["steps"], issue: Issue) {
+function requireSingleAnswerStep(steps: ReadingPublication["practice"]["steps"], issue: Issue) {
   const [step] = steps;
-  if (steps.length !== 1 || step.tool.id !== "single-choice-group" || step.submit.purpose !== "finalAnswer") {
-    issue(["practice", "steps"], "显式材料位置须绑定一个单步整卷单选");
+  if (steps.length !== 1 || step.submit.purpose !== "finalAnswer" ||
+    (step.tool.id !== "single-choice-group" && step.tool.id !== "question-delivery")) {
+    issue(["practice", "steps"], "显式材料位置须绑定到单步单选或题组交付的最终作答");
   }
 }
 

@@ -209,6 +209,166 @@ function mixedGroup(version = 1) {
   } satisfies PublicationInput;
 }
 
+const firstMaterial = { id: "first-guide", version: 1, source: "甲", title: "甲卷资料",
+  paragraphs: [{ id: "body", text: "甲的位置说明。" }] };
+const secondMaterial = { id: "second-guide", version: 1, source: "乙", title: "乙卷资料",
+  paragraphs: [{ id: "body", text: "乙的初版位置说明。" }] };
+const revisedMaterial = { ...secondMaterial, version: 2, paragraphs: [{ id: "body", text: "乙的新版位置说明。" }] };
+
+function mixedMaterials(mode: "whole" | "perQuestion", second = secondMaterial, version = 1) {
+  const { practice, scoringKey } = mixedGroup();
+  const [mixedStep] = practice.steps;
+  return {
+    materials: [firstMaterial, second],
+    practice: { ...practice, version, id: `mixed-materials-${mode}`, questions: [
+      { ...strictChoice, response: "choice" }, { ...judgeQuestion, response: "booleanOrString" },
+    ], steps: [{ ...mixedStep, inputs: { ...step.inputs,
+      first: { from: "material", positionId: "opening-material", material: { id: firstMaterial.id, version: firstMaterial.version } },
+      second: { from: "material", positionId: "closing-material", material: { id: second.id, version: second.version } },
+    }, submit: { ...mixedStep.submit, slots: { answers: { ...mixedStep.submit.slots.answers,
+      delivery: mode === "whole" ? { mode } : { mode, questionSlots: { choice: "choice-delivery", judge: "judge-delivery" } },
+    } } } }] },
+    scoringKey: { ...scoringKey, acceptedByQuestion: {
+      choice: scoringKey.acceptedByQuestion.choice, judge: scoringKey.acceptedByQuestion.judge,
+    } },
+  } satisfies PublicationInput;
+}
+
+function assertMaterialPositions(view: ReturnType<typeof deliveredView>, second = secondMaterial) {
+  assert.deepEqual(Object.keys(view.inputs).sort(), ["first", "questions", "second"]);
+  assert.equal(view.material, undefined);
+  assert.deepEqual(view.inputs.first, { from: "material", positionId: "opening-material", material: firstMaterial });
+  assert.deepEqual(view.inputs.second, { from: "material", positionId: "closing-material", material: second });
+  assert.doesNotMatch(JSON.stringify(view), /delivery-key|scoringKey|acceptedByQuestion|acceptedChoice|acceptedResponse|evaluation|requestQuestions/);
+}
+
+for (const mode of ["whole", "perQuestion"] as const) {
+  test(`混合题组 ${mode} 在材料换版与重开后仍保留原位置和确认`, t => {
+    const databasePath = scenarioDatabase(t);
+    let authorized = true;
+    const options = settings(databasePath, () => authorized);
+    const runtime = openLearningRuntime(options);
+    const initial = mixedMaterials(mode);
+    const { id: practiceId } = initial.practice;
+    const opening = { protocolVersion: 1, practiceId, practiceVersion: 2, operationId: "open-v2" } as const;
+    let previous: Activity;
+    let next: Activity;
+    let confirm: QuestionDeliveryInput;
+    let receipt: ReturnType<Runtime["confirmQuestionDelivery"]>;
+    let firstReceipt: ReturnType<Runtime["confirmQuestionDelivery"]> | undefined;
+    try {
+      runtime.publish(initial);
+      previous = open(runtime, practiceId);
+      assertMaterialPositions(deliveredView(runtime, previous));
+      const choice = runtime.saveQuestionDeliveryDraft(student, previous.activityId, { ...target(previous, strictChoice), value: "1" });
+      const judge = runtime.saveQuestionDeliveryDraft(student, previous.activityId, { ...target(previous, judgeQuestion), value: false });
+      const active = deliveredView(runtime, previous);
+      assert.deepEqual(active.questionDeliveryDrafts, [choice, judge]);
+      assertMaterialPositions(active);
+
+      runtime.publish(mixedMaterials(mode, revisedMaterial, 2));
+      next = runtime.start(student, opening);
+      assert.notEqual(next.activityId, previous.activityId);
+      assertMaterialPositions(deliveredView(runtime, next), revisedMaterial);
+      const choiceRevision = revision(strictChoice, choice.revision);
+      const revisions = [choiceRevision, revision(judgeQuestion, judge.revision)];
+      if (mode === "perQuestion") {
+        firstReceipt = runtime.confirmQuestionDelivery(student, previous.activityId, byQuestion(previous, choiceRevision, "first-only"));
+        assert.equal(firstReceipt.slotId, "choice-delivery");
+        const remaining = deliveredView(runtime, previous);
+        assert.equal(remaining.status, "active");
+        assert.deepEqual(remaining.questionDeliveryDrafts, [judge]);
+        assertMaterialPositions(remaining);
+      }
+      confirm = { ...intent(previous, revisions), source: mode === "whole" ? "whole" : "finish" };
+      receipt = runtime.confirmQuestionDelivery(student, previous.activityId, confirm);
+      assert.equal(receipt.slotId, "answers");
+    } finally { runtime.close(); }
+
+    const reopened = openLearningRuntime(options);
+    try {
+      assert.deepEqual(open(reopened, practiceId), previous);
+      assert.deepEqual(reopened.start(student, opening), next);
+      const oldView = deliveredView(reopened, previous);
+      assert.equal(oldView.status, "completed");
+      assertMaterialPositions(oldView);
+      const newView = deliveredView(reopened, next);
+      assert.equal(newView.status, "active");
+      assert.deepEqual(newView.questionDeliveryDrafts, []);
+      assertMaterialPositions(newView, revisedMaterial);
+
+      const key = recoveryKey(confirm);
+      const recovered = reopened.recoverQuestionDelivery(student, previous.activityId, key);
+      assert.deepEqual(recovered.practice, { id: practiceId, version: 1 });
+      assert.deepEqual(recovered.receipt, receipt);
+      assert.deepEqual(reopened.confirmQuestionDelivery(student, previous.activityId, confirm), receipt);
+      const judge = { ...revision(judgeQuestion, 1), value: false };
+      const choice = { ...revision(strictChoice, 1), value: "1" };
+      assert.deepEqual(recovered.confirmation.questions, mode === "whole" ? [choice, judge] : [judge]);
+      if (firstReceipt) {
+        const first = reopened.recoverQuestionDelivery(student, previous.activityId, { ...key, operationId: "first-only" });
+        assert.deepEqual(first.receipt, firstReceipt);
+        assert.deepEqual(first.confirmation.questions, [choice]);
+      }
+      assert.deepEqual(oldView.questionDeliveries.map(delivery => delivery.receipt), firstReceipt ? [firstReceipt, receipt] : [receipt]);
+      assert.throws(() => reopened.read(outsider, previous.activityId), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => reopened.recoverQuestionDelivery(outsider, previous.activityId, key), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => reopened.recoverQuestionDelivery(student, next.activityId, key), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => reopened.recoverQuestionDelivery(student, next.activityId, { ...key, stepAttemptId: next.stepAttemptId }),
+        { status: 404, code: "CONFIRMATION_NOT_FOUND" });
+      authorized = false;
+      assert.throws(() => reopened.recoverQuestionDelivery(student, previous.activityId, key), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => reopened.confirmQuestionDelivery(student, previous.activityId, confirm), { status: 403, code: "FORBIDDEN" });
+      authorized = true;
+      using database = new DatabaseSync(databasePath);
+      database.prepare("INSERT INTO reading_reviews (activity_id, reviewer_id, student_active) VALUES (?, ?, 0)")
+        .run(previous.activityId, "fixture-reviewer");
+      assert.throws(() => reopened.read(student, previous.activityId), { status: 403, code: "FORBIDDEN" });
+      assert.throws(() => reopened.recoverQuestionDelivery(student, previous.activityId, key), { status: 403, code: "FORBIDDEN" });
+      assertMaterialPositions(deliveredView(reopened, next), revisedMaterial);
+    } finally { reopened.close(); }
+  });
+}
+
+test("混合题组拒绝重复位置、缺少固定版本和未使用材料，读取遇到损坏版本时拒绝回退", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(settings(databasePath));
+  try {
+    const valid = mixedMaterials("whole");
+    const [mixedStep] = valid.practice.steps;
+    assert.ok(mixedStep);
+    const withSecond = (second: object) => ({ ...valid, practice: { ...valid.practice, steps: [
+      { ...mixedStep, inputs: { ...mixedStep.inputs, second } },
+    ] } });
+    const { first, second } = mixedStep.inputs;
+    const path = ["practice", "steps", 0, "inputs", "second"] as const;
+    const invalid: [unknown, (string | number)[][]][] = [
+      [withSecond({ ...second, positionId: first.positionId }), [[...path, "positionId"]]],
+      [withSecond({ ...second, material: { ...second.material, version: 2 } }), [[...path, "material"], ["materials", 1]]],
+      [{ ...valid, materials: [...valid.materials, { ...secondMaterial, id: "unused-material" }] }, [["materials", 2]]],
+    ];
+    for (const [candidate, expectedPaths] of invalid) {
+      assert.throws(() => Reflect.apply(runtime.publish, runtime, [candidate]), error => {
+        assert.ok(error instanceof ZodError);
+        assert.deepEqual(error.issues.map(issue => issue.path), expectedPaths);
+        return true;
+      });
+      assert.throws(() => open(runtime, valid.practice.id), { code: "PRACTICE_NOT_FOUND" });
+    }
+
+    runtime.publish(valid);
+    runtime.publish(mixedMaterials("whole", revisedMaterial, 2));
+    const previous = open(runtime, valid.practice.id);
+    const next = runtime.start(student, { protocolVersion: 1, practiceId: valid.practice.id, practiceVersion: 2, operationId: "open-v2" });
+    using database = new DatabaseSync(databasePath);
+    database.prepare("UPDATE materials SET definition = ? WHERE id = ? AND version = ?")
+      .run(JSON.stringify(firstMaterial), secondMaterial.id, secondMaterial.version);
+    assert.throws(() => runtime.read(student, previous.activityId), /引用的材料与已发布版本不一致/);
+    assertMaterialPositions(deliveredView(runtime, next), revisedMaterial);
+    assert.throws(() => runtime.read(outsider, previous.activityId), { status: 403, code: "FORBIDDEN" });
+  } finally { runtime.close(); }
+});
+
 test("A 同组混合作答原子确认，按冻结私钥评估并重开取回同一结果", t => {
   const databasePath = scenarioDatabase(t);
   const observed: EvaluationInput[] = [];
