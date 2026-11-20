@@ -1351,6 +1351,47 @@ test("切换只能改变题组交付范围，目标题面、材料、评估器�
   }
 });
 
+test("切换拒绝重新排列题目的文本选项标识", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(settings(databasePath));
+  const options = { red: "红", green: "绿", blue: "蓝" };
+  const publication = (mode: "whole" | "perQuestion", version: number, options: Record<string, string>) => {
+    const { practice, materials, scoringKey } = switchableDelivery(mode, version);
+    return {
+      materials,
+      practice: { ...practice, questions: practice.questions.map(question => question.id === strictChoice.id ? { ...question, options } : question) },
+      scoringKey: { ...scoringKey, acceptedByQuestion: { ...scoringKey.acceptedByQuestion,
+        choice: { response: "choice", acceptedChoice: "green" } } },
+    } satisfies PublicationInput;
+  };
+  try {
+    const original = publication("whole", 1, options);
+    runtime.publish(original);
+    runtime.publish(publication("perQuestion", 2, Object.fromEntries(Object.entries(options).reverse())));
+    const activity = runtime.prepare(student, { protocolVersion: 1, practiceId: original.practice.id, practiceVersion: 1, operationId: "option-order" });
+    runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...target(activity, strictChoice), value: "green" });
+    const before = deliveredView(runtime, activity);
+    const input = before.inputs.questions;
+    assert.ok(input?.from === "questions" && input.questions[0]);
+    assert.deepEqual(Object.keys(input.questions[0].options), ["red", "green", "blue"]);
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, 2)),
+      { status: 409, code: "QUESTION_DELIVERY_MODE_CONFLICT" });
+    assert.deepEqual(deliveredView(runtime, activity), before);
+    const compatible = publication("perQuestion", 3, options);
+    const [step] = compatible.practice.steps;
+    runtime.publish({ ...compatible, practice: { ...compatible.practice, steps: [
+      { ...step, inputs: Object.fromEntries(Object.entries(step.inputs).reverse()) },
+    ] } });
+    const changed = runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, 3));
+    assert.equal(changed.practiceVersion, 3);
+    const actual = deliveredView(runtime, activity).inputs.questions;
+    assert.ok(actual?.from === "questions" && actual.questions[0]);
+    assert.deepEqual(Object.keys(actual.questions[0].options), ["red", "green", "blue"]);
+  } finally {
+    runtime.close();
+  }
+});
+
 test("无自动评分的题组可切换，人工评阅依据只接受同内容换版", t => {
   const databasePath = scenarioDatabase(t);
   const runtime = openLearningRuntime({ databasePath, authorizeConfirmationRecovery: () => true });

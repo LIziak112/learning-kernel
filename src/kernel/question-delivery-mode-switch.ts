@@ -48,12 +48,13 @@ function switchableSlots(database: DatabaseSync, current: Practice, next: Practi
 }
 
 function frozenDefinition(
-  { version, steps: [step, ...remaining], grading: { assessment, manualReview, ...grading }, ...practice }: Practice,
+  { version, questions, steps: [step, ...remaining], grading: { assessment, manualReview, ...grading }, ...practice }: Practice,
   [slotId, { delivery, ...slot }]: [string, DeliverySlot],
 ) {
   const { keyRef, ...automatic } = assessment ?? {};
   return {
     ...practice,
+    questions: questions.map(({ options, ...question }) => ({ ...question, options: Object.entries(options) })),
     steps: [{ ...step, submit: { ...step.submit, slots: { ...step.submit.slots, [slotId]: slot } } }, ...remaining],
     grading: { ...grading, assessment: assessment ? automatic : undefined, manualReview: manualReview !== undefined },
   };
