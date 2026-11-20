@@ -3,7 +3,7 @@ import type { ValueType } from "../builtins/reading-capabilities.ts";
 import { findChoiceEvaluator } from "../contracts/choice-evaluation.ts";
 import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
 import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
-import type { IndexResponseEvaluatorRegistration, OrderedTextEvaluatorRegistration, ResponseEvaluatorRegistration } from "../contracts/response-evaluation.ts";
+import type { IndexResponseEvaluatorRegistration, OrderedTextEvaluatorRegistration, ResponseEvaluatorRegistration, TitledTextEvaluatorRegistration } from "../contracts/response-evaluation.ts";
 import type { ResponseFormat } from "../contracts/response.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
@@ -16,6 +16,7 @@ export type PublicationEvaluators = {
   scalar?: readonly ResponseEvaluatorRegistration[];
   indexes?: readonly IndexResponseEvaluatorRegistration[];
   orderedText?: readonly OrderedTextEvaluatorRegistration[];
+  titledText?: readonly TitledTextEvaluatorRegistration[];
 };
 
 export function validateBindings(

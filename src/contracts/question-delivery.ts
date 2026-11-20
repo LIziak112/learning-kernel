@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { choiceConfirmationInput, confirmedQuestionRevision } from "./choice-confirmation.ts";
 import { id, versionRef } from "./reading.ts";
-import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue } from "./response.ts";
+import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue, titledTextResponseValue } from "./response.ts";
 
 export const orderedTextFormat = z.literal("orderedTextBlanks");
+export const titledTextFormat = z.literal("textWithOptionalTitle");
 export const choiceAndResponseFormat = z.enum(["choice", "booleanOrString", "optionIndexArray"]);
-const deliveryValue = z.union([responseValue, indexResponseValue, orderedTextResponseValue]);
+const deliveryValue = z.union([responseValue, indexResponseValue, orderedTextResponseValue, titledTextResponseValue]);
 
 export function orderedQuestionValues<T>(values: Record<string, T>) {
   return Object.fromEntries(Object.entries(values).sort(([a], [b]) => a === b ? 0 : a < b ? -1 : 1));
@@ -20,6 +21,7 @@ const questionDeliveryKey = z.discriminatedUnion("response", [
   z.strictObject({ response: z.literal("booleanOrString"), acceptedResponse: z.boolean() }),
   z.strictObject({ response: z.literal("optionIndexArray"), acceptedIndexes: z.array(optionIndex).min(1) }),
   z.strictObject({ response: orderedTextFormat, acceptedBlanks: z.array(z.array(z.string().min(1))).min(1) }),
+  z.strictObject({ response: titledTextFormat }),
 ]);
 export const questionDeliveryScoringKey = versionRef.extend({
   acceptedByQuestion: z.record(id, questionDeliveryKey).transform(orderedQuestionValues),

@@ -7,7 +7,7 @@ import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { openLearningRuntime, QuestionDeliveryConflict } from "../src/server.ts";
 import type {
   ChoiceConfirmationInput, ChoiceEvaluationInput, IndexResponseEvaluationInput, PublicationInput,
-  OrderedTextEvaluationInput, QuestionDeliveryInput, ResponseEvaluationInput, VerifyOriginal,
+  OrderedTextEvaluationInput, QuestionDeliveryInput, ResponseEvaluationInput, TitledTextEvaluationInput, VerifyOriginal,
 } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
@@ -702,6 +702,8 @@ test("有序文本必答只接受含非空白文本的数组，失败保留可�
     runtime.publish(publication);
     const activity = open(runtime, publication.practice.id);
     const save = target(activity, question);
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...save, value: { body: "独立文字原值" } }),
+      { status: 422, code: "INVALID_RESPONSE" });
     const confirm = (draftRevision: number) => runtime.confirmQuestionDelivery(student, activity.activityId,
       { ...intent(activity, [revision(question, draftRevision)]), source: "whole" });
     for (const [baseRevision, value] of [[0, []], [1, ["", "\r\n\u3000"]]] satisfies [number, string[]][]) {
@@ -751,4 +753,226 @@ test("有序文本声明拒绝错位私有键和缺少同版注册，失败不�
       practices: 0, scoring_keys: 0, activities: 0, submissions: 0, completions: 0, evaluation_tasks: 0, performances: 0,
     });
   } finally { registered.close(); }
+});
+
+const titledText = "textWithOptionalTitle" as const;
+const writtenQuestion = { id: "written", version: 2, prompt: "写下你的观察。", response: titledText };
+const titledTextKey = { response: titledText };
+
+function titledGroup(id: string, allowUnanswered: boolean, questions = [writtenQuestion]) {
+  const key = { ...keyRef, id: `${id}-key` };
+  return {
+    practice: { ...base, id, questions, grading: { assessment: { ...grading.assessment, keyRef: key } }, policy: responsePolicy,
+      steps: [{ ...step, tool: { id: "question-delivery", version: 1 },
+        submit: { purpose: "finalAnswer", slots: { answers: {
+          type: "questionDelivery", ...slot, confirmFromDrafts: { allowUnanswered }, delivery: { mode: "whole" },
+        } } },
+      }],
+    },
+    scoringKey: { ...key, acceptedByQuestion: Object.fromEntries(questions.map(question => [question.id, titledTextKey])) },
+  } satisfies PublicationInput;
+}
+
+test("带可选标题的正文发布要求专用精确版本评估器", t => {
+  const runtime = openLearningRuntime(settings(scenarioDatabase(t)));
+  try {
+    assert.throws(() => runtime.publish(titledGroup("written-assessment", false)),
+      (error: unknown) => error instanceof ZodError
+      && error.issues.some(issue => issue.message === "未注册 textWithOptionalTitle 所需的精确评估版本"));
+  } finally { runtime.close(); }
+});
+
+
+function titledSettings(databasePath: string, evaluate: (input: TitledTextEvaluationInput) => { status: "needsReview" } = () => ({ status: "needsReview" })) {
+  return { ...settings(databasePath), titledTextEvaluators: [{ ...evaluator, evaluate }] };
+}
+
+test("必答按正文拒绝仅标题，拒绝不写确认、评估任务或表现", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(titledSettings(databasePath));
+  try {
+    const publication = titledGroup("required-written", false);
+    runtime.publish(publication);
+    const activity = open(runtime, publication.practice.id);
+    const save = target(activity, writtenQuestion);
+    const confirm = (atRevision: number) => runtime.confirmQuestionDelivery(student, activity.activityId, {
+      ...intent(activity, [revision(writtenQuestion, atRevision)]), source: "whole",
+    });
+    const failure = { status: 422, code: "UNANSWERED_QUESTION" };
+    assert.throws(() => confirm(0), failure);
+    const title = "  仅标题  ";
+    for (const [baseRevision, body] of ["", " \r\n\u3000"].entries()) {
+      const value = { body, title };
+      const draft = runtime.saveQuestionDeliveryDraft(student, activity.activityId,
+        { ...save, value, baseRevision, operationId: `blank-${baseRevision}` });
+      assert.equal(draft.revision, baseRevision + 1);
+      assert.deepEqual(draft.value, value);
+      assert.throws(() => confirm(draft.revision), failure);
+      assert.equal(deliveredView(runtime, activity).status, "active");
+      assert.deepEqual(deliveredView(runtime, activity).questionDeliveryDrafts, [draft]);
+    }
+    assert.deepEqual(counts(databasePath), {
+      practices: 1, scoring_keys: 1, activities: 1, submissions: 0, completions: 0, evaluation_tasks: 0, performances: 0,
+    });
+    const draft = runtime.saveQuestionDeliveryDraft(student, activity.activityId, {
+      ...save, baseRevision: 2, operationId: "text", value: { body: "  正文  ", title },
+    });
+    assert.ok(confirm(draft.revision).id);
+    assert.deepEqual(counts(databasePath), {
+      practices: 1, scoring_keys: 1, activities: 1, submissions: 1, completions: 1, evaluation_tasks: 1, performances: 1,
+    });
+  } finally { runtime.close(); }
+});
+
+test("文字原稿精确重开，缺稿与空正文分离，旧版回执和评估仅执行一次", t => {
+  const databasePath = scenarioDatabase(t);
+  const recorded: TitledTextEvaluationInput[] = [];
+  let mayRecover = true;
+  const evaluationV2 = { ...evaluator, version: 2 };
+  const baseConfig = titledSettings(databasePath, input => {
+    recorded.push(input);
+    return { status: "needsReview" };
+  });
+  const config = {
+    ...baseConfig, authorizeConfirmationRecovery: () => mayRecover,
+    titledTextEvaluators: [...baseConfig.titledTextEvaluators, { ...evaluationV2, evaluate() { throw new Error("须使用冻结评估版本"); } }],
+  };
+  const questions = ["empty", "whitespace", "omitted-title", "empty-title", "missing"].map(id => ({ ...writtenQuestion, id }));
+  const body = "  第一段\n\n第二段  ";
+  const raw = [{ body: "", title: "  原标题  " }, { body: " \t\n\u3000", title: "标题" }, { body }, { body, title: "" }, null];
+  const publication = titledGroup("optional-written", true, questions);
+  const activityAndRequest = (() => {
+    const runtime = openLearningRuntime(config);
+    try {
+      runtime.publish(publication);
+      const activity = open(runtime, publication.practice.id);
+      const frozen = questions.map((question, index) => {
+        const value = raw[index];
+        if (!value) return revision(question, 0);
+        const input = { ...target(activity, question), value };
+        const saved = runtime.saveQuestionDeliveryDraft(student, activity.activityId, input);
+        assert.deepEqual(runtime.saveQuestionDeliveryDraft(student, activity.activityId, input), saved);
+        assert.deepEqual(saved.value, value);
+        return revision(question, saved.revision);
+      });
+      const key = { ...publication.scoringKey, version: 2 };
+      runtime.publish({ practice: {
+        ...publication.practice, version: 2,
+        questions: questions.map(question => ({ ...question, version: 4 })),
+        grading: { assessment: { ...grading.assessment, evaluator: evaluationV2, keyRef: { id: key.id, version: key.version } } },
+      }, scoringKey: key });
+      return { activity, request: { ...intent(activity, frozen), source: "whole" } as const };
+    } finally { runtime.close(); }
+  })();
+  const { activity, request } = activityAndRequest;
+  const write = openLearningRuntime({ ...config, titledTextEvaluators: config.titledTextEvaluators.slice(1) });
+  let receipt: ReturnType<Runtime["confirmQuestionDelivery"]>;
+  const key = recoveryKey(request);
+  try {
+    const drafts = new Map(deliveredView(write, activity).questionDeliveryDrafts.map(item => [item.questionId, item.value]));
+    assert.deepEqual(questions.map(({ id }) => drafts.get(id) ?? null), raw);
+    receipt = write.confirmQuestionDelivery(student, activity.activityId, request);
+    assert.deepEqual(write.confirmQuestionDelivery(student, activity.activityId, request), receipt);
+    assert.throws(() => write.recoverQuestionDelivery(student, activity.activityId, key),
+      { status: 503, code: "EVALUATOR_UNAVAILABLE" });
+    assert.equal(recorded.length, 0);
+    assert.deepEqual(counts(databasePath), {
+      practices: 2, scoring_keys: 2, activities: 1, submissions: 1, completions: 1, evaluation_tasks: 1, performances: 2,
+    });
+    using db = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(db.prepare("SELECT status FROM evaluation_tasks").get()?.status, "pending");
+  } finally { write.close(); }
+
+  const runtime = openLearningRuntime(config);
+  try {
+    const result = runtime.recoverQuestionDelivery(student, activity.activityId, key);
+    assert.deepEqual(result.receipt, receipt);
+    assert.deepEqual(result.confirmation.questions.map(question => [question.revision, question.value]),
+      raw.map(value => [value === null ? 0 : 1, value]));
+    assert.deepEqual(result.draftChangeCounts.map(({ changeCount }) => changeCount), [1, 1, 1, 1, 0]);
+    assert.deepEqual(result.practice, { id: publication.practice.id, version: 1 });
+    assert.deepEqual(result.evaluation.evaluator, evaluator);
+    assert.equal(result.evaluation.needsReviewCount, 5);
+    assert.equal(result.evaluation.correctCount, 0);
+    assert.deepEqual(recorded, questions.map((question, index) => ({
+      activityId: activity.activityId, stepAttemptId: activity.stepAttemptId, slotId: "answers",
+      practice: { id: publication.practice.id, version: 1 }, questionId: question.id, questionVersion: question.version, value: raw[index],
+    })));
+    const view = deliveredView(runtime, activity);
+    assert.deepEqual(view.questionDeliveries, [{ receipt, questionDelivery: result.confirmation }]);
+    assert.doesNotMatch(JSON.stringify(view), /acceptedByQuestion|needsReview|delivery-key/);
+    assert.throws(() => runtime.recoverQuestionDelivery(outsider, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
+    assert.deepEqual(runtime.recoverQuestionDelivery(student, activity.activityId, key), result);
+    mayRecover = false;
+    assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
+    assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, request), { status: 403, code: "FORBIDDEN" });
+    assert.equal(recorded.length, 5);
+    using db = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(db.prepare("SELECT status FROM evaluation_tasks").get()?.status, "done");
+    assert.deepEqual(db.prepare("SELECT unit_id AS unit FROM performances ORDER BY unit_id").all().map(row => row.unit),
+      ["question:empty-title", "question:omitted-title"]);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM response_review_requirements").get()?.n, 5);
+  } finally { runtime.close(); }
+});
+
+test("文字值和私有形态严格隔离，空标题变化单独推进修订", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(titledSettings(databasePath));
+  try {
+    const written = titledGroup("isolated-written", false);
+    const wrongShape = { response: "booleanOrString", acceptedResponse: true } as const;
+    const publicationWithKey = (basis: unknown) => ({ ...written, scoringKey: {
+      ...written.scoringKey, acceptedByQuestion: { written: basis },
+    } });
+    const scalar = responseGroup("isolated-scalar", "booleanOrString");
+    for (const candidate of [
+      publicationWithKey(wrongShape), publicationWithKey({ ...titledTextKey, acceptedAnswer: "私有标记" }),
+      { practice: { ...scalar.practice, questions: [writtenQuestion] }, scoringKey: scalar.scoringKey },
+      { ...written, practice: { ...written.practice, grading: { assessment: { ...written.practice.grading.assessment, evaluator: { ...evaluator, version: 2 } } } } },
+    ]) {
+      assert.throws(() => Reflect.apply(runtime.publish, runtime, [candidate]), ZodError);
+    }
+    assert.deepEqual(counts(databasePath), {
+      practices: 0, scoring_keys: 0, activities: 0, submissions: 0, completions: 0, evaluation_tasks: 0, performances: 0,
+    });
+    runtime.publish(written);
+    runtime.publish(scalar);
+    const activity = open(runtime, written.practice.id);
+    const input = target(activity, writtenQuestion);
+    for (const value of [{ title: "无正文" }, { body: 2 }, { body: "", title: null }, { body: "", title: 4 }, { body: "", kind: "其它" }, null]) {
+      assert.throws(() => Reflect.apply(runtime.saveQuestionDeliveryDraft, runtime, [student, activity.activityId, { ...input, value }]), ZodError);
+    }
+    for (const value of ["纯字符串", false, [0], ["原槽"], []]) {
+      assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...input, value }),
+        { status: 422, code: "INVALID_RESPONSE" });
+    }
+    assert.deepEqual(deliveredView(runtime, activity).questionDeliveryDrafts, []);
+    const body = "正文";
+    const first: ReturnType<Runtime["saveQuestionDeliveryDraft"]> = Reflect.apply(runtime.saveQuestionDeliveryDraft, runtime,
+      [student, activity.activityId, { ...input, value: { body, title: undefined } }]);
+    assert.deepEqual(first, runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...input, value: { body } }));
+    assert.deepEqual(first.value, { body });
+    const different = { ...input, value: { body, title: "" } };
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, different),
+      { status: 409, code: "OPERATION_CONFLICT" });
+    const second = runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...different, operationId: "title", baseRevision: 1 });
+    const third = runtime.saveQuestionDeliveryDraft(student, activity.activityId, {
+      ...input, operationId: "body", baseRevision: 2, value: { body: "另一段", title: "" },
+    });
+    assert.deepEqual([second.revision, second.value, third.revision, third.value], [2, { body, title: "" }, 3, { body: "另一段", title: "" }]);
+
+    const plain = open(runtime, scalar.practice.id);
+    const scalarInput = { ...target(plain, judgeQuestion), value: { body } };
+    assert.throws(() => Reflect.apply(runtime.saveResponseDraft, runtime, [student, plain.activityId, scalarInput]), ZodError);
+    assert.throws(() => runtime.saveQuestionDeliveryDraft(student, plain.activityId, scalarInput),
+      { status: 422, code: "INVALID_SLOT" });
+    const mixed = mixedGroup();
+    runtime.publish(mixed);
+    const legacy = open(runtime, mixed.practice.id);
+    for (const [question, code] of [[strictChoice, "INVALID_CHOICE"], [judgeQuestion, "INVALID_RESPONSE"], [selectedIndexes, "INVALID_OPTION_INDEX"]] as const) {
+      assert.throws(() => runtime.saveQuestionDeliveryDraft(student, legacy.activityId, { ...target(legacy, question), value: { body } }),
+        { status: 422, code });
+    }
+    assert.deepEqual(deliveredView(runtime, legacy).questionDeliveryDrafts, []);
+  } finally { runtime.close(); }
 });

@@ -53,7 +53,7 @@ export function readResponseDrafts<Value extends StoredResponseValue>(
   return readQuestionDrafts(database, activityId, stepAttemptId, schema);
 }
 
-export function saveResponseDraft<Value extends StoredResponseValue>(
+export function saveResponseDraft<Value extends ResponseValue | readonly number[]>(
   database: DatabaseSync, studentId: string, activityId: string, input: DraftInput<Value>,
   mode: CurrentChoiceDraftMode, clock: () => Date, draftMode: ResponseDraftMode<Value>,
 ) {

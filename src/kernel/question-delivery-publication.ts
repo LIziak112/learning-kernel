@@ -106,7 +106,8 @@ function validateDeliveryAssessment(
     issue(["practice", "grading", "assessment", "from"], "须绑定本组逐题交付的逻辑槽");
   }
   const evaluators = {
-    choice: registered.choice, booleanOrString: registered.scalar, optionIndexArray: registered.indexes, orderedTextBlanks: registered.orderedText,
+    choice: registered.choice, booleanOrString: registered.scalar, optionIndexArray: registered.indexes,
+    orderedTextBlanks: registered.orderedText, textWithOptionalTitle: registered.titledText,
   };
   for (const format of formats) {
     const available: readonly (VersionRef & { evaluate: unknown })[] = evaluators[format] ?? [];
@@ -134,7 +135,8 @@ function keyMatchesQuestion(key: QuestionDeliveryKey, question: Question) {
   const { options } = question;
   switch (key.response) {
     case "choice": return Object.hasOwn(options, key.acceptedChoice);
-    case "booleanOrString": return true;
+    case "booleanOrString":
+    case "textWithOptionalTitle": return true;
     case "optionIndexArray": return key.acceptedIndexes.every(index => Object.hasOwn(options, String(index)));
     case "orderedTextBlanks": return question.response === "orderedTextBlanks" && key.acceptedBlanks.length === question.blankCount;
   }

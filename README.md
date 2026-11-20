@@ -101,7 +101,7 @@ const activity = runtime.read(principal, receipt.activityId);
 
 ### 混合整卷与逐题交付
 
-单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray` 或 `orderedTextBlanks`。私有 `scoringKey.acceptedByQuestion` 固定同一题型和对应的选项 ID、布尔键、索引集合或逐空参考。声明的评估器标识和版本必须在实际使用的每种评估注册中存在。评估时只取得该确认中的题、原值和该题评分键。
+单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。私有 `scoringKey.acceptedByQuestion` 固定每题的形态和对应的评分数据。声明的评估器标识和版本必须在实际使用的每种评估注册中存在。评估时只取得该确认中的题、原值和该题评分键。
 
 有序填空题声明正整数 `blankCount`，可省略 `options`。私有条目为 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
 
@@ -115,7 +115,9 @@ const activity = runtime.read(principal, receipt.activityId);
 
 填空按原序保留 `string[]`、空白和数组长度，允许少于或多于题面的空位数。数组为空或所有项去除首尾空白后均为空时不计作答，必答槽拒绝确认。显式全空和空数组仍存有草稿修订，未存稿为 `null`。宿主根据自己的冻结策略处理待人工判定。
 
-混合槽复用 SQLite v16。发布有序填空的宿主须使用支持该形态的运行时。[独立宿主示例](tests/fixtures/question-delivery-consumer.mts)
+带可选标题的文字题使用 `response: "textWithOptionalTitle"`，可省略 `options`，私有条目只需 `{ response: "textWithOptionalTitle" }`。草稿值为 `{ body: string, title?: string }`，确认后原样保留正文及标题，区分缺省标题、空标题和未存稿。纯空白或空正文不登记表现。允许未作答的槽仍可确认仅有标题的作品，必答槽须等正文含有非空白字符后才能确认。宿主在 `titledTextEvaluators` 注册精确版本，收到冻结正文与标题或 `null`，沿同一任务返回 `judged` 或 `needsReview`。
+
+混合槽复用 SQLite v16。宿主须使用支持所发布值形态的运行时。[混合题独立宿主示例](tests/fixtures/question-delivery-consumer.mts) · [文字题独立宿主示例](tests/fixtures/titled-text-consumer.mts)
 
 ### 材料版本与使用位置
 

@@ -6,7 +6,7 @@ import { questionDeliveryScoringKey } from "../contracts/question-delivery.ts";
 import type { QuestionDelivery, QuestionDeliveryKey } from "../contracts/question-delivery.ts";
 import type { SubmissionReceipt, VersionRef } from "../contracts/reading.ts";
 import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
-import { indexResponseValue, orderedTextResponseValue, responseValue } from "../contracts/response.ts";
+import { indexResponseValue, orderedTextResponseValue, responseValue, titledTextResponseValue } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { LearningError } from "./learning-error.ts";
@@ -36,8 +36,12 @@ const confirmedChoice = z.string().nullable();
 const confirmedScalar = responseValue.nullable();
 const confirmedIndexes = indexResponseValue.nullable();
 const confirmedOrderedText = orderedTextResponseValue.nullable();
+const confirmedTitledText = titledTextResponseValue.nullable();
 
-function evaluateOf(reference: VersionRef, basis: QuestionDeliveryKey, { choice = [], scalar = [], indexes = [], orderedText = [] }: PublicationEvaluators) {
+function evaluateOf(
+  reference: VersionRef, basis: QuestionDeliveryKey,
+  { choice = [], scalar = [], indexes = [], orderedText = [], titledText = [] }: PublicationEvaluators,
+) {
   switch (basis.response) {
     case "choice": {
       const evaluate = requireEvaluator(findChoiceEvaluator(choice, reference));
@@ -62,6 +66,10 @@ function evaluateOf(reference: VersionRef, basis: QuestionDeliveryKey, { choice 
         ...context, value: confirmedOrderedText.parse(value),
         acceptedBlanks: basis.acceptedBlanks.map(values => [...values]),
       });
+    }
+    case "textWithOptionalTitle": {
+      const evaluate = requireEvaluator(findResponseEvaluator(titledText, reference));
+      return ({ value, ...context }: EvaluationInput) => evaluate({ ...context, value: confirmedTitledText.parse(value) });
     }
   }
 }

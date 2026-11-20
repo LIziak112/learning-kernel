@@ -79,8 +79,12 @@ function requireDeliveryDraftValue(question: ReturnType<typeof requireFrozenQues
     if (typeof value === "object") throw new LearningError(422, "INVALID_RESPONSE");
     return;
   }
+  if (response === "textWithOptionalTitle") {
+    if (typeof value !== "object" || Array.isArray(value)) throw new LearningError(422, "INVALID_RESPONSE");
+    return;
+  }
   if (response === "orderedTextBlanks") {
-    if (typeof value !== "object" || value.some(item => typeof item !== "string")) {
+    if (!Array.isArray(value) || value.some(item => typeof item !== "string")) {
       throw new LearningError(422, "INVALID_RESPONSE");
     }
     return;
@@ -96,7 +100,7 @@ function requireFrozenOptions(
     return;
   }
   if (format !== "optionIndexArray") throw new Error("冻结的题缺少作答形态");
-  if (typeof value !== "object" || value.some(index => typeof index !== "number" || !Object.hasOwn(options, String(index)))) {
+  if (!Array.isArray(value) || value.some(index => typeof index !== "number" || !Object.hasOwn(options, String(index)))) {
     throw new LearningError(422, "INVALID_OPTION_INDEX");
   }
 }

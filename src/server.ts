@@ -16,7 +16,7 @@ import { id, publicationSchema, startInput, versionRef } from "./contracts/readi
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
 import { indexResponseDraftInput, responseDraftInput } from "./contracts/response.ts";
 import type { IndexResponseDraftInput, ResponseConfirmationInput, ResponseDraftInput } from "./contracts/response.ts";
-import { indexResponseEvaluators, orderedTextEvaluators, responseEvaluators } from "./contracts/response-evaluation.ts";
+import { indexResponseEvaluators, orderedTextEvaluators, responseEvaluators, titledTextEvaluators } from "./contracts/response-evaluation.ts";
 import { startActivity } from "./kernel/activity.ts";
 import { amendChoiceDraft, readChoiceDraftForAmendment } from "./kernel/choice-amendment.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
@@ -40,6 +40,7 @@ const runtimeOptions = z.strictObject({
   responseEvaluators: responseEvaluators.default([]),
   indexResponseEvaluators: indexResponseEvaluators.default([]),
   orderedTextEvaluators: orderedTextEvaluators.default([]),
+  titledTextEvaluators: titledTextEvaluators.default([]),
   authorizeChoiceDraftAmendment: z.custom<AuthorizeChoiceDraftAmendment>(value => typeof value === "function").optional(),
   authorizeChoiceSnapshotRevision: z.custom<AuthorizeChoiceSnapshotRevision>(value => typeof value === "function").optional(),
   hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
@@ -73,6 +74,8 @@ export type { IndexResponseConfirmation, IndexResponseDraftInput } from "./contr
 export type { ResponseEvaluationInput, ResponseEvaluator, ResponseEvaluatorRegistration, ResponseVerdict } from "./contracts/response-evaluation.ts";
 export type { IndexResponseEvaluationInput, IndexResponseEvaluator, IndexResponseEvaluatorRegistration } from "./contracts/response-evaluation.ts";
 export type { OrderedTextEvaluationInput, OrderedTextEvaluator, OrderedTextEvaluatorRegistration } from "./contracts/response-evaluation.ts";
+export type { TitledTextResponseValue } from "./contracts/response.ts";
+export type { TitledTextEvaluationInput, TitledTextEvaluator, TitledTextEvaluatorRegistration } from "./contracts/response-evaluation.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
 export type StudentPrincipal = z.input<typeof studentPrincipal>;
@@ -90,7 +93,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const database = openDatabase(settings.databasePath);
   const registered = {
     choice: settings.choiceEvaluators, scalar: settings.responseEvaluators, indexes: settings.indexResponseEvaluators,
-    orderedText: settings.orderedTextEvaluators,
+    orderedText: settings.orderedTextEvaluators, titledText: settings.titledTextEvaluators,
   };
   const evaluateScalarResponse = scalarResponseEvaluation(database, settings.responseEvaluators);
   const evaluateIndexResponse = indexResponseEvaluation(database, settings.indexResponseEvaluators);

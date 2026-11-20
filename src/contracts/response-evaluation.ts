@@ -3,7 +3,7 @@ import { isReservedReadingCapability } from "../builtins/reading-capabilities.ts
 import type { ChoiceEvaluationInput } from "./choice-evaluation.ts";
 import { versionRef } from "./reading.ts";
 import type { VersionRef } from "./reading.ts";
-import type { ResponseValue } from "./response.ts";
+import type { ResponseValue, TitledTextResponseValue } from "./response.ts";
 
 export const responseVerdict = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("judged"), correct: z.boolean() }),
@@ -26,6 +26,10 @@ export type OrderedTextEvaluationInput = Readonly<Omit<ResponseEvaluationInput, 
   acceptedBlanks: readonly (readonly string[])[];
 }>;
 export type OrderedTextEvaluator = (input: OrderedTextEvaluationInput) => ResponseVerdict;
+export type TitledTextEvaluationInput = Readonly<Omit<ResponseEvaluationInput, "value" | "acceptedResponse"> & {
+  value: Readonly<TitledTextResponseValue> | null;
+}>;
+export type TitledTextEvaluator = (input: TitledTextEvaluationInput) => ResponseVerdict;
 
 const registration = versionRef.extend({
   evaluate: z.custom<ResponseEvaluator>(value => typeof value === "function"),
@@ -45,6 +49,11 @@ export const orderedTextEvaluators = z.array(registration.extend({
   evaluate: z.custom<OrderedTextEvaluator>(value => typeof value === "function"),
 })).refine(validRegistrations, registrationIssue);
 
+export const titledTextEvaluators = z.array(registration.extend({
+  evaluate: z.custom<TitledTextEvaluator>(value => typeof value === "function"),
+})).refine(validRegistrations, registrationIssue);
+
+export type TitledTextEvaluatorRegistration = z.infer<typeof titledTextEvaluators>[number];
 export type ResponseEvaluatorRegistration = z.infer<typeof registration>;
 export type IndexResponseEvaluatorRegistration = z.infer<typeof indexResponseEvaluators>[number];
 export type OrderedTextEvaluatorRegistration = z.infer<typeof orderedTextEvaluators>[number];
