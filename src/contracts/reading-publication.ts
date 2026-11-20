@@ -95,7 +95,7 @@ const noOptions = z.record(id, z.never()).default({});
 const readingQuestions = z.discriminatedUnion("response", [
   readingQuestion.extend({ response: choiceAndResponseFormat.optional() }),
   readingQuestion.extend({
-    response: orderedTextFormat, blankCount: z.int().positive(),
+    response: orderedTextFormat, blankCount: z.int().nonnegative(),
     options: noOptions,
   }),
   readingQuestion.extend({ response: titledTextFormat, options: noOptions }),

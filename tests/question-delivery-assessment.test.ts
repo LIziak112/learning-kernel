@@ -563,6 +563,8 @@ test("题组教师改判｜写入失败可重试，迟到初判不覆盖教师�
 
 const ordering = { id: "ordering", version: 5, prompt: "排列甲、乙，并提交原顺序。", response: "orderedTextBlanks", blankCount: 2 } as const;
 const teacherReview = { questionIds: [ordering.id] };
+const noReference = { ...ordering, id: "no-reference", blankCount: 0, prompt: "提交零个排序位置的原答。" };
+const noReferenceMissing = { ...noReference, id: "no-reference-missing", version: 6 };
 const judgeKey = { ...keyRef, acceptedByQuestion: { [judge.id]: { response: judge.response, acceptedResponse: true } } };
 
 test("按题教师评阅｜混合回执只调用有私钥的评估器，无参考原答可先判后撤", t => {
@@ -800,6 +802,131 @@ test("按题教师评阅｜发布拒绝占位键、未绑定题位、重复、�
     assert.throws(() => runtime.publish({ practice: { ...practice, questions: [missingFormat], steps: [singleChoice], grading: {
       teacherReview: { questionIds: [missingFormat.id] },
     } } }), /教师评阅须绑定题组交付槽/);
+    assert.throws(() => start(runtime, practice.id), { code: "PRACTICE_NOT_FOUND" });
+  } finally { runtime.close(); }
+});
+
+test("零位置有序答案｜同一确认保留显式空答与缺稿，重开后按权限评阅和重放", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("zero-ordered-teacher-review");
+  let allowed = true;
+  const settings = { databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: ({ reviewerId }: { reviewerId: string }) => reviewerId === reviewer.id,
+    authorizeQuestionDeliveryVerdict: ({ reviewerId }: { reviewerId: string }) => allowed && reviewerId === reviewer.id };
+  const first = openLearningRuntime(settings);
+  const { activity, input, receipt } = (() => {
+    try {
+      const questions = [noReference, noReferenceMissing];
+      first.publish({ ...base, practice: { ...base.practice, questions,
+        grading: { teacherReview: { questionIds: questions.map(({ id }) => id) } } } });
+      const activity = start(first, base.practice.id);
+      const view = first.read(student, activity.activityId);
+      assert.ok("inputs" in view && view.inputs.questions?.from === "questions");
+      assert.deepEqual(view.inputs.questions.questions, questions.map(question => ({ ...question, options: {} })));
+      const draft = save(first, activity, noReference, []);
+      assert.equal(draft.revision, 1);
+      assert.deepEqual(save(first, activity, noReference, []), draft);
+      const input = confirmation(activity, [revision(noReference, 1), revision(noReferenceMissing, 0)]);
+      const receipt = first.confirmQuestionDelivery(student, activity.activityId, input);
+      return { activity, input, receipt };
+    } finally { first.close(); }
+  })();
+  const runtime = openLearningRuntime(settings);
+  try {
+    const key = recoveryKey(input);
+    assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, input), receipt);
+    const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared");
+    assert.equal(recovered.assessment, "teacherReview");
+    assert.equal(Object.hasOwn(recovered, "evaluation"), false);
+    assert.deepEqual(recovered.confirmation.questions, [
+      { ...input.questions[0], value: [] }, { ...input.questions[1], value: null },
+    ]);
+    const read = () => runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
+    const pending = read();
+    assert.deepEqual(pending.confirmation, recovered.confirmation);
+    assert.deepEqual(pending.questions, [noReference, noReferenceMissing].map(({ id, version }) => ({
+      questionId: id, questionVersion: version, revision: 0, status: "needsReview",
+    })));
+    const other = { ...reviewer, id: "other-reviewer" };
+    const write = (command: Parameters<Runtime["writeQuestionDeliveryVerdict"]>[3], principal: typeof other = reviewer) =>
+      runtime.writeQuestionDeliveryVerdict(principal, activity.activityId, key, command);
+    assert.throws(() => runtime.readQuestionDeliveryReview(other, activity.activityId, key, "verdicts"), { code: "FORBIDDEN" });
+    const mark = { protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId: noReference.id,
+      operationId: "mark", action: "override", correct: false, reason: "已核对显式空答。", expectedRevision: 0 } as const;
+    assert.throws(() => write(mark, other), { code: "FORBIDDEN" });
+    const marked = write(mark);
+    assert.deepEqual(write(mark), marked);
+    assert.deepEqual(read().questions[0], { ...pending.questions[0], revision: 1, status: "judged",
+      effective: { source: "teacherReview", id: marked.id, correct: false } });
+    const { correct: _correct, ...position } = mark;
+    const withdraw = { ...position, operationId: "withdraw", action: "withdraw", withdrawId: marked.id, expectedRevision: 1 } as const;
+    assert.throws(() => write(withdraw, other), { code: "FORBIDDEN" });
+    const withdrawn = write(withdraw);
+    assert.deepEqual(write(withdraw), withdrawn);
+    assert.deepEqual(read().questions, [{ ...pending.questions[0], revision: 2 }, pending.questions[1]]);
+    allowed = false;
+    assert.throws(() => write(mark), { code: "FORBIDDEN" });
+    assert.throws(() => write(withdraw), { code: "FORBIDDEN" });
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 0, evaluation_tasks: 1,
+      automatic_verdicts: 0, response_review_requirements: 2, performances: 0 });
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    const task = database.prepare("SELECT key_id, key_version, status FROM evaluation_tasks").get();
+    assert.deepEqual({ ...task }, { key_id: null, key_version: null, status: "done" });
+  } finally { runtime.close(); }
+});
+
+test("零位置有序答案｜混合题组仅把非零位置题及真实键交给评估器", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("zero-ordered-mixed");
+  const acceptedBlanks = [["甲"], ["乙"]];
+  const value = ["甲", "乙"];
+  const observed: unknown[] = [];
+  const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    orderedTextEvaluators: [{ ...evaluator, evaluate: input => {
+      observed.push([input.questionId, input.questionVersion, input.value, input.acceptedBlanks]);
+      return { status: "judged", correct: input.value?.length === input.acceptedBlanks.length
+        && input.acceptedBlanks.every((candidates, index) => candidates.some(candidate => candidate === input.value?.[index])) };
+    } }],
+  });
+  try {
+    runtime.publish({ ...base, practice: { ...base.practice, questions: [noReference, ordering],
+      grading: { ...automatic, teacherReview: { questionIds: [noReference.id] } } },
+    scoringKey: { ...keyRef, acceptedByQuestion: { [ordering.id]: { response: ordering.response, acceptedBlanks } } } });
+    const activity = start(runtime, base.practice.id);
+    assert.equal(save(runtime, activity, ordering, value).revision, 1);
+    const input = confirmation(activity, [revision(noReference, 0), revision(ordering, 1)]);
+    runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(input), "declared");
+    assert.equal(recovered.assessment, "automatic");
+    assert.equal(recovered.evaluation.questionCount, 1);
+    assert.equal(recovered.evaluation.correctCount, 1);
+    assert.deepEqual(recovered.review?.questions, [{
+      questionId: noReference.id, questionVersion: noReference.version, status: "needsReview",
+    }]);
+    assert.deepEqual(observed, [[ordering.id, ordering.version, value, acceptedBlanks]]);
+    assert.doesNotMatch(JSON.stringify({ recovered, view: runtime.read(student, activity.activityId) }), /acceptedByQuestion|acceptedBlanks/);
+  } finally { runtime.close(); }
+});
+
+test("零位置有序答案｜保留自动评估的真实键及正位置约束", t => {
+  const databasePath = scenarioDatabase(t);
+  const { practice } = publication("zero-ordered-invalid");
+  const runtime = openLearningRuntime({ databasePath,
+    orderedTextEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" }) }],
+  });
+  try {
+    const input = { practice: { ...practice, questions: [noReference], grading: automatic } };
+    const publishWith = (acceptedByQuestion: Record<string, { response: "orderedTextBlanks"; acceptedBlanks: string[][] }>) =>
+      runtime.publish({ ...input, scoringKey: { ...keyRef, acceptedByQuestion } });
+    assert.throws(() => runtime.publish(input), /逐题交付须提供按题冻结的评分键/);
+    assert.throws(() => publishWith({}), /私有键须匹配本题的冻结形态、选项或空位/);
+    assert.throws(() => publishWith({ [noReference.id]: { response: noReference.response, acceptedBlanks: [] } }), ZodError);
+    assert.throws(() => publishWith({ [noReference.id]: { response: noReference.response, acceptedBlanks: [[]] } }),
+      /私有键须匹配本题的冻结形态、选项或空位/);
+    for (const blankCount of [-1, 0.5]) {
+      assert.throws(() => runtime.publish({ practice: { ...practice, questions: [{ ...noReference, blankCount }],
+        grading: { teacherReview: { questionIds: [noReference.id] } } } }), ZodError);
+    }
     assert.throws(() => start(runtime, practice.id), { code: "PRACTICE_NOT_FOUND" });
   } finally { runtime.close(); }
 });

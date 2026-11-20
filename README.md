@@ -103,7 +103,7 @@ const activity = runtime.read(principal, receipt.activityId);
 
 单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。仅收作品时声明 `grading: {}`，省略 `scoringKey`。确认照常写入回执和完成记录，评估任务为零。自动评分使用 `grading.assessment`，私有 `scoringKey.acceptedByQuestion` 为参与自动评分的题固定形态和评分数据。评估器标识和版本必须在自动评分实际使用的每种题型注册中存在。评估器逐题收到该次确认中的原值和对应评分键。
 
-有序填空题声明正整数 `blankCount`，可省略 `options`。私有条目为 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
+有序填空题用非负整数 `blankCount` 声明冻结位置数，可省略 `options`。没有参考答案且无排序位置的题可声明 `blankCount: 0`，并通过 `grading.teacherReview.questionIds` 登记教师待评。自动评估需要正数位置和匹配的私有条目 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，其中每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
 
 `saveQuestionDeliveryDraft` 使用原题版本、当前修订和操作标识保护草稿，保留字符串原样、布尔值及数组原序与重复项。传给 `confirmQuestionDelivery` 的请求附同一逻辑槽、操作标识、题版本、所见修订和原稿声明：
 
