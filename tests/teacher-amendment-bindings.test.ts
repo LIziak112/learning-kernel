@@ -140,3 +140,49 @@ test("历史答案勘误的真实作品修订在题面能力出现前仍能精�
   assert.equal(verifyActivityBindings(path, withAmendments(original, [], [owner.proof])), undefined);
   assert.deepEqual(readFileSync(path), older);
 });
+
+test("损坏的持久教师勘误记录仍须拒绝核验，快照字节保持原样", t => {
+  const path = scenarioDatabase(t);
+  const runtime = openLearningRuntime(options(path));
+  let owner;
+  try {
+    runtime.publish(publication);
+    owner = begin(runtime, student);
+    amend(runtime, owner.proof);
+  } finally {
+    runtime.close();
+  }
+  const claims = { ...empty, bindings: [owner.opening] };
+  assert.equal(verifyActivityBindings(path, withAmendments(claims, [owner.proof])), undefined);
+  using database = new DatabaseSync(path);
+  assert.equal(database.prepare("UPDATE choice_draft_amendments SET reviewer_id = ''").run().changes, 1);
+  const damaged = readFileSync(path);
+  assert.throws(() => verifyActivityBindings(path, claims), mismatch);
+  assert.deepEqual(readFileSync(path), damaged);
+});
+
+test("待处理教师勘误拒绝冻结练法、步骤和输入不一致的快照", t => {
+  const damage = [
+    ["冻结练法结构无效", "UPDATE practices SET definition = ?", "{}"],
+    ["步骤不在冻结练法", "UPDATE step_attempts SET step_id = ?", "missing-step"],
+    ["槽位引用未声明的输入", "UPDATE practices SET definition = json_set(definition, '$.steps[0].submit.slots.answers.source', ?)", "missing-input"],
+  ] as const;
+  for (const [expected, sql, value] of damage) {
+    const path = scenarioDatabase(t);
+    const runtime = openLearningRuntime(options(path));
+    let owner;
+    try {
+      runtime.publish(publication);
+      owner = begin(runtime, student);
+    } finally {
+      runtime.close();
+    }
+    const claims = withAmendments({ ...empty, bindings: [owner.opening] }, [], [owner.proof]);
+    assert.equal(verifyActivityBindings(path, claims), undefined);
+    using database = new DatabaseSync(path);
+    assert.equal(database.prepare(sql).run(value).changes, 1);
+    const damaged = readFileSync(path);
+    assert.throws(() => verifyActivityBindings(path, claims), mismatch, expected);
+    assert.deepEqual(readFileSync(path), damaged);
+  }
+});
