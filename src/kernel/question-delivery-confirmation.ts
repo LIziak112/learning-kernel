@@ -142,15 +142,7 @@ export function readQuestionDeliveryReview(
   authorize: AuthorizeQuestionDeliveryReview | undefined,
 ) {
   return readTransaction(database, () => {
-    const studentId = database.prepare(`
-      SELECT a.student_id AS studentId FROM activities a
-      JOIN step_attempts t ON t.activity_id = a.id
-      LEFT JOIN reading_reviews r ON r.activity_id = a.id
-      WHERE a.id = ? AND t.id = ? AND (r.activity_id IS NULL OR (r.reviewer_id = ? AND r.reviewer_active = 1))
-    `).get(activityId, stepAttemptId, reviewerId)?.studentId;
-    if (typeof studentId !== "string") throw new LearningError(403, "FORBIDDEN");
-    const activity = loadActivity(database, studentId, activityId);
-    if (activity.kind !== "reading" || activity.stepAttemptId !== stepAttemptId) throw new LearningError(403, "FORBIDDEN");
+    const { activity, studentId } = requireReviewActivity(database, reviewerId, activityId, stepAttemptId);
     const recovered = confirmedWorkForOperation(database, activityId, { protocolVersion: 1, stepAttemptId, operationId });
     if (!recovered) throw new LearningError(403, "FORBIDDEN");
     const { receipt } = recovered;
@@ -166,4 +158,17 @@ export function readQuestionDeliveryReview(
     const questions = readManualReviewQuestions(database, receipt, content);
     return { receipt, practice: { id, version }, confirmation: questionDeliveryView(content), basis, questions };
   });
+}
+
+function requireReviewActivity(database: DatabaseSync, reviewerId: string, activityId: string, stepAttemptId: string) {
+  const studentId = database.prepare(`
+    SELECT a.student_id AS studentId FROM activities a
+    JOIN step_attempts t ON t.activity_id = a.id
+    LEFT JOIN reading_reviews r ON r.activity_id = a.id
+    WHERE a.id = ? AND t.id = ? AND (r.activity_id IS NULL OR (r.reviewer_id = ? AND r.reviewer_active = 1))
+  `).get(activityId, stepAttemptId, reviewerId)?.studentId;
+  if (typeof studentId !== "string") throw new LearningError(403, "FORBIDDEN");
+  const activity = loadActivity(database, studentId, activityId);
+  if (activity.kind !== "reading" || activity.stepAttemptId !== stepAttemptId) throw new LearningError(403, "FORBIDDEN");
+  return { activity, studentId };
 }
