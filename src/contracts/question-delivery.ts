@@ -2,7 +2,7 @@ import { z } from "zod";
 import { choiceConfirmationInput, confirmedQuestionRevision } from "./choice-confirmation.ts";
 import { id, versionRef } from "./reading.ts";
 import { indexResponseValue, optionIndex, orderedTextResponseValue, responseDraftInput, responseValue, titledTextResponseValue } from "./response.ts";
-import { choiceConfirmationVerdictMode } from "./verdict.ts";
+import { frozenConfirmationVerdictMode } from "./verdict.ts";
 import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict } from "./verdict.ts";
 
 export const orderedTextFormat = z.literal("orderedTextBlanks");
@@ -32,7 +32,7 @@ export const questionDeliveryScoringKey = versionRef.extend({
 export const questionDeliveryReviewBasis = versionRef.extend({
   reviewCriteria: z.string().refine(criteria => criteria.trim().length > 0),
 });
-export const questionDeliveryReviewMode = z.union([z.literal("verdicts"), choiceConfirmationVerdictMode]).optional();
+export const questionDeliveryReviewMode = z.union([z.literal("verdicts"), frozenConfirmationVerdictMode]).optional();
 export type AuthorizeQuestionDeliveryReview = AuthorizeConfirmedReview;
 export type AuthorizeQuestionDeliveryVerdict = AuthorizeConfirmedVerdict;
 

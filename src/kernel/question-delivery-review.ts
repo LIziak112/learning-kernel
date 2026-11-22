@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
-import type { ConfirmationKey } from "../contracts/choice-confirmation.ts";
+import type { ChoiceConfirmationInput, ConfirmationKey } from "../contracts/choice-confirmation.ts";
 import { questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
 import type { QuestionDelivery } from "../contracts/question-delivery.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
-import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict, VerdictCommand } from "../contracts/verdict.ts";
+import { readResponseConfirmation } from "../contracts/response.ts";
+import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict, FrozenConfirmationVerdictMode, VerdictCommand } from "../contracts/verdict.ts";
 import { loadActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { readTransaction, writeTransaction } from "./database.ts";
@@ -50,9 +51,22 @@ export function readQuestionDeliveryVerdicts(
 export function readChoiceConfirmationVerdicts(
   database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
 ) {
+  return readFrozenConfirmationVerdicts(database, reviewerId, activityId, key, authorize, readChoiceConfirmation);
+}
+
+export function readResponseConfirmationVerdicts(
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+) {
+  return readFrozenConfirmationVerdicts(database, reviewerId, activityId, key, authorize, readResponseConfirmation);
+}
+
+function readFrozenConfirmationVerdicts<Confirmation extends Pick<ChoiceConfirmationInput, "questions">>(
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+  read: (content: unknown) => Confirmation | undefined,
+) {
   return readTransaction(database, () => {
     const { activity, receipt, content } = authorizedConfirmation(database, reviewerId, activityId, key, authorize);
-    const confirmation = readChoiceConfirmation(content);
+    const confirmation = read(content);
     if (!confirmation) throw new LearningError(404, "REVIEW_NOT_FOUND");
     const target = requireAssessment(database, receipt.id);
     const questions = reviewedVerdicts(database, target, confirmation.questions, confirmation.questions);
@@ -76,7 +90,7 @@ function reviewedVerdicts(
 
 export function writeQuestionDeliveryVerdict(
   database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, command: VerdictCommand,
-  authorize: AuthorizeConfirmedVerdict | undefined, clock: () => Date, mode?: "choiceConfirmation",
+  authorize: AuthorizeConfirmedVerdict | undefined, clock: () => Date, mode?: FrozenConfirmationVerdictMode,
 ) {
   return writeTransaction(database, () => {
     const { activity, receipt, content, scope } = reviewConfirmation(database, reviewerId, activityId, key);
@@ -97,10 +111,11 @@ export function writeQuestionDeliveryVerdict(
 }
 
 function requireVerdictPosition(
-  activity: ReadingActivity, receipt: SubmissionReceipt, content: unknown, command: VerdictCommand, mode: "choiceConfirmation" | undefined,
+  activity: ReadingActivity, receipt: SubmissionReceipt, content: unknown, command: VerdictCommand, mode: FrozenConfirmationVerdictMode | undefined,
 ) {
   const delivery = mode === undefined ? readQuestionDelivery(content) : undefined;
-  const confirmation = mode === "choiceConfirmation" ? readChoiceConfirmation(content) : delivery;
+  const confirmation = mode === "responseConfirmation" ? readResponseConfirmation(content)
+    : mode === "choiceConfirmation" ? readChoiceConfirmation(content) : delivery;
   if (!confirmation || command.submissionId !== receipt.id) throw new LearningError(403, "FORBIDDEN");
   const slot = delivery ? requireQuestionDeliverySlot(activity, delivery.slotId) : boundOutput(activity.step, receipt.slotId);
   const question = confirmation.questions.find(frozen => frozen.questionId === command.questionId);

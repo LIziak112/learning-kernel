@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { ConfirmationScope } from "./choice-confirmation.ts";
 import { id } from "./reading.ts";
 
-export const choiceConfirmationVerdictMode = z.literal("choiceConfirmation");
+export const frozenConfirmationVerdictMode = z.enum(["choiceConfirmation", "responseConfirmation"]);
+export type FrozenConfirmationVerdictMode = z.infer<typeof frozenConfirmationVerdictMode>;
 export const verdictLocation = z.strictObject({ submissionId: z.uuid(), targetId: id, questionId: id });
 const review = verdictLocation.extend({
   protocolVersion: z.literal(1),

@@ -95,7 +95,11 @@ const activity = runtime.read(principal, receipt.activityId);
 
 `saveResponseDraft` 接收同一题内的操作标识、基础修订、题版本和 `value`。布尔和原始字符串均按原类型保存，字符串经过保存和确认仍保留空格。未保存草稿的题在确认中是 `null`，显式保存的空字符串仍为字符串。`confirmResponses` 接收固定题集合、各题当前草稿修订和原稿声明，内核在同一事务记录作品、回执、完成与评估任务。原稿存在性仍由可信宿主使用 `verifyOriginal` 核实。同一意图重试取回原回执，改答冲突通过 `ResponseDraftConflict` 或 `ResponseConfirmationConflict` 交付本人当前稿。
 
-可信宿主用原确认操作调用 `recoverResponseConfirmation`，每次经当前活动及 `authorizeConfirmationRecovery` 核准。同步评估器收到冻结版本、原值和私有布尔评分键，返回 `{ status: "judged", correct }` 或 `{ status: "needsReview" }`。内核独立保存待人工判定事实和布尔判定。回调未配置时返回 `EVALUATOR_UNAVAILABLE`，回调异常回滚本次评估。已存结果可在重开后读取，授权恢复不暴露私有评分键。`ownResponses` 仅开放本人确认作品，学生常规读面没有本模式的判定或待批详情。人工处理使用恢复出的待批事实，本契约提供待批登记与读取。普通单选继续使用相同的单选 API、成员校验及布尔评估。
+可信宿主用原确认操作调用 `recoverResponseConfirmation`，每次经当前活动及 `authorizeConfirmationRecovery` 核准。同步评估器收到冻结版本、原值和私有布尔评分键，返回 `{ status: "judged", correct }` 或 `{ status: "needsReview" }`。内核独立保存待人工判定事实和布尔判定。回调未配置时返回 `EVALUATOR_UNAVAILABLE`，回调异常回滚本次评估。已存结果可在重开后读取，授权恢复不暴露私有评分键。`ownResponses` 仅开放本人确认作品，学生常规读面没有本模式的判定或待批详情。恢复结果始终交付原评估与待批登记。
+
+已确认的 `booleanOrString` 整卷可凭原活动和确认键读取或改判。可信宿主分别配置 `authorizeResponseConfirmationReview` 和 `authorizeResponseConfirmationVerdict`。`readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "responseConfirmation")` 返回原确认、发布版本、回执、评估目标及逐题冻结版本、判定修订和当前生效结果。尚未执行自动评估时显示 `pendingEvaluation`，已登记待批时显示 `needsReview`。
+
+`writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command, "responseConfirmation")` 使用[题组判定](#混合整卷与逐题交付)的改判、清除、修订及幂等契约。每次写入及重发都须经当前授权，核对原提交、目标、题位和冻结版本。清除当前教师判定后回到有效自动原判、原待批或尚未执行评估的状态。作品、原稿引用、原自动及待批登记、提交回执和完成均保留。教师判定使用版本 18 的判定记录，学生常规读面继续按原发布策略交付。
 
 版本 16 为该模式增加独立待评记录。旧版 15 升级保留既有作品、回执和布尔判定，升级后的数据库需由支持版本 16 的运行时打开。
 

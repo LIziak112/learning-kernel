@@ -2,7 +2,10 @@ import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { openLearningRuntime, ResponseConfirmationConflict } from "../src/server.ts";
-import type { PublicationInput, ResponseConfirmationInput, ResponseDraftInput, ResponseEvaluator, ResponseEvaluatorRegistration } from "../src/server.ts";
+import type {
+  AuthorizeResponseConfirmationReview, AuthorizeResponseConfirmationVerdict, PublicationInput, ResponseConfirmationInput,
+  ResponseDraftInput, ResponseEvaluator, ResponseEvaluatorRegistration, VerdictCommand,
+} from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
 const student = { role: "student", id: "student" } as const;
@@ -383,4 +386,139 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
   } finally {
     upgraded.close();
   }
+});
+
+test("标量正式确认的教师覆盖与清除保留原判、待评和回执，并按当前权限重发", t => {
+  const databasePath = scenarioDatabase(t);
+  const reviewer = { role: "reviewer", id: "judge-teacher" } as const;
+  const mode = "responseConfirmation";
+  const denied = { status: 403, code: "FORBIDDEN" };
+  const notFound = { status: 404, code: "REVIEW_NOT_FOUND" };
+  const conflict = { status: 409, code: "VERDICT_CONFLICT" };
+  const questionVersion = 2;
+  const targetId = "answer";
+  const allowedQuestions = ["booleanFalse", "unrecognized"];
+  const { activityId, key, wire, receipt, otherReceipt, originalRecovery, studentView } = (() => {
+    const runtime = openLearningRuntime({ databasePath, responseEvaluators: [registered],
+      authorizeConfirmationRecovery: trusted, verifyOriginal: () => true,
+    });
+    try {
+      runtime.publish(responsePublication(questionVersion));
+      const activity = opened(runtime, questionVersion);
+      const key = { protocolVersion, operationId, stepAttemptId: activity.stepAttemptId } as const;
+      const wire = confirmation(activity, { booleanFalse: 1, unrecognized: 1 });
+      for (const position of wire.questions) position.questionVersion = questionVersion;
+      for (const [id, value] of [["booleanFalse", false], ["unrecognized", rawText]] as const) {
+        runtime.saveResponseDraft(student, activity.activityId, { ...draft(activity, id, value), questionVersion });
+      }
+      const receipt = runtime.confirmResponses(student, activity.activityId, wire);
+      const other = runtime.start(student, { protocolVersion, operationId: "start-other", practiceId: practice.id, practiceVersion: questionVersion });
+      const otherReceipt = runtime.confirmResponses(student, other.activityId, { ...wire, stepAttemptId: other.stepAttemptId,
+        questions: wire.questions.map(position => ({ ...position, revision: 0 })),
+      });
+      return { activityId: activity.activityId, key, wire, receipt, otherReceipt,
+        originalRecovery: runtime.recoverResponseConfirmation(student, activity.activityId, key), studentView: runtime.read(student, activity.activityId),
+      };
+    } finally { runtime.close(); }
+  })();
+  const command: VerdictCommand = { protocolVersion, operationId: "mark-original", submissionId: receipt.id,
+    targetId, questionId: "booleanFalse", expectedRevision: 0, action: "override", correct: true, reason: "核对冻结判断",
+  };
+  let readAllowed = true;
+  let writeAllowed = true;
+  const ownsReview: AuthorizeResponseConfirmationReview = scope => scope.reviewerId === reviewer.id && scope.studentId === student.id
+    && scope.activityId === activityId && scope.stepAttemptId === key.stepAttemptId && scope.operationId === key.operationId
+    && scope.submissionId === receipt.id && scope.slotId === receipt.slotId;
+  const authorizeResponseConfirmationReview: AuthorizeResponseConfirmationReview = scope => readAllowed && ownsReview(scope);
+  const authorizeResponseConfirmationVerdict: AuthorizeResponseConfirmationVerdict = scope => writeAllowed && ownsReview(scope)
+    && scope.targetId === targetId && scope.questionVersion === questionVersion && allowedQuestions.includes(scope.questionId);
+  const isolatedPolicies = { databasePath, authorizeConfirmationRecovery: trusted, authorizeQuestionDeliveryReview: () => true,
+    authorizeQuestionDeliveryVerdict: () => true, authorizeChoiceConfirmationReview: () => true, authorizeChoiceConfirmationVerdict: () => true,
+  };
+  const oldModes = openLearningRuntime(isolatedPolicies);
+  try {
+    assert.throws(() => oldModes.readQuestionDeliveryReview(reviewer, activityId, key, mode), denied);
+    assert.throws(() => oldModes.writeQuestionDeliveryVerdict(reviewer, activityId, key, command, mode), denied);
+    assert.throws(() => oldModes.readQuestionDeliveryReview(reviewer, activityId, key), notFound);
+    assert.throws(() => oldModes.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts"), notFound);
+    assert.throws(() => oldModes.readQuestionDeliveryReview(reviewer, activityId, key, "choiceConfirmation"), notFound);
+    assert.throws(() => oldModes.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), denied);
+    assert.throws(() => oldModes.writeQuestionDeliveryVerdict(reviewer, activityId, key, command, "choiceConfirmation"), denied);
+  } finally { oldModes.close(); }
+
+  const stableFacts = facts(databasePath);
+  const settings = { databasePath, authorizeConfirmationRecovery: trusted, authorizeResponseConfirmationReview, authorizeResponseConfirmationVerdict };
+  const runtime = openLearningRuntime(settings);
+  const { final, replay } = (() => {
+    try {
+      const read = () => runtime.readQuestionDeliveryReview(reviewer, activityId, key, mode);
+      const write = (change: VerdictCommand) => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, change, mode);
+      const first = read();
+      assert.deepEqual(first.receipt, receipt);
+      assert.deepEqual(first.confirmation, originalRecovery.confirmation);
+      assert.equal(first.targetId, targetId);
+      assert.equal(first.assessment, "automatic");
+      assert.doesNotMatch(JSON.stringify(first), /scoringKey|acceptedResponses|acceptedResponse/);
+      const base = first.questions.filter(item => allowedQuestions.includes(item.questionId));
+      assert.deepEqual(base, [
+        { questionId: "booleanFalse", questionVersion, revision: 0, status: "judged", automatic: { correct: false, valid: true },
+          effective: { source: "automatic", correct: false } },
+        { questionId: "unrecognized", questionVersion, revision: 0, status: "needsReview" },
+      ]);
+      assert.throws(() => runtime.readQuestionDeliveryReview({ ...reviewer, id: "outside" }, activityId, key, mode), denied);
+      assert.throws(() => runtime.writeQuestionDeliveryVerdict({ ...reviewer, id: "outside" }, activityId, key, command, mode), denied);
+      assert.throws(() => Reflect.apply(runtime.readQuestionDeliveryReview, runtime, [student, activityId, key, mode]), denied);
+      assert.throws(() => Reflect.apply(runtime.writeQuestionDeliveryVerdict, runtime, [student, activityId, key, command, mode]), denied);
+      assert.throws(() => runtime.readQuestionDeliveryReview(reviewer, activityId, { ...key, operationId: "different" }, mode), denied);
+      for (const changed of [{ submissionId: otherReceipt.id }, { targetId: "wrong-target" }, { questionId: "outside" }, { questionId: "booleanTrue" }]) {
+        assert.throws(() => write({ ...command, ...changed }), denied);
+      }
+      const replay = base.flatMap(({ questionId }) => {
+        const firstMark = { ...command, questionId, operationId: `first-${questionId}` };
+        const firstReceipt = write(firstMark);
+        assert.equal(firstReceipt.revision, 1);
+        assert.deepEqual(write(firstMark), firstReceipt);
+        assert.throws(() => write({ ...firstMark, reason: "异文重试" }), { status: 409, code: "OPERATION_CONFLICT" });
+        assert.throws(() => write({ ...firstMark, operationId: `stale-${questionId}` }), conflict);
+        const nextMark = { ...firstMark, expectedRevision: 1, operationId: `next-${questionId}`, correct: false };
+        const nextReceipt = write(nextMark);
+        const standing = read().questions.find(item => item.questionId === questionId);
+        assert.ok(standing?.status === "judged");
+        assert.deepEqual(standing.effective, { source: "teacherReview", id: nextReceipt.id, correct: false });
+        const clear: VerdictCommand = { protocolVersion, targetId, submissionId: receipt.id, questionId, reason: "清除当前判定",
+          action: "withdraw", withdrawId: nextReceipt.id, expectedRevision: 2, operationId: `clear-${questionId}`,
+        };
+        assert.throws(() => write({ ...clear, withdrawId: firstReceipt.id }), conflict);
+        const cleared = write(clear);
+        assert.deepEqual(write(clear), cleared);
+        return [[firstMark, firstReceipt], [nextMark, nextReceipt], [clear, cleared]] as const;
+      });
+      const final = read();
+      assert.deepEqual(final.questions, first.questions.map(item => allowedQuestions.includes(item.questionId) ? { ...item, revision: 3 } : item));
+      assert.deepEqual(runtime.read(student, activityId), studentView);
+      assert.deepEqual(runtime.recoverResponseConfirmation(student, activityId, key), originalRecovery);
+      return { final, replay };
+    } finally { runtime.close(); }
+  })();
+  const reopened = openLearningRuntime(settings);
+  try {
+    assert.deepEqual(reopened.readQuestionDeliveryReview(reviewer, activityId, key, mode), final);
+    for (const [request, previous] of replay) {
+      assert.deepEqual(reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, request, mode), previous);
+    }
+    readAllowed = false;
+    assert.throws(() => reopened.readQuestionDeliveryReview(reviewer, activityId, key, mode), denied);
+    readAllowed = true;
+    writeAllowed = false;
+    for (const [request] of replay) {
+      assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, request, mode), denied);
+    }
+    assert.deepEqual(reopened.readQuestionDeliveryReview(reviewer, activityId, key, mode), final);
+    assert.deepEqual(reopened.confirmResponses(student, activityId, wire), receipt);
+    assert.deepEqual(reopened.recoverResponseConfirmation(student, activityId, key), originalRecovery);
+    assert.deepEqual(facts(databasePath), stableFacts);
+    using db = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM verdict_events WHERE submission_id = ?").get(receipt.id)?.count, 6);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM verdict_events").get()?.count, 6);
+  } finally { reopened.close(); }
 });

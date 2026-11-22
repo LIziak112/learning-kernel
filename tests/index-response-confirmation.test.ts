@@ -143,6 +143,7 @@ test("公开索引数组整卷区分空选与无稿，冻结原值和私有评�
   };
   const settings = { databasePath, indexResponseEvaluators: [{ ...evaluator, evaluate }],
     authorizeConfirmationRecovery: ({ studentId }: { studentId: string }) => permitted && studentId === student.id,
+    authorizeResponseConfirmationReview: () => true, authorizeResponseConfirmationVerdict: () => true,
   };
   const runtime = openLearningRuntime(settings);
   let activity: ReturnType<Runtime["start"]>;
@@ -218,6 +219,13 @@ test("公开索引数组整卷区分空选与无稿，冻结原值和私有评�
     assert.throws(() => reopened.recoverIndexResponseConfirmation(student, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
     permitted = true;
     assert.throws(() => reopened.recoverResponseConfirmation(student, activity.activityId, key), { status: 404, code: "CONFIRMATION_NOT_FOUND" });
+    const reviewer = { role: "reviewer", id: "reviewer" } as const;
+    assert.throws(() => reopened.readQuestionDeliveryReview(reviewer, activity.activityId, key, "responseConfirmation"),
+      { status: 404, code: "REVIEW_NOT_FOUND" });
+    assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, {
+      protocolVersion, submissionId: receipt.id, targetId: "answer", questionId: "selected",
+      expectedRevision: 0, action: "override", correct: false, operationId: "mark-index", reason: "复核",
+    }, "responseConfirmation"), { status: 403, code: "FORBIDDEN" });
     const proof = reopened.recoverIndexResponseConfirmation(student, activity.activityId, key);
     assert.deepEqual(proof.receipt, receipt);
     assert.deepEqual(proof.confirmation.questions.map(question => question.value), [[2, 0, 2], [], null, [0]]);
