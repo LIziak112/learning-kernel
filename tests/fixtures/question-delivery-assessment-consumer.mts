@@ -25,8 +25,8 @@ let approval = true;
 const runtime = openLearningRuntime({
   databasePath,
   authorizeConfirmationRecovery: scope => approval && scope.studentId === student.id && scope.operationId === "confirm",
-  authorizeQuestionDeliveryReview: scope => approval && scope.reviewerId === reviewer.id && scope.studentId === student.id
-    && scope.operationId === "confirm" && scope.slotId === slotId,
+  authorizeReview: access => access.purpose === "readReview" && access.delivery === "questionDelivery" && approval
+    && access.reviewerId === reviewer.id && access.studentId === student.id && access.operationId === "confirm" && access.slotId === slotId,
 });
 
 function publication(id: string) {
@@ -48,7 +48,7 @@ function publication(id: string) {
       policy: {
         offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
         student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ["receipt", "ownResponses"], onFinal: [] } },
-        reviewer: { scope: "assignedReviewer", fields: [], actions: [] }, manager: { scope: "assigningTeacher", actions: [] },
+        reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] }, manager: { scope: "assigningTeacher", actions: [] },
       },
     },
   } satisfies PublicationInput;

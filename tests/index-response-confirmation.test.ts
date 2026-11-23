@@ -7,6 +7,7 @@ import { openLearningRuntime, ResponseDraftConflict } from "../src/server.ts";
 import type { PublicationInput, ResponseConfirmationInput, VerdictResult } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 import { booleanEvaluator, indexEvaluator } from "./fixtures/evaluators.ts";
+import { reviewAccess } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "index-learner" } as const;
 const outsider = { ...student, id: "other-learner" };
@@ -35,7 +36,7 @@ function publication(version = 1, selected = [0, 2], allowUnanswered = true, own
       } },
       policy: { offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
         student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ownResponseFields, onFinal: [] } },
-        reviewer: { scope: "assignedReviewer", fields: [], actions: [] }, manager: { scope: "assigningTeacher", actions: [] },
+        reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] }, manager: { scope: "assigningTeacher", actions: [] },
       },
     },
     scoringKey: { ...key, acceptedIndexes: { selected, empty: [0], absent: [1], wrong: [1, 2] } },
@@ -145,7 +146,7 @@ test("公开索引数组整卷区分空选与无稿，冻结原值和私有评�
   };
   const settings = { databasePath, evaluators: [indexEvaluator(evaluator, evaluate)],
     authorizeConfirmationRecovery: ({ studentId }: { studentId: string }) => permitted && studentId === student.id,
-    authorizeResponseConfirmationReview: () => true, authorizeResponseConfirmationVerdict: () => true,
+    authorizeReview: reviewAccess({ responseConfirmation: { read: () => true, write: () => true } }),
   };
   const runtime = openLearningRuntime(settings);
   let activity: ReturnType<Runtime["start"]>;

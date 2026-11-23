@@ -218,10 +218,13 @@ function validateResponsePolicy(practice: ReadingPublication["practice"], respon
     return;
   }
   validateResponseStudentPolicy(student, issue);
-  if (reviewer.fields.length || reviewer.actions.length || manager.actions.length) {
-    issue(["practice", "policy"], "原值确认不声明阅读评阅动作或字段");
+  if (reviewer.fields.some(field => !responseReviewerFields.has(field)) || reviewer.actions.some(action => action !== "reviseQuestionVerdict")
+    || manager.actions.length) {
+    issue(["practice", "policy"], "原值确认的评阅只声明学生原答、判定历史、评阅依据与逐题改判");
   }
 }
+
+const responseReviewerFields = new Set<string>(["studentChoices", "verdictHistory", "gradingBasis"]);
 
 function validateResponseStudentPolicy(student: ReadingPublication["practice"]["policy"]["student"], issue: Issue) {
   const { fields, onFinal } = student.ownSubmission;

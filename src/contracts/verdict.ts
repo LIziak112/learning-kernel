@@ -22,15 +22,15 @@ export type VerdictCommand = z.infer<typeof verdictCommand>;
 export type VerdictReceipt = z.infer<typeof verdictReceipt>;
 export type VerdictLocation = z.infer<typeof verdictLocation>;
 
-type ConfirmedReviewScope = ConfirmationScope & {
+export type ReviewedDelivery = "questionDelivery" | FrozenConfirmationVerdictMode;
+export type ReviewScope = Readonly<ConfirmationScope & {
   reviewerId: string;
   submissionId: string;
   slotId: string;
-};
-export type AuthorizeConfirmedReview = (scope: Readonly<ConfirmedReviewScope>) => boolean;
-export type AuthorizeConfirmedVerdict = (scope: Readonly<ConfirmedReviewScope & {
-  targetId: string;
-  questionId: string;
-  questionVersion: number;
-  action: VerdictCommand["action"];
-}>) => boolean;
+  delivery: ReviewedDelivery;
+}>;
+export type ReviewAccess = ReviewScope & (
+  | Readonly<{ purpose: "readReview" }>
+  | Readonly<{ purpose: "reviseVerdict"; targetId: string; questionId: string; questionVersion: number; action: VerdictCommand["action"] }>
+);
+export type AuthorizeReview = (access: ReviewAccess) => boolean;

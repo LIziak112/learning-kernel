@@ -9,11 +9,12 @@ import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
 import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { ChoiceConfirmationConflict, LearningError, openLearningRuntime } from "../src/server.ts";
-import type { AuthorizeChoiceConfirmationReview, AuthorizeChoiceConfirmationVerdict, ChoiceConfirmationInput, PublicationInput, VerdictCommand, VerifyOriginal } from "../src/server.ts";
+import type { ChoiceConfirmationInput, PublicationInput, ReviewAccess, ReviewScope, VerdictCommand, VerifyOriginal } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 import { choiceEvaluator } from "./fixtures/evaluators.ts";
 import { defaultRegistry } from "./fixtures/evaluators.ts";
+import { reviewAccess } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "owner" } as const;
 const other = { role: "student", id: "other" } as const;
@@ -270,7 +271,7 @@ function inputKey({ protocolVersion, stepAttemptId, operationId }: ChoiceConfirm
 test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐题确认权限", t => {
   const path = scenarioDatabase(t);
   const runtime = openLearningRuntime({ databasePath: path,
-    authorizeChoiceConfirmationReview: () => true, authorizeChoiceConfirmationVerdict: () => true,
+    authorizeReview: reviewAccess({ choiceConfirmation: { read: () => true, write: () => true } }),
   });
   try {
     runtime.publish(frozenChoicePublication);
@@ -392,16 +393,16 @@ test("原单选交卷在同一确认上独立改判和清除，原稿、评分�
   const { activityId, input, receipt } = confirmed;
   const key = inputKey(input);
   const targetId = "answer";
-  const readScope: Parameters<AuthorizeChoiceConfirmationReview>[0] = {
+  const readScope = {
     stepAttemptId: key.stepAttemptId, operationId: key.operationId,
     reviewerId: teacher.id, studentId: student.id, activityId, submissionId: receipt.id, slotId: receipt.slotId,
   };
-  const mayRead: AuthorizeChoiceConfirmationReview = scope => reviewAllowed && scope.reviewerId === readScope.reviewerId
+  const mayRead = (scope: ReviewScope) => reviewAllowed && scope.reviewerId === readScope.reviewerId
     && scope.studentId === readScope.studentId && scope.activityId === readScope.activityId && scope.stepAttemptId === readScope.stepAttemptId
     && scope.operationId === readScope.operationId && scope.submissionId === readScope.submissionId && scope.slotId === readScope.slotId;
-  const scoped: AuthorizeChoiceConfirmationVerdict = scope => mayWrite && mayRead(scope) && scope.targetId === targetId
+  const scoped = (scope: Extract<ReviewAccess, { purpose: "reviseVerdict" }>) => mayWrite && mayRead(scope) && scope.targetId === targetId
     && scope.questionId === secondId && scope.questionVersion === secondVersion;
-  const settings = { ...registered, authorizeChoiceConfirmationReview: mayRead, authorizeChoiceConfirmationVerdict: scoped };
+  const settings = { ...registered, authorizeReview: reviewAccess({ choiceConfirmation: { read: mayRead, write: scoped } }) };
   const runtime = openLearningRuntime(settings);
   const override: VerdictCommand = { protocolVersion: 1, operationId: "mark", submissionId: receipt.id, targetId,
     questionId: secondId, expectedRevision: 0, action: "override", correct: true, reason: reasons.mark };
@@ -493,8 +494,8 @@ test("原单选交卷在同一确认上独立改判和清除，原稿、评分�
     reopened.close();
   }
 
-  const typedOnly = openLearningRuntime({ ...registered, authorizeQuestionDeliveryReview: () => true,
-    authorizeQuestionDeliveryVerdict: () => true });
+  const typedOnly = openLearningRuntime({ ...registered,
+    authorizeReview: reviewAccess({ questionDelivery: { read: () => true, write: () => true } }) });
   try {
     assert.throws(() => typedOnly.readQuestionDeliveryReview(teacher, activityId, key, "choiceConfirmation"), denied);
     assert.throws(() => typedOnly.writeQuestionDeliveryVerdict(teacher, activityId, key, override, "choiceConfirmation"), denied);

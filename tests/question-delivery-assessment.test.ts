@@ -4,9 +4,9 @@ import { test } from "node:test";
 import { ZodError } from "zod";
 import { latestDatabaseVersion } from "../src/kernel/database.ts";
 import { openLearningRuntime } from "../src/server.ts";
-import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "../src/server.ts";
+import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, ReviewScope } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
-import { answerRule as answerRuleOf, booleanEvaluator, combinedEvaluator, orderedTextEvaluator, titledTextEvaluator, titledValue } from "./fixtures/evaluators.ts";
+import { answerRule as answerRuleOf, reviewAccess, booleanEvaluator, combinedEvaluator, orderedTextEvaluator, titledTextEvaluator, titledValue } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "delivery-assessment-student" } as const;
 const outsider = { ...student, id: "delivery-assessment-outsider" };
@@ -51,7 +51,7 @@ function publication(id: string) {
       policy: {
         offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
         student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ["receipt", "ownResponses"], onFinal: [] } },
-        reviewer: { scope: "assignedReviewer", fields: [], actions: [] }, manager: { scope: "assigningTeacher", actions: [] },
+        reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] }, manager: { scope: "assigningTeacher", actions: [] },
       },
     },
   } satisfies PublicationInput;
@@ -197,11 +197,9 @@ test("人工评阅与逐题确认同事务登记，按旧确认重开实际量�
     } finally { first.close(); }
   })();
   const runtime = openLearningRuntime({ databasePath, authorizeConfirmationRecovery: () => allowed,
-    authorizeQuestionDeliveryReview(scope) {
-      return reviewerAllowed && scope.reviewerId === reviewer.id && scope.studentId === student.id
-        && scope.activityId === saved.activity.activityId && scope.stepAttemptId === saved.activity.stepAttemptId
-        && scope.operationId === saved.input.operationId && scope.submissionId === saved.receipt.id && scope.slotId === "first";
-    },
+    authorizeReview: reviewAccess({ questionDelivery: { read: scope => reviewerAllowed && scope.reviewerId === reviewer.id
+      && scope.studentId === student.id && scope.activityId === saved.activity.activityId && scope.stepAttemptId === saved.activity.stepAttemptId
+      && scope.operationId === saved.input.operationId && scope.submissionId === saved.receipt.id && scope.slotId === "first" } }),
   });
   try {
     const { activity, input, receipt, finish, finishReceipt } = saved;
@@ -332,12 +330,11 @@ test("题组教师改判｜连续改判逐次撤销回落到上一条有效教�
   let allowed = true;
   let reviewedSubmission: string | undefined;
   let evaluated = 0;
-  const authorizeQuestionDeliveryReview: NonNullable<Parameters<typeof openLearningRuntime>[0]["authorizeQuestionDeliveryReview"]> =
-    scope => allowed && scope.reviewerId === reviewer.id && scope.studentId === student.id
-      && scope.submissionId === reviewedSubmission && scope.slotId === slotId;
+  const owns = (scope: ReviewScope) => allowed && scope.reviewerId === reviewer.id && scope.studentId === student.id
+    && scope.submissionId === reviewedSubmission && scope.slotId === slotId;
   const settings = {
-    databasePath, authorizeConfirmationRecovery: () => true, verifyOriginal: () => true, authorizeQuestionDeliveryReview,
-    authorizeQuestionDeliveryVerdict: authorizeQuestionDeliveryReview,
+    databasePath, authorizeConfirmationRecovery: () => true, verifyOriginal: () => true,
+    authorizeReview: reviewAccess({ questionDelivery: { read: owns, write: owns } }),
   };
   const runtime = openLearningRuntime({ ...settings,
     evaluators: [combinedEvaluator(titledTextEvaluator(evaluator, () => { evaluated += 1; return { status: "needsReview" }; }),
@@ -436,7 +433,7 @@ test("题组教师改判｜连续改判逐次撤销回落到上一条有效教�
     assert.deepEqual(reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), first);
     assert.deepEqual(reopened.writeQuestionDeliveryVerdict(reviewer, activityId, key, withdraw), cleared);
     const forbidden = { code: "FORBIDDEN" };
-    const readOnly = openLearningRuntime({ databasePath, authorizeQuestionDeliveryReview });
+    const readOnly = openLearningRuntime({ databasePath, authorizeReview: reviewAccess({ questionDelivery: { read: owns } }) });
     try {
       assert.deepEqual(readOnly.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts"), committed.final);
       assert.throws(() => readOnly.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), forbidden);
@@ -461,11 +458,13 @@ test("题组教师改判｜人工题逐题按原确认授权，拒绝同组未�
   const base = publication("manual-verdict");
   let scopeSeen: unknown;
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
-    authorizeQuestionDeliveryVerdict(scope) {
-      scopeSeen = scope;
-      return scope.reviewerId === reviewer.id && scope.studentId === student.id;
-    },
+    authorizeReview: reviewAccess({ questionDelivery: {
+      read: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+      write(scope) {
+        scopeSeen = scope;
+        return scope.reviewerId === reviewer.id && scope.studentId === student.id;
+      },
+    } }),
   });
   try {
     const individualStep = { ...step, submit: { ...step.submit, slots: { [slotId]: { ...step.submit.slots[slotId],
@@ -491,7 +490,8 @@ test("题组教师改判｜人工题逐题按原确认授权，拒绝同组未�
     assert.equal(first.revision, 1);
     assert.deepEqual(scopeSeen, { reviewerId: reviewer.id, studentId: student.id, activityId: activity.activityId,
       stepAttemptId: activity.stepAttemptId, operationId: input.operationId, submissionId: receipt.id,
-      slotId: "first", targetId: "observe", questionId: question.id, questionVersion: question.version, action: "override" });
+      slotId: "first", delivery: "questionDelivery", purpose: "reviseVerdict", targetId: "observe", questionId: question.id,
+      questionVersion: question.version, action: "override" });
     const marked = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
     assert.deepEqual(marked.questions, [{ questionId: question.id, questionVersion: question.version, revision: 1,
       status: "judged", effective: { source: "teacherReview", id: first.id, correct: true } }]);
@@ -542,7 +542,7 @@ test("题组教师改判｜写入失败可重试，迟到初判不覆盖教师�
   const databasePath = scenarioDatabase(t);
   const base = publication("late-automation");
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
+    authorizeReview: () => true,
     evaluators: [booleanEvaluator(evaluator, ({ value, acceptedResponse }) => ({ status: "judged", correct: value === acceptedResponse }))],
   });
   try {
@@ -593,9 +593,11 @@ test("按题教师评阅｜混合回执只调用有私钥的评估器，无参�
   const received: unknown[] = [];
   const runtime = openLearningRuntime({
     databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id,
-    authorizeQuestionDeliveryVerdict: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id
-      && scope.questionVersion === ordering.version && scope.slotId === slotId,
+    authorizeReview: reviewAccess({ questionDelivery: {
+      read: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id,
+      write: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id
+        && scope.questionVersion === ordering.version && scope.slotId === slotId,
+    } }),
     evaluators: [booleanEvaluator(evaluator, input => {
       received.push(input);
       if (failEvaluation) throw new Error("temporary evaluation failure");
@@ -673,7 +675,7 @@ test("按题教师评阅｜无参考教师只读写声明题位，重开保留�
   const base = publication("declared-teacher-only");
   let allowed = true;
   const settings = { databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: () => allowed, authorizeQuestionDeliveryVerdict: () => allowed };
+    authorizeReview: () => allowed };
   const runtime = openLearningRuntime(settings);
   const frozen = (() => {
     try {
@@ -727,7 +729,7 @@ test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升�
   const databasePath = scenarioDatabase(t);
   const base = publication("legacy-review-anchor");
   const settings = { databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true };
+    authorizeReview: () => true };
   const before = (() => {
     const runtime = openLearningRuntime(settings);
     try {
@@ -794,7 +796,7 @@ test("按题教师评阅｜逐题仅为本次确认的声明位置建目标", t 
   const databasePath = scenarioDatabase(t);
   const base = publication("declared-per-question");
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true });
+    authorizeReview: () => true });
   try {
     const individual = { ...step, submit: { ...step.submit, slots: { [slotId]: { ...step.submit.slots[slotId],
       delivery: { mode: "perQuestion", questionSlots: { [ordering.id]: "sort", [optional.id]: "collect" } } as const,
@@ -827,7 +829,7 @@ test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t 
   const base = publication("declared-separate-receipts");
   const inputs: unknown[] = [];
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
+    authorizeReview: () => true,
     evaluators: [booleanEvaluator(evaluator, input => {
       inputs.push(input);
       return { status: "needsReview" };
@@ -905,8 +907,8 @@ test("零位置有序答案｜同一确认保留显式空答与缺稿，重开�
   const base = publication("zero-ordered-teacher-review");
   let allowed = true;
   const settings = { databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: ({ reviewerId }: { reviewerId: string }) => reviewerId === reviewer.id,
-    authorizeQuestionDeliveryVerdict: ({ reviewerId }: { reviewerId: string }) => allowed && reviewerId === reviewer.id };
+    authorizeReview: reviewAccess({ questionDelivery: { read: ({ reviewerId }) => reviewerId === reviewer.id,
+      write: ({ reviewerId }) => allowed && reviewerId === reviewer.id } }) };
   const first = openLearningRuntime(settings);
   const { activity, input, receipt } = (() => {
     try {

@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { LearningError, openLearningRuntime } from "learning-kernel";
-import type { VerdictCommand, VerdictReceipt } from "learning-kernel";
+import type { AuthorizeReview, ReviewScope, VerdictCommand, VerdictReceipt } from "learning-kernel";
 import { z } from "zod";
 
 const phase = z.enum(["race", "clear", "recover"]).parse(process.argv[2]);
@@ -23,15 +23,14 @@ const reviewer = { role: "reviewer", id: "observer-reviewer" } as const;
 const key = { protocolVersion: 1, operationId: "confirm", stepAttemptId: receipt.stepAttemptId } as const;
 
 let writeAllowed = true;
-const authorizeQuestionDeliveryReview: NonNullable<Parameters<typeof openLearningRuntime>[0]["authorizeQuestionDeliveryReview"]> = scope =>
-  scope.reviewerId === reviewer.id && scope.studentId === student.id && scope.activityId === activityId
-  && scope.stepAttemptId === key.stepAttemptId && scope.operationId === key.operationId
-  && scope.submissionId === receipt.id && scope.slotId === receipt.slotId;
+const owns = (scope: ReviewScope) => scope.delivery === "questionDelivery" && scope.reviewerId === reviewer.id
+  && scope.studentId === student.id && scope.activityId === activityId && scope.stepAttemptId === key.stepAttemptId
+  && scope.operationId === key.operationId && scope.submissionId === receipt.id && scope.slotId === receipt.slotId;
+const authorizeReview: AuthorizeReview = access => owns(access) && (access.purpose === "readReview" || (writeAllowed
+  && access.targetId === "observe" && access.questionId === questionId && access.questionVersion === questionVersion));
 const runtime = openLearningRuntime({
   databasePath,
-  authorizeQuestionDeliveryReview,
-  authorizeQuestionDeliveryVerdict: scope => writeAllowed && authorizeQuestionDeliveryReview(scope)
-    && scope.targetId === "observe" && scope.questionId === questionId && scope.questionVersion === questionVersion,
+  authorizeReview,
   authorizeConfirmationRecovery: scope => scope.studentId === student.id && scope.operationId === key.operationId,
 });
 
@@ -63,6 +62,7 @@ function race() {
 
 function verifyCleared() {
   const oldRead: ReturnType<typeof runtime.readQuestionDeliveryReview> = runtime.readQuestionDeliveryReview(reviewer, activityId, key);
+  assert.ok(oldRead.basis);
   assert.equal(oldRead.basis.version, 2);
   assert.deepEqual(oldRead.questions, [{ questionId, questionVersion, status: "needsReview" }]);
   const reviewed = runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts");

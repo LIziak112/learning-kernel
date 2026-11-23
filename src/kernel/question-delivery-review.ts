@@ -1,148 +1,179 @@
 import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
-import type { ChoiceConfirmationInput, ConfirmationKey } from "../contracts/choice-confirmation.ts";
+import type { ConfirmationKey } from "../contracts/choice-confirmation.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
 import type { QuestionDelivery } from "../contracts/question-delivery.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { readResponseConfirmation } from "../contracts/response.ts";
-import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict, FrozenConfirmationVerdictMode, VerdictCommand } from "../contracts/verdict.ts";
+import type { AuthorizeReview, FrozenConfirmationVerdictMode, ReviewedDelivery, ReviewScope, VerdictCommand } from "../contracts/verdict.ts";
 import { loadActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { readTransaction, writeTransaction } from "./database.ts";
-import { LearningError } from "../contracts/learning-error.ts";
 import { confirmedWorkForOperation } from "./question-confirmation.ts";
 import { requireQuestionDeliverySlot } from "./question-delivery-drafts.ts";
 import { confirmedDeliveryAssessment, readManualReviewBasis, readManualReviewQuestions } from "./question-delivery-evaluation.ts";
 import { boundOutput } from "./reading-progress.ts";
-import { appendReview, repeatedReview } from "./verdict-history.ts";
+import { appendReview, eventView, repeatedReview } from "./verdict-history.ts";
 import { questionVerdictStates, submissionReviewTarget } from "./verdict-state.ts";
 
+type Fields = ReadonlySet<ReadingActivity["practice"]["policy"]["reviewer"]["fields"][number]>;
+type Recovered = NonNullable<ReturnType<typeof confirmedWorkForOperation>>;
+type Confirmed = { questions: readonly { questionId: string; questionVersion: number; value?: unknown; choice?: unknown }[] };
+
 export function readQuestionDeliveryReview(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeReview | undefined,
 ) {
   return readTransaction(database, () => {
-    const { activity, receipt, content } = authorizedReview(database, reviewerId, activityId, key, authorize);
+    const { activity, receipt, content, fields } = authorizedDelivery(database, reviewerId, activityId, key, authorize);
     const manualReview = activity.practice.grading.manualReview;
     if (!manualReview) throw new LearningError(404, "REVIEW_NOT_FOUND");
-    const basis = readManualReviewBasis(database, receipt, manualReview.keyRef);
     const questions = readManualReviewQuestions(database, receipt, content.questions);
-    return { ...reviewedDelivery(activity, receipt, content), basis, questions };
+    return { ...reviewedDelivery(activity, receipt, content, fields), ...manualBasis(database, receipt, manualReview.keyRef, fields), questions };
   });
 }
 
 export function readQuestionDeliveryVerdicts(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeReview | undefined,
 ) {
   return readTransaction(database, () => {
-    const { activity, receipt, content } = authorizedReview(database, reviewerId, activityId, key, authorize);
+    const { activity, receipt, content, fields } = authorizedDelivery(database, reviewerId, activityId, key, authorize);
     const target = requireAssessment(database, receipt.id, requireQuestionDeliverySlot(activity, content.slotId).targetId);
     const manualReview = activity.practice.grading.manualReview;
     const { automatic, review } = confirmedDeliveryAssessment(activity, content);
     const assessmentIds = new Set([...automatic, ...review].map(({ questionId }) => questionId));
     const confirmed = content.questions.filter(({ questionId }) => assessmentIds.has(questionId));
-    const questions = reviewedVerdicts(database, target, confirmed, automatic);
-    const reviewed = { ...reviewedDelivery(activity, receipt, { ...content, questions: confirmed }), targetId: target.targetId, questions };
-    if (manualReview) return { ...reviewed, assessment: "manual" as const, basis: readManualReviewBasis(database, receipt, manualReview.keyRef) };
+    const questions = reviewedVerdicts(database, target, confirmed, automatic, fields);
+    const reviewed = { ...reviewedDelivery(activity, receipt, { ...content, questions: confirmed }, fields), targetId: target.targetId, questions };
+    if (manualReview) return { ...reviewed, assessment: "manual" as const, ...manualBasis(database, receipt, manualReview.keyRef, fields) };
     if (automatic.length) return { ...reviewed, assessment: "automatic" as const };
     return { ...reviewed, assessment: "teacherReview" as const };
   });
 }
 
 export function readChoiceConfirmationVerdicts(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeReview | undefined,
 ) {
-  return readFrozenConfirmationVerdicts(database, reviewerId, activityId, key, authorize, readChoiceConfirmation);
+  return readFrozenConfirmationVerdicts(database, reviewerId, activityId, key, authorize, "choiceConfirmation", readChoiceConfirmation);
 }
 
 export function readResponseConfirmationVerdicts(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeReview | undefined,
 ) {
-  return readFrozenConfirmationVerdicts(database, reviewerId, activityId, key, authorize, readResponseConfirmation);
+  return readFrozenConfirmationVerdicts(database, reviewerId, activityId, key, authorize, "responseConfirmation", readResponseConfirmation);
 }
 
-function readFrozenConfirmationVerdicts<Confirmation extends Pick<ChoiceConfirmationInput, "questions">>(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
-  read: (content: unknown) => Confirmation | undefined,
+function readFrozenConfirmationVerdicts<Confirmation extends Confirmed>(
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeReview | undefined,
+  delivery: FrozenConfirmationVerdictMode, read: (content: unknown) => Confirmation | undefined,
 ) {
   return readTransaction(database, () => {
-    const { activity, receipt, content } = authorizedConfirmation(database, reviewerId, activityId, key, authorize);
-    const confirmation = read(content);
+    const recovered = reviewConfirmation(database, reviewerId, activityId, key);
+    const confirmation = read(recovered.content);
     if (!confirmation) throw new LearningError(404, "REVIEW_NOT_FOUND");
+    const fields = authorizeRead(recovered, delivery, authorize);
+    const { activity, receipt } = recovered;
     const target = requireAssessment(database, receipt.id, boundOutput(activity.step, receipt.slotId).targetId);
-    const questions = reviewedVerdicts(database, target, confirmation.questions, confirmation.questions);
+    const questions = reviewedVerdicts(database, target, confirmation.questions, confirmation.questions, fields);
     const { id, version } = activity.practice;
-    return { receipt, practice: { id, version }, confirmation, targetId: target.targetId, assessment: "automatic" as const, questions };
+    return {
+      receipt, practice: { id, version }, confirmation: projectAnswers(confirmation, fields), targetId: target.targetId,
+      assessment: "automatic" as const, questions,
+    };
   });
+}
+
+function frozenConfirmation(content: unknown, delivery: FrozenConfirmationVerdictMode) {
+  return delivery === "responseConfirmation" ? readResponseConfirmation(content) : readChoiceConfirmation(content);
 }
 
 function reviewedVerdicts(
   database: DatabaseSync, target: ReturnType<typeof requireAssessment>,
-  positions: readonly { questionId: string; questionVersion: number }[], automatic: readonly { questionId: string }[],
+  positions: readonly { questionId: string; questionVersion: number }[], automatic: readonly { questionId: string }[], fields: Fields,
 ) {
   const states = questionVerdictStates(database, target, positions);
   const unfinished = new Set(target.status === "pending" || target.status === "failed" ? automatic.map(({ questionId }) => questionId) : []);
   const waiting = target.status === "failed" ? "evaluationFailed" as const : "pendingEvaluation" as const;
-  return states.map(({ questionId, questionVersion, revision, automatic, effective }) => {
-    const state = { questionId, questionVersion, revision, ...automatic && { automatic } };
-    if (effective) return { ...state, status: "judged" as const, effective };
+  const basis = fields.has("gradingBasis");
+  return states.map(({ questionId, questionVersion, revision, automatic: original, effective, history }) => {
+    const state = {
+      questionId, questionVersion, revision, ...basis && original && { automatic: original },
+      ...fields.has("verdictHistory") && { history: history.map(eventView) },
+    };
+    if (effective) return { ...state, status: "judged" as const, ...basis && { effective } };
     return { ...state, status: unfinished.has(questionId) ? waiting : "needsReview" as const };
   });
 }
 
 export function writeQuestionDeliveryVerdict(
   database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, command: VerdictCommand,
-  authorize: AuthorizeConfirmedVerdict | undefined, clock: () => Date, mode?: FrozenConfirmationVerdictMode,
+  authorize: AuthorizeReview | undefined, clock: () => Date, mode?: FrozenConfirmationVerdictMode,
 ) {
   return writeTransaction(database, () => {
-    const { activity, receipt, content, scope } = reviewConfirmation(database, reviewerId, activityId, key);
-    const { delivery, questionVersion, targetId } = requireVerdictPosition(activity, receipt, content, command, mode);
+    const recovered = reviewConfirmation(database, reviewerId, activityId, key);
+    const { activity, receipt, content } = recovered;
+    const delivery: ReviewedDelivery = mode ?? "questionDelivery";
+    const { deliveryContent, questionVersion, targetId } = requireVerdictPosition(activity, receipt, content, command, mode);
+    requireReviewPolicy(activity, "reviseQuestionVerdict");
     const { questionId, action } = command;
-    if (authorize?.({ ...scope, targetId, questionId, questionVersion, action }) !== true) {
+    if (authorize?.({ ...recovered.scope, delivery, purpose: "reviseVerdict", targetId, questionId, questionVersion, action }) !== true) {
       throw new LearningError(403, "FORBIDDEN");
     }
     const target = requireAssessment(database, receipt.id, targetId);
     if (target.targetId !== targetId) throw new Error("评估目标与冻结提交不一致");
-    if (delivery) {
-      const { automatic, review } = confirmedDeliveryAssessment(activity, delivery);
+    if (deliveryContent) {
+      const { automatic, review } = confirmedDeliveryAssessment(activity, deliveryContent);
       if (![...automatic, ...review].some(question => question.questionId === questionId)) throw new LearningError(403, "FORBIDDEN");
     }
-    return repeatedReview(database, activityId, reviewerId, command)
-      ?? appendReview(database, activityId, reviewerId, command, clock);
+    return repeatedReview(database, activityId, reviewerId, command) ?? appendReview(database, activityId, reviewerId, command, clock);
   });
 }
 
 function requireVerdictPosition(
   activity: ReadingActivity, receipt: SubmissionReceipt, content: unknown, command: VerdictCommand, mode: FrozenConfirmationVerdictMode | undefined,
 ) {
-  const delivery = mode === undefined ? readQuestionDelivery(content) : undefined;
-  const confirmation = mode === "responseConfirmation" ? readResponseConfirmation(content)
-    : mode === "choiceConfirmation" ? readChoiceConfirmation(content) : delivery;
+  const deliveryContent = mode === undefined ? readQuestionDelivery(content) : undefined;
+  const confirmation = mode === undefined ? deliveryContent : frozenConfirmation(content, mode);
   if (!confirmation || command.submissionId !== receipt.id) throw new LearningError(403, "FORBIDDEN");
-  const slot = delivery ? requireQuestionDeliverySlot(activity, delivery.slotId) : boundOutput(activity.step, receipt.slotId);
+  const slot = deliveryContent ? requireQuestionDeliverySlot(activity, deliveryContent.slotId) : boundOutput(activity.step, receipt.slotId);
   const question = confirmation.questions.find(frozen => frozen.questionId === command.questionId);
   if (!question || command.targetId !== slot.targetId) throw new LearningError(403, "FORBIDDEN");
-  return { delivery, questionVersion: question.questionVersion, targetId: slot.targetId };
+  return { deliveryContent, questionVersion: question.questionVersion, targetId: slot.targetId };
 }
 
-function authorizedReview(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
-) {
-  const recovered = authorizedConfirmation(database, reviewerId, activityId, key, authorize);
-  const content = readQuestionDelivery(recovered.content);
-  if (!content) throw new LearningError(404, "REVIEW_NOT_FOUND");
-  return { ...recovered, content };
+function requireReviewPolicy(activity: ReadingActivity, action?: "reviseQuestionVerdict"): Fields {
+  const { fields, actions } = activity.practice.policy.reviewer;
+  if (action ? !actions.includes(action) : fields.length === 0 && actions.length === 0) throw new LearningError(403, "FORBIDDEN");
+  return new Set(fields);
 }
 
-function authorizedConfirmation(
-  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
+function authorizeRead(recovered: Recovered & { activity: ReadingActivity; scope: Omit<ReviewScope, "delivery"> }, delivery: ReviewedDelivery,
+  authorize: AuthorizeReview | undefined) {
+  const fields = requireReviewPolicy(recovered.activity);
+  if (authorize?.({ ...recovered.scope, delivery, purpose: "readReview" }) !== true) throw new LearningError(403, "FORBIDDEN");
+  return fields;
+}
+
+function authorizedDelivery(
+  database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeReview | undefined,
 ) {
   const recovered = reviewConfirmation(database, reviewerId, activityId, key);
-  if (authorize?.(recovered.scope) !== true) throw new LearningError(403, "FORBIDDEN");
-  return recovered;
+  const content = readQuestionDelivery(recovered.content);
+  if (!content) throw new LearningError(404, "REVIEW_NOT_FOUND");
+  return { ...recovered, content, fields: authorizeRead(recovered, "questionDelivery", authorize) };
 }
 
-function reviewedDelivery({ practice: { id, version } }: ReadingActivity, receipt: SubmissionReceipt, content: QuestionDelivery) {
-  return { receipt, practice: { id, version }, confirmation: questionDeliveryView(content) };
+function projectAnswers<T extends Confirmed>(confirmation: T, fields: Fields): T {
+  if (fields.has("studentChoices")) return confirmation;
+  return { ...confirmation, questions: confirmation.questions.map(({ value: _value, choice: _choice, ...question }) => question) };
+}
+
+function reviewedDelivery({ practice: { id, version } }: ReadingActivity, receipt: SubmissionReceipt, content: QuestionDelivery, fields: Fields) {
+  return { receipt, practice: { id, version }, confirmation: projectAnswers(questionDeliveryView(content), fields) };
+}
+
+function manualBasis(database: DatabaseSync, receipt: SubmissionReceipt, keyRef: { id: string; version: number }, fields: Fields) {
+  return fields.has("gradingBasis") ? { basis: readManualReviewBasis(database, receipt, keyRef) } : {};
 }
 
 function requireAssessment(database: DatabaseSync, submissionId: string, targetId: string) {

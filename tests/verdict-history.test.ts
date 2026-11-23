@@ -10,6 +10,7 @@ import { frozenChoicePublication, questionVersions } from "./fixtures/frozen-cho
 import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { choiceEvaluator } from "./fixtures/evaluators.ts";
 import { defaultRegistry } from "./fixtures/evaluators.ts";
+import { reviewAccess } from "./fixtures/evaluators.ts";
 import {
   countFacts, firstChoices, get, post, prepareAnswers, prepareScenario, readingState, rejection, result,
   scenarioDatabase, withScenarioServer, reviewerSessions,
@@ -245,8 +246,10 @@ test("原单选连续改判后逐次撤销回落到上一条有效教师改判�
     databasePath: file,
     evaluators: [choiceEvaluator(evaluator, ({ choice, acceptedChoice }) => choice === acceptedChoice)],
     authorizeConfirmationRecovery: ({ studentId }) => studentId === student.id,
-    authorizeChoiceConfirmationReview: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
-    authorizeChoiceConfirmationVerdict: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+    authorizeReview: reviewAccess({ choiceConfirmation: {
+      read: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+      write: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
+    } }),
   });
   try {
     runtime.publish({

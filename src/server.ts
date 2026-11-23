@@ -8,9 +8,9 @@ import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftIn
 import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
 import { questionDeliveryDraftInput, questionDeliveryInput, questionDeliveryReviewMode } from "./contracts/question-delivery.ts";
-import type { AuthorizeQuestionDeliveryReview, AuthorizeQuestionDeliveryVerdict, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
+import type { QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
 import { frozenConfirmationVerdictMode, verdictCommand } from "./contracts/verdict.ts";
-import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict, FrozenConfirmationVerdictMode, VerdictCommand } from "./contracts/verdict.ts";
+import type { AuthorizeReview, FrozenConfirmationVerdictMode, VerdictCommand } from "./contracts/verdict.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
@@ -31,7 +31,9 @@ import { openDatabase, readTransaction } from "./kernel/database.ts";
 import { LearningError } from "./contracts/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
 import { confirmQuestionDelivery, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
-import { readChoiceConfirmationVerdicts, readQuestionDeliveryReview, readQuestionDeliveryVerdicts, readResponseConfirmationVerdicts, writeQuestionDeliveryVerdict } from "./kernel/question-delivery-review.ts";
+import {
+  readChoiceConfirmationVerdicts, readQuestionDeliveryReview, readQuestionDeliveryVerdicts, readResponseConfirmationVerdicts, writeQuestionDeliveryVerdict,
+} from "./kernel/question-delivery-review.ts";
 import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
 import { registerPublication } from "./kernel/publication.ts";
 import { evaluatePending } from "./kernel/pending-evaluation.ts";
@@ -60,12 +62,7 @@ const runtimeOptions = z.strictObject({
   hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
   verifyOriginal: z.custom<VerifyOriginal>(value => typeof value === "function").optional(),
   authorizeConfirmationRecovery: z.custom<AuthorizeConfirmationRecovery>(value => typeof value === "function").optional(),
-  authorizeQuestionDeliveryReview: z.custom<AuthorizeQuestionDeliveryReview>(value => typeof value === "function").optional(),
-  authorizeQuestionDeliveryVerdict: z.custom<AuthorizeQuestionDeliveryVerdict>(value => typeof value === "function").optional(),
-  authorizeChoiceConfirmationReview: z.custom<AuthorizeConfirmedReview>(value => typeof value === "function").optional(),
-  authorizeChoiceConfirmationVerdict: z.custom<AuthorizeConfirmedVerdict>(value => typeof value === "function").optional(),
-  authorizeResponseConfirmationReview: z.custom<AuthorizeConfirmedReview>(value => typeof value === "function").optional(),
-  authorizeResponseConfirmationVerdict: z.custom<AuthorizeConfirmedVerdict>(value => typeof value === "function").optional(),
+  authorizeReview: z.custom<AuthorizeReview>(value => typeof value === "function").optional(),
 });
 const studentPrincipal = z.strictObject({ role: z.literal("student"), id });
 const reviewerPrincipal = z.strictObject({ role: z.literal("reviewer"), id });
@@ -87,12 +84,8 @@ export type { EvaluationContext, EvaluationInput, Evaluator, EvaluatorRegistrati
 export type { QuestionDefinition, QuestionIssue, RegisteredResponseType, ResponseType } from "./contracts/response-type.ts";
 export { defineResponseType } from "./contracts/response-type.ts";
 export { defaultEvaluators, defaultResponseTypes, defaultTools } from "./extensions/index.ts";
-export type { AuthorizeQuestionDeliveryReview, AuthorizeQuestionDeliveryVerdict, QuestionDeliveryDraftInput, QuestionDeliveryInput };
-export type {
-  AuthorizeConfirmedReview as AuthorizeChoiceConfirmationReview, AuthorizeConfirmedVerdict as AuthorizeChoiceConfirmationVerdict,
-  AuthorizeConfirmedReview as AuthorizeResponseConfirmationReview, AuthorizeConfirmedVerdict as AuthorizeResponseConfirmationVerdict,
-  VerdictCommand, VerdictReceipt,
-} from "./contracts/verdict.ts";
+export type { QuestionDeliveryDraftInput, QuestionDeliveryInput };
+export type { AuthorizeReview, ReviewAccess, ReviewedDelivery, ReviewScope, VerdictCommand, VerdictReceipt } from "./contracts/verdict.ts";
 export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
@@ -147,14 +140,10 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     const reviewerId = principalId(reviewerPrincipal, principal);
     const activity = uuid.parse(activityId);
     const confirmation = confirmationKey.parse(key);
-    if (mode === "choiceConfirmation") {
-      return readChoiceConfirmationVerdicts(database, reviewerId, activity, confirmation, settings.authorizeChoiceConfirmationReview);
-    }
-    if (mode === "responseConfirmation") {
-      return readResponseConfirmationVerdicts(database, reviewerId, activity, confirmation, settings.authorizeResponseConfirmationReview);
-    }
+    if (mode === "choiceConfirmation") return readChoiceConfirmationVerdicts(database, reviewerId, activity, confirmation, settings.authorizeReview);
+    if (mode === "responseConfirmation") return readResponseConfirmationVerdicts(database, reviewerId, activity, confirmation, settings.authorizeReview);
     const read = mode === "verdicts" ? readQuestionDeliveryVerdicts : readQuestionDeliveryReview;
-    return read(database, reviewerId, activity, confirmation, settings.authorizeQuestionDeliveryReview);
+    return read(database, reviewerId, activity, confirmation, settings.authorizeReview);
   }
 
   return {
@@ -236,11 +225,8 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     recoverQuestionDelivery: recoverDelivery,
     readQuestionDeliveryReview: readDeliveryReview,
     writeQuestionDeliveryVerdict(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey, command: VerdictCommand, input?: FrozenConfirmationVerdictMode) {
-      const mode = verdictMode.parse(input);
-      const authorize = mode === "responseConfirmation" ? settings.authorizeResponseConfirmationVerdict
-        : mode === "choiceConfirmation" ? settings.authorizeChoiceConfirmationVerdict : settings.authorizeQuestionDeliveryVerdict;
       return writeQuestionDeliveryVerdict(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
-        confirmationKey.parse(key), verdictCommand.parse(command), authorize, clock, mode);
+        confirmationKey.parse(key), verdictCommand.parse(command), settings.authorizeReview, clock, verdictMode.parse(input));
     },
     evaluatePending(scope?: { submissionId: string }): EvaluationSummary {
       return evaluatePending(database, registry, undefined, scope && uuid.parse(scope.submissionId));

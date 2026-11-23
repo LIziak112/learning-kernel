@@ -24,7 +24,7 @@ export const frozenChoicePublication = {
     policy: {
       offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
       student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ["receipt", "ownChoices"], onFinal: [] } },
-      reviewer: { scope: "assignedReviewer", fields: [], actions: [] },
+      reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] },
       manager: { scope: "assigningTeacher", actions: [] },
     },
   },

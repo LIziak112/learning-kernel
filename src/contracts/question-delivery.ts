@@ -4,7 +4,6 @@ import { id, versionRef } from "./reading.ts";
 import { responseDraftInput, responseDraftValue, responseValue } from "./response.ts";
 import type { ResponseDraftInput } from "./response.ts";
 import { frozenConfirmationVerdictMode } from "./verdict.ts";
-import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict } from "./verdict.ts";
 
 
 export function orderedQuestionValues<T>(values: Record<string, T>) {
@@ -24,8 +23,6 @@ export const questionDeliveryReviewBasis = versionRef.extend({
   reviewCriteria: z.string().refine(criteria => criteria.trim().length > 0),
 });
 export const questionDeliveryReviewMode = z.union([z.literal("verdicts"), frozenConfirmationVerdictMode]).optional();
-export type AuthorizeQuestionDeliveryReview = AuthorizeConfirmedReview;
-export type AuthorizeQuestionDeliveryVerdict = AuthorizeConfirmedVerdict;
 
 export const questionDeliveryDraftInput = responseDraftInput;
 export const questionDeliveryDraftValue = responseDraftValue;

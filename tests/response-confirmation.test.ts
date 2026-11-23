@@ -4,11 +4,12 @@ import { test } from "node:test";
 import { openLearningRuntime, ResponseConfirmationConflict } from "../src/server.ts";
 import { latestDatabaseVersion } from "../src/kernel/database.ts";
 import type {
-  AuthorizeResponseConfirmationReview, AuthorizeResponseConfirmationVerdict, PublicationInput, ResponseConfirmationInput,
+  PublicationInput, ResponseConfirmationInput, ReviewAccess, ReviewScope,
   ResponseDraftInput, VerdictCommand, VerdictResult,
 } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 import { booleanEvaluator, choiceEvaluator } from "./fixtures/evaluators.ts";
+import { reviewAccess } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "student" } as const;
 const practice = { id: "frozen-judgment", version: 1 };
@@ -40,7 +41,7 @@ const oldPublication = {
     policy: {
       offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
       student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ["receipt", "ownChoices"], onFinal: [] } },
-      reviewer: { scope: "assignedReviewer", fields: [], actions: [] },
+      reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] },
       manager: { scope: "assigningTeacher", actions: [] },
     },
   },
@@ -437,15 +438,17 @@ test("标量正式确认的连续改判逐次撤销回落到上一条有效判�
   };
   let readAllowed = true;
   let writeAllowed = true;
-  const ownsReview: AuthorizeResponseConfirmationReview = scope => scope.reviewerId === reviewer.id && scope.studentId === student.id
+  const ownsReview = (scope: ReviewScope) => scope.reviewerId === reviewer.id && scope.studentId === student.id
     && scope.activityId === activityId && scope.stepAttemptId === key.stepAttemptId && scope.operationId === key.operationId
     && scope.submissionId === receipt.id && scope.slotId === receipt.slotId;
-  const authorizeResponseConfirmationReview: AuthorizeResponseConfirmationReview = scope => readAllowed && ownsReview(scope);
-  const authorizeResponseConfirmationVerdict: AuthorizeResponseConfirmationVerdict = scope => writeAllowed && ownsReview(scope)
-    && scope.targetId === targetId && scope.questionVersion === questionVersion && allowedQuestions.includes(scope.questionId);
-  const isolatedPolicies = { databasePath, authorizeConfirmationRecovery: trusted, authorizeQuestionDeliveryReview: () => true,
-    authorizeQuestionDeliveryVerdict: () => true, authorizeChoiceConfirmationReview: () => true, authorizeChoiceConfirmationVerdict: () => true,
-  };
+  const authorizeReview = reviewAccess({ responseConfirmation: {
+    read: scope => readAllowed && ownsReview(scope),
+    write: (scope: Extract<ReviewAccess, { purpose: "reviseVerdict" }>) => writeAllowed && ownsReview(scope)
+      && scope.targetId === targetId && scope.questionVersion === questionVersion && allowedQuestions.includes(scope.questionId),
+  } });
+  const isolatedPolicies = { databasePath, authorizeConfirmationRecovery: trusted, authorizeReview: reviewAccess({
+    questionDelivery: { read: () => true, write: () => true }, choiceConfirmation: { read: () => true, write: () => true },
+  }) };
   const oldModes = openLearningRuntime(isolatedPolicies);
   try {
     assert.throws(() => oldModes.readQuestionDeliveryReview(reviewer, activityId, key, mode), denied);
@@ -458,7 +461,7 @@ test("标量正式确认的连续改判逐次撤销回落到上一条有效判�
   } finally { oldModes.close(); }
 
   const stableFacts = facts(databasePath);
-  const settings = { databasePath, authorizeConfirmationRecovery: trusted, authorizeResponseConfirmationReview, authorizeResponseConfirmationVerdict };
+  const settings = { databasePath, authorizeConfirmationRecovery: trusted, authorizeReview };
   const runtime = openLearningRuntime(settings);
   const { final, replay } = (() => {
     try {

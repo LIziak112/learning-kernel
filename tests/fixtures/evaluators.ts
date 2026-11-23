@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { defaultEvaluators, defaultResponseTypes, defaultTools } from "../../src/extensions/index.ts";
 import { createRegistry } from "../../src/kernel/registry.ts";
-import type { EvaluationInput, EvaluatorRegistration, QuestionAnswerRule, VerdictResult } from "../../src/server.ts";
+import type {
+  AuthorizeReview, EvaluationInput, EvaluatorRegistration, QuestionAnswerRule, ReviewAccess, ReviewedDelivery, ReviewScope, VerdictResult,
+} from "../../src/server.ts";
 
 type Reference = { id: string; version: number };
 type Context = Omit<EvaluationInput, "responseType" | "value" | "key">;
@@ -68,3 +70,12 @@ export type ScalarInput = Parameters<Parameters<typeof booleanEvaluator>[1]>[0];
 export type IndexInput = Parameters<Parameters<typeof indexEvaluator>[1]>[0];
 export type OrderedTextInput = Parameters<Parameters<typeof orderedTextEvaluator>[1]>[0];
 export type TitledTextInput = Parameters<Parameters<typeof titledTextEvaluator>[1]>[0];
+
+type RevisionAccess = Extract<ReviewAccess, { purpose: "reviseVerdict" }>;
+type DeliveryHooks = { read?: (scope: ReviewScope) => boolean; write?: (access: RevisionAccess) => boolean };
+export function reviewAccess(byDelivery: Partial<Record<ReviewedDelivery, DeliveryHooks>>): AuthorizeReview {
+  return access => {
+    const hooks = byDelivery[access.delivery];
+    return access.purpose === "readReview" ? hooks?.read?.(access) === true : hooks?.write?.(access) === true;
+  };
+}

@@ -27,7 +27,7 @@ const publication = {
     policy: {
       offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
       student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ["receipt", "ownResponses"], onFinal: [] } },
-      reviewer: { scope: "assignedReviewer", fields: [], actions: [] }, manager: { scope: "assigningTeacher", actions: [] },
+      reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] }, manager: { scope: "assigningTeacher", actions: [] },
     },
   },
   scoringKey: { ...keyRef, acceptedByQuestion: { [judge.id]: { response: "booleanOrString", acceptedResponse: true } } },
@@ -39,7 +39,7 @@ test("恢复只读；评估器连续失败三次转失败终态，学生见失�
   let calls = 0;
   const runtime = openLearningRuntime({
     databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
+    authorizeReview: () => true,
     evaluators: [booleanEvaluator(evaluator, ({ value, acceptedResponse }) => {
       calls++;
       if (broken) throw new Error("upstream grader down");
