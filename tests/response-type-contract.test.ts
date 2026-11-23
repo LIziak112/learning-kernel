@@ -13,7 +13,7 @@ const rows: readonly ResponseTypeRow[] = [
   {
     row: "T-judge",
     question: { id: "judge", version: 3, prompt: "这句话成立吗？", response: "booleanOrString", options: { yes: "是", no: "否" } },
-    grading: { path: "automatic", evaluator: judgeEvaluator, key: { acceptedResponse: true } },
+    grading: { path: "automatic", evaluator: judgeEvaluator, register: judgeEvaluator, key: { acceptedResponse: true } },
     answers: [
       { value: true, result: { status: "judged", correct: true } },
       { value: false, result: { status: "judged", correct: false } },

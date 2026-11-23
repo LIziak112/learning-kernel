@@ -77,11 +77,14 @@ export type HandIn = Readonly<{
   questionVersion: number;
 }>;
 
+export type Clause = (module: ScenarioModule, harness: Harness) => void;
+
 export type ScenarioModule = Readonly<{
   group: string;
   title: string;
   publication(practiceId: string): PublicationInput;
   handIn(harness: Harness, practiceId: string, token: string): HandIn;
+  clauses?: Partial<Readonly<Record<ScenarioClause, Clause>>>;
   notApplicable?: Partial<Readonly<Record<ScenarioClause, string>>>;
 }>;
 
@@ -114,15 +117,21 @@ function verdictCommand(handed: HandIn, targetId: string) {
   return { protocolVersion: 1, submissionId: handed.receipt.id, targetId, questionId: handed.questionId } as const;
 }
 
-const clauses: Readonly<Record<ScenarioClause, (module: ScenarioModule, harness: Harness) => void>> = {
+export const defaultClauses: Readonly<Record<ScenarioClause, Clause>> = {
   submit(module, harness) {
     harness.runtime.publish(module.publication("submit"));
     const handed = module.handIn(harness, "submit", acceptedToken);
     const { runtime } = harness;
+    assert.match(handed.receipt.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(handed.receipt.stepAttemptId, handed.key.stepAttemptId);
     assert.deepEqual(runtime.confirmQuestionDelivery(student, handed.activityId, handed.input), handed.receipt);
     assert.throws(() => runtime.confirmQuestionDelivery(student, handed.activityId, { ...handed.input, operationId: "competing" }),
       { status: 409, code: "ALREADY_SUBMITTED" });
-    assert.deepEqual(runtime.recoverQuestionDelivery(student, handed.activityId, handed.key).evaluation, { status: "pending", evaluator: stubEvaluatorRef });
+    const pending = runtime.recoverQuestionDelivery(student, handed.activityId, handed.key);
+    assert.deepEqual(pending.confirmation.questions.map(({ questionId, questionVersion, revision, value }) =>
+      ({ questionId, questionVersion, revision, value })), handed.input.questions.map(({ questionId, questionVersion, revision }) =>
+      ({ questionId, questionVersion, revision, value: { token: acceptedToken } })));
+    assert.deepEqual(pending.evaluation, { status: "pending", evaluator: stubEvaluatorRef });
     runtime.evaluatePending();
     const evaluated = runtime.recoverQuestionDelivery(student, handed.activityId, handed.key);
     assert.deepEqual(evaluated.receipt, handed.receipt);
@@ -139,12 +148,17 @@ const clauses: Readonly<Record<ScenarioClause, (module: ScenarioModule, harness:
     const handed = module.handIn(harness, "authorize", acceptedToken);
     const { runtime } = harness;
     runtime.evaluatePending();
+    const leak = /acceptedToken|acceptedByQuestion|contract-stub-key/;
+    const own = runtime.recoverQuestionDelivery(student, handed.activityId, handed.key);
+    assert.deepEqual(own.receipt, handed.receipt);
+    assert.doesNotMatch(JSON.stringify(own), leak);
+    assert.doesNotMatch(JSON.stringify(runtime.read(student, handed.activityId)), leak);
+    assert.deepEqual(reviewVerdicts(harness, handed).questions.map(({ questionId }) => questionId), [handed.questionId]);
     const forbidden = { status: 403, code: "FORBIDDEN" };
     assert.throws(() => runtime.recoverQuestionDelivery(outsider, handed.activityId, handed.key), forbidden);
     assert.throws(() => runtime.confirmQuestionDelivery(outsider, handed.activityId, handed.input), forbidden);
     assert.throws(() => runtime.readQuestionDeliveryReview({ ...reviewer, id: "other-reviewer" }, handed.activityId, handed.key, "verdicts"),
       forbidden);
-    assert.doesNotMatch(JSON.stringify(runtime.read(student, handed.activityId)), /acceptedToken|acceptedByQuestion|contract-stub-key/);
     harness.reviewAllowed = false;
     assert.throws(() => reviewVerdicts(harness, handed), forbidden);
     harness.studentRecovery = false;
@@ -200,12 +214,15 @@ const clauses: Readonly<Record<ScenarioClause, (module: ScenarioModule, harness:
 };
 
 export function scenarioContract(module: ScenarioModule) {
+  const applied = scenarioClauses.filter(clause => module.notApplicable?.[clause] === undefined);
+  assert.ok(applied.length > 0, `${module.group} 至少适用一项场景契约`);
   for (const clause of scenarioClauses) {
     const reason = module.notApplicable?.[clause];
-    if (reason !== undefined) {
-      assert.ok(reason.trim() !== "", `${module.group} ${clause} 标不适用须写理由`);
-      continue;
-    }
-    test(`模块契约 ${module.group} ${module.title}｜${clause}`, t => clauses[clause](module, openHarness(t)));
+    assert.ok(reason === undefined || reason.trim() !== "", `${module.group} ${clause} 标不适用须写理由`);
+    assert.ok(reason === undefined || module.clauses?.[clause] === undefined, `${module.group} ${clause} 不能既标不适用又给用例`);
+  }
+  for (const clause of applied) {
+    const run = module.clauses?.[clause] ?? defaultClauses[clause];
+    test(`模块契约 ${module.group} ${module.title}｜${clause}`, t => run(module, openHarness(t)));
   }
 }
