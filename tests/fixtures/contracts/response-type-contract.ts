@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import type { EvaluatorRegistration, QuestionDeliveryDraftInput, RegisteredResponseType, VerdictResult } from "../../../src/server.ts";
@@ -8,19 +9,20 @@ import {
 } from "./delivery.ts";
 import type { Activity, ContractQuestion, Runtime } from "./delivery.ts";
 
-export type VerdictSample = Readonly<{ name: string; value: QuestionDeliveryDraftInput["value"]; expected: VerdictResult }>;
+type DraftValue = QuestionDeliveryDraftInput["value"];
+export type VerdictSample = Readonly<{ name: string; value: DraftValue; stored?: DraftValue; expected: VerdictResult }>;
 
-type Grading =
-  | Readonly<{ mode: "automatic"; key: Readonly<Record<string, unknown>>; evaluator: EvaluatorRegistration }>
-  | Readonly<{ mode: "teacherReview"; evaluator?: EvaluatorRegistration }>;
+export type ContractGradingMode =
+  | Readonly<{ name: string; mode: "automatic"; key: Readonly<Record<string, unknown>>; evaluator: EvaluatorRegistration }>
+  | Readonly<{ name: string; mode: "teacherReview"; evaluator?: EvaluatorRegistration }>;
 
 export type ResponseTypeContract = Readonly<{
   row: string;
   question: ContractQuestion;
-  grading: Grading;
+  grading: ContractGradingMode;
   responseTypes?: readonly RegisteredResponseType[];
   samples: readonly [VerdictSample, ...VerdictSample[]];
-  unanswered: Readonly<{ expected: VerdictResult; blank?: QuestionDeliveryDraftInput["value"] }>;
+  unanswered: Readonly<{ expected: VerdictResult; blank?: DraftValue }>;
 }>;
 
 type Observation = Readonly<{ status: "judged"; correct: boolean; source: "automatic" | "teacherReview" }> | Readonly<{ status: "needsReview" }>;
@@ -29,35 +31,48 @@ function expectedObservation(result: VerdictResult): Observation {
   return result.status === "judged" ? { status: "judged", correct: result.correct, source: "automatic" } : { status: "needsReview" };
 }
 
-function countingEvaluator(registration: EvaluatorRegistration | undefined, calls: { count: number }) {
+function stored(sample: VerdictSample) {
+  return sample.stored === undefined ? sample.value : sample.stored;
+}
+
+function spiedEvaluators(registration: EvaluatorRegistration | undefined, seen: unknown[]): EvaluatorRegistration[] {
   if (!registration) return [];
-  return [{ ...registration, evaluate: (input: Parameters<EvaluatorRegistration["evaluate"]>[0]) => {
-    calls.count++;
+  return [{ ...registration, evaluate: input => {
+    seen.push(input.value);
     return registration.evaluate(input);
   } }];
 }
 
 function world(t: TestContext, contract: ResponseTypeContract) {
-  const calls = { count: 0 };
-  const runtime = openRuntime(scenarioDatabase(t), {
-    responseTypes: [...contract.responseTypes ?? []], evaluators: countingEvaluator(contract.grading.evaluator, calls), authorizeReview: () => true,
+  const seen: unknown[] = [];
+  const databasePath = scenarioDatabase(t);
+  const { question, grading } = contract;
+  const runtime = openRuntime(databasePath, {
+    responseTypes: [...contract.responseTypes ?? []], evaluators: spiedEvaluators(grading.evaluator, seen), authorizeReview: () => true,
   });
   t.after(() => runtime.close());
   const publish = (id: string, allowUnanswered: boolean) => {
-    const { question, grading } = contract;
     const keys = grading.mode === "automatic" ? { [question.id]: grading.key } : {};
     const teacherReview = grading.mode === "teacherReview" ? [question.id] : [];
-    runtime.publish(deliveryPublication({ id, questions: [question], grading: { keys, teacherReview }, mode: "whole", allowUnanswered }));
+    const evaluator = grading.mode === "automatic" ? grading.evaluator : undefined;
+    runtime.publish(deliveryPublication({
+      id, questions: [question], grading: { keys, teacherReview }, mode: "whole", allowUnanswered,
+      ...evaluator ? { evaluator: { id: evaluator.id, version: evaluator.version } } : {},
+    }));
     return id;
   };
-  return { runtime, calls, publish };
+  const counts = (table: string) => {
+    using database = new DatabaseSync(databasePath, { readOnly: true });
+    return database.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n;
+  };
+  return { runtime, seen, publish, counts };
 }
 
 function learner(contract: ResponseTypeContract, label: string) {
   return { role: "student", id: `${contract.row}-${label}` } as const;
 }
 
-function handIn(runtime: Runtime, practiceId: string, contract: ResponseTypeContract, label: string, value?: QuestionDeliveryDraftInput["value"]) {
+function handIn(runtime: Runtime, practiceId: string, contract: ResponseTypeContract, label: string, value?: DraftValue) {
   const principal = learner(contract, label);
   const activity = startFor(runtime, practiceId, principal);
   const revision = value === undefined ? 0 : saveDraft(runtime, activity, contract.question, value, { principal }).revision;
@@ -79,36 +94,37 @@ function withoutRevision({ revision: _revision, ...observation }: Observation & 
   return observation;
 }
 
-function expectedCalls(contract: ResponseTypeContract, deliveries: number) {
-  return contract.grading.mode === "automatic" ? deliveries : 0;
+function assertEvaluated(contract: ResponseTypeContract, seen: readonly unknown[], values: readonly unknown[]) {
+  assert.deepEqual(seen, contract.grading.mode === "automatic" ? values : []);
 }
 
 export function responseTypeContract(contract: ResponseTypeContract) {
-  const { row } = contract;
+  const label = `${contract.row}［${contract.grading.name}］`;
 
-  test(`${row}｜①判分：冻结题与私有键下，每个样例值得到约定判定，读面一致`, t => {
-    const { runtime, calls, publish } = world(t, contract);
-    const practiceId = publish(`${row}-verdict`, false);
+  test(`${label}｜①判分：冻结题与私有键下，每个样例值得到约定判定，读面一致`, t => {
+    const { runtime, seen, publish, counts } = world(t, contract);
+    const practiceId = publish("verdict", false);
     for (const [index, sample] of contract.samples.entries()) {
       const delivered = handIn(runtime, practiceId, contract, `sample-${index}`, sample.value);
       runtime.evaluatePending();
       assert.deepEqual(withoutRevision(observe(runtime, delivered.activity, delivered.key)), expectedObservation(sample.expected), sample.name);
       const recovered = runtime.recoverQuestionDelivery(delivered.principal, delivered.activity.activityId, delivered.key, "declared");
       assert.deepEqual(recovered.receipt, delivered.receipt);
-      assert.deepEqual(recovered.confirmation.questions.map(({ value }) => value), [sample.value]);
+      assert.deepEqual(recovered.confirmation.questions.map(({ value }) => value), [stored(sample)]);
     }
-    assert.equal(calls.count, expectedCalls(contract, contract.samples.length));
+    assertEvaluated(contract, seen, contract.samples.map(stored));
+    assert.deepEqual([counts("submissions"), counts("completions")], [contract.samples.length, contract.samples.length]);
   });
 
-  test(`${row}｜②空答：缺稿按未答判定，已答规则区分空值与作答`, t => {
-    const { runtime, calls, publish } = world(t, contract);
-    const optional = publish(`${row}-optional`, true);
+  test(`${label}｜②空答：缺稿按未答判定，已答规则区分空值与作答`, t => {
+    const { runtime, seen, publish } = world(t, contract);
+    const optional = publish("optional", true);
     const missing = handIn(runtime, optional, contract, "missing");
     runtime.evaluatePending();
     assert.deepEqual(withoutRevision(observe(runtime, missing.activity, missing.key)), expectedObservation(contract.unanswered.expected));
-    const required = publish(`${row}-required`, false);
+    const required = publish("required", false);
     const { blank } = contract.unanswered;
-    let deliveries = 1;
+    const values: unknown[] = [null];
     if (blank !== undefined) {
       const principal = learner(contract, "blank-required");
       const activity = startFor(runtime, required, principal);
@@ -120,19 +136,20 @@ export function responseTypeContract(contract: ResponseTypeContract) {
       const allowed = handIn(runtime, optional, contract, "blank-optional", blank);
       runtime.evaluatePending();
       assert.deepEqual(withoutRevision(observe(runtime, allowed.activity, allowed.key)), expectedObservation(contract.unanswered.expected));
-      deliveries++;
+      values.push(blank);
     }
     for (const [index, sample] of contract.samples.entries()) {
       const answered = handIn(runtime, required, contract, `answered-${index}`, sample.value);
       assert.equal(runtime.read(answered.principal, answered.activity.activityId).status, "completed", sample.name);
+      values.push(stored(sample));
     }
     runtime.evaluatePending();
-    assert.equal(calls.count, expectedCalls(contract, deliveries + contract.samples.length));
+    assertEvaluated(contract, seen, values);
   });
 
-  test(`${row}｜③改判/清除：教师改判即生效，逐次清除回落到上一条改判，再回落到自动判定或待批`, t => {
-    const { runtime, publish } = world(t, contract);
-    const practiceId = publish(`${row}-amend`, false);
+  test(`${label}｜③改判/清除：教师改判即生效，逐次清除回落到上一条改判，再回落到自动判定或待批`, t => {
+    const { runtime, publish, counts } = world(t, contract);
+    const practiceId = publish("amend", false);
     const [sample] = contract.samples;
     const { principal, activity, receipt, key } = handIn(runtime, practiceId, contract, "amend", sample.value);
     runtime.evaluatePending();
@@ -151,6 +168,7 @@ export function responseTypeContract(contract: ResponseTypeContract) {
     assert.deepEqual(observe(runtime, activity, key), { status: "judged", correct: false, source: "teacherReview", revision: cleared.revision });
     const reverted = write(withdraw({ ...location, operationId: "clear-first", expectedRevision: cleared.revision }, first.id));
     assert.deepEqual(observe(runtime, activity, key), { ...withoutRevision(baseline), revision: reverted.revision });
+    assert.equal(counts("verdict_events"), 4);
     assert.deepEqual(runtime.recoverQuestionDelivery(principal, activity.activityId, key, "declared"), studentBefore);
     assert.doesNotMatch(JSON.stringify(runtime.read(principal, activity.activityId)), /契约复核|teacherReview|acceptedByQuestion/);
   });

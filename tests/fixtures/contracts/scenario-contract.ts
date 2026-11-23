@@ -33,10 +33,13 @@ export function stubKeyFor(acceptedToken: string) {
   return { acceptedToken };
 }
 
+export const pendingToken = "?";
+
 export type StubWorld = {
   readonly databasePath: string;
   readonly evaluated: string[];
-  failing: boolean;
+  readonly students: Set<string>;
+  failuresLeft: number;
   recoveryAllowed: boolean;
   reviewAllowed: boolean;
   open(): Runtime;
@@ -47,16 +50,20 @@ function stubEvaluator(world: StubWorld): EvaluatorRegistration {
     ...evaluatorRef, responseTypes: [stubResponse.id],
     evaluate({ questionId, value, key }) {
       world.evaluated.push(questionId);
-      if (world.failing) throw new Error("桩评估器故障");
+      if (world.failuresLeft > 0) {
+        world.failuresLeft--;
+        throw new Error("桩评估器故障");
+      }
+      if (value === pendingToken) return { status: "needsReview" };
       return { status: "judged", correct: value === stubKey.parse(key).acceptedToken };
     },
   };
 }
 
 function stubWorld(t: TestContext): StubWorld {
-  const owns = (scope: ReviewScope) => world.reviewAllowed && scope.reviewerId === reviewer.id && scope.studentId === student.id;
+  const owns = (scope: ReviewScope) => world.reviewAllowed && scope.reviewerId === reviewer.id && world.students.has(scope.studentId);
   const world: StubWorld = {
-    databasePath: scenarioDatabase(t), evaluated: [], failing: false, recoveryAllowed: true, reviewAllowed: true,
+    databasePath: scenarioDatabase(t), evaluated: [], students: new Set([student.id]), failuresLeft: 0, recoveryAllowed: true, reviewAllowed: true,
     open() {
       const runtime = openRuntime(world.databasePath, {
         responseTypes: [stubResponse], evaluators: [stubEvaluator(world)],
@@ -83,21 +90,32 @@ export type ScenarioContract = Readonly<{
 
 const ledger = new URL("../../../docs/迁移契约台账/台账.md", import.meta.url);
 
+function ledgerCell(group: string) {
+  const lines = readFileSync(ledger, "utf8").split("\n");
+  const header = lines.find(line => line.startsWith("| 组 |"))?.split("|").map(cell => cell.trim());
+  const column = header?.indexOf("适用契约") ?? -1;
+  const row = lines.find(line => line.startsWith(`| ${group} |`));
+  assert.ok(row && column > 0, `台账缺少 ${group} 行或「适用契约」列`);
+  return row.split("|")[column]?.trim() ?? "";
+}
+
 function ledgerApplicability(group: string) {
-  const row = readFileSync(ledger, "utf8").split("\n").find(line => line.startsWith(`| ${group} |`));
-  assert.ok(row, `台账缺少 ${group} 行`);
-  const declared = row.split("|")[4]?.split("；")[0] ?? "";
-  return scenarioItems.filter(item => declared.split("/").map(part => part.trim()).includes(itemNames[item]));
+  const [declared = "", reasons = ""] = ledgerCell(group).split("；");
+  const items = declared.replace(/（[^）]*）/g, "").split(/[/／]/).map(part => part.trim());
+  return { applicable: scenarioItems.filter(item => items.includes(itemNames[item])), reasons };
 }
 
 export function scenarioContract({ group, items }: ScenarioContract) {
   const applicable = scenarioItems.filter(item => !("notApplicable" in items[item]));
 
   test(`${group}｜适用契约与台账「适用契约」列一致，不适用项写明原因`, () => {
-    assert.deepEqual(applicable, ledgerApplicability(group));
+    const declared = ledgerApplicability(group);
+    assert.deepEqual(applicable, declared.applicable);
     for (const item of scenarioItems) {
       const entry = items[item];
-      if ("notApplicable" in entry) assert.ok(entry.notApplicable.trim().length > 0, `${group} ${itemNames[item]} 缺少不适用原因`);
+      if (!("notApplicable" in entry)) continue;
+      assert.ok(entry.notApplicable.trim().length > 0, `${group} ${itemNames[item]} 缺少不适用原因`);
+      assert.ok(declared.reasons.includes(itemNames[item]) && declared.reasons.includes("不适用"), `台账未写明 ${group} ${itemNames[item]} 不适用`);
     }
   });
 

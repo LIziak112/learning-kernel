@@ -4,7 +4,7 @@ import {
   deliveryInput, deliveryPublication, outsider, override, questionSlot, recoveryKey, reviewer, saveDraft, startFor, student, withdraw,
 } from "../fixtures/contracts/delivery.ts";
 import type { Activity, Runtime } from "../fixtures/contracts/delivery.ts";
-import { scenarioContract, stubKeyFor, stubQuestion } from "../fixtures/contracts/scenario-contract.ts";
+import { pendingToken, scenarioContract, stubKeyFor, stubQuestion } from "../fixtures/contracts/scenario-contract.ts";
 import type { StubWorld } from "../fixtures/contracts/scenario-contract.ts";
 
 const first = stubQuestion("q1", 2);
@@ -118,7 +118,7 @@ scenarioContract({
       title: "评估器连续失败三次转失败终态，提交保留、学生只见失败、教师可人工判定；其余位置照常评估",
       run(world) {
         const { runtime, activity } = begin(world);
-        world.failing = true;
+        world.failuresLeft = 3;
         const one = handInOne(runtime, activity, first, "甲");
         const scope = { submissionId: one.receipt.id };
         assert.deepEqual(runtime.evaluatePending(scope), { evaluated: 0, retrying: 1, failed: 0, deferred: 0 });
@@ -135,7 +135,7 @@ scenarioContract({
         assert.deepEqual(settled(runtime, activity, one.key),
           [{ revision: 1, status: "judged", effective: { source: "teacherReview", id: manual.id, correct: true } }]);
 
-        world.failing = false;
+        assert.equal(world.failuresLeft, 0);
         const two = handInOne(runtime, activity, second, "乙");
         assert.deepEqual(runtime.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
         const evaluated = runtime.recoverQuestionDelivery(student, activity.activityId, two.key);
@@ -167,9 +167,24 @@ scenarioContract({
           [{ revision: 2, status: "judged", effective: { source: "automatic", correct: true } }]);
         assert.deepEqual(verdicts(runtime, activity, two.key), otherBefore);
         assert.deepEqual(runtime.recoverQuestionDelivery(student, activity.activityId, one.key), studentBefore);
+        const elsewhere = runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, two.key,
+          override({ receipt: two.receipt, questionId: second.id, operationId: "mark-two", expectedRevision: 0 }, true));
         assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, two.key,
-          withdraw({ receipt: two.receipt, questionId: second.id, operationId: "cross", expectedRevision: 0 }, marked.id)),
+          withdraw({ receipt: two.receipt, questionId: second.id, operationId: "cross", expectedRevision: 1 }, marked.id)),
         { code: "VERDICT_CONFLICT" });
+        assert.deepEqual(settled(runtime, activity, two.key),
+          [{ revision: 1, status: "judged", effective: { source: "teacherReview", id: elsewhere.id, correct: true } }]);
+        assert.deepEqual(settled(runtime, activity, one.key),
+          [{ revision: 2, status: "judged", effective: { source: "automatic", correct: true } }]);
+
+        const three = handInOne(runtime, activity, third, pendingToken);
+        runtime.evaluatePending();
+        assert.deepEqual(settled(runtime, activity, three.key), [{ revision: 0, status: "needsReview", effective: undefined }]);
+        const pendingMark = runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, three.key,
+          override({ receipt: three.receipt, questionId: third.id, operationId: "mark-three", expectedRevision: 0 }, false));
+        runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, three.key,
+          withdraw({ receipt: three.receipt, questionId: third.id, operationId: "clear-three", expectedRevision: 1 }, pendingMark.id));
+        assert.deepEqual(settled(runtime, activity, three.key), [{ revision: 2, status: "needsReview", effective: undefined }]);
       },
     },
   },

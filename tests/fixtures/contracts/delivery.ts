@@ -1,6 +1,8 @@
 import { openLearningRuntime } from "../../../src/server.ts";
 import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, StudentPrincipal, VerdictCommand } from "../../../src/server.ts";
 
+type ReadingPractice = Extract<PublicationInput, { practice: { formatVersion: 1 } }>["practice"];
+
 export type ContractQuestion = Readonly<{
   id: string;
   version: number;
@@ -21,6 +23,8 @@ export type DeliveryDeclaration = Readonly<{
   grading: ContractGrading;
   mode: "whole" | "perQuestion";
   allowUnanswered: boolean;
+  evaluator?: Readonly<{ id: string; version: number }>;
+  policy?: ReadingPractice["policy"];
 }>;
 
 export const student = { role: "student", id: "contract-student" } as const;
@@ -31,11 +35,10 @@ export const targetId = "contract";
 export const evaluatorRef = { id: "contract-evaluator", version: 1 } as const;
 export const keyRef = { id: "contract-key", version: 1 } as const;
 
-type ReadingPractice = Extract<PublicationInput, { practice: { formatVersion: 1 } }>["practice"];
 type Assessment = NonNullable<NonNullable<ReadingPractice["grading"]>["assessment"]>;
 
 const original = { state: "uncollected" } as const;
-const policy: ReadingPractice["policy"] = {
+export const contractPolicy: ReadingPractice["policy"] = {
   offline: "onlineOnly", redo: "newInstanceOnAuthorization", externalAi: "disabled",
   student: { ownSubmission: { scope: "ownConfirmedSubmissions", fields: ["receipt", "ownResponses"], onFinal: [] } },
   reviewer: { scope: "assignedReviewer", fields: ["studentChoices", "gradingBasis"], actions: ["reviseQuestionVerdict"] },
@@ -60,9 +63,10 @@ function scoringKey({ keys }: ContractGrading, questions: readonly ContractQuest
   return { ...keyRef, acceptedByQuestion };
 }
 
-export function deliveryPublication({ id, questions, grading, mode, allowUnanswered }: DeliveryDeclaration): PublicationInput {
+export function deliveryPublication(declaration: DeliveryDeclaration): PublicationInput {
+  const { id, questions, grading, mode, allowUnanswered, evaluator = evaluatorRef, policy = contractPolicy } = declaration;
   const automatic = Object.keys(grading.keys).length > 0;
-  const assessment: Assessment = { from: { stepId: "answer", slotId }, evaluator: evaluatorRef, keyRef, unit: "question",
+  const assessment: Assessment = { from: { stepId: "answer", slotId }, evaluator: { ...evaluator }, keyRef, unit: "question",
     effectiveVerdictOrder: ["teacherReview", "automatic"] };
   return {
     practice: {
