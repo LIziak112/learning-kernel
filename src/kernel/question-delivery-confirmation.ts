@@ -5,7 +5,7 @@ import { questionDeliveryIntent, questionDeliveryView, readQuestionDelivery } fr
 import type { QuestionDeliveryInput } from "../contracts/question-delivery.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { writeTransaction } from "./database.ts";
+import { readTransaction, writeTransaction } from "./database.ts";
 import { LearningError } from "../contracts/learning-error.ts";
 import {
   confirmedDraftChangeCount, confirmedWorkForOperation, mapConfirmationQuestions, requireConfirmationRecovery,
@@ -98,10 +98,10 @@ function isDeliveryAnswered(registry: Registry, activity: ReadingActivity, reque
 }
 
 export function recoverQuestionDelivery(
-  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, key: ConfirmationKey,
+  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey,
   authorize: AuthorizeConfirmationRecovery | undefined, mode: "automatic" | "declared",
 ) {
-  return writeTransaction(database, () => {
+  return readTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
     requireConfirmationRecovery({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }, authorize);
     const recovered = confirmedWorkForOperation(database, activityId, key);
@@ -119,6 +119,6 @@ export function recoverQuestionDelivery(
       receipt, practice: { id, version }, confirmation: questionDeliveryView(content), requestQuestions: questionDeliveryIntent(content),
       draftChangeCounts,
     };
-    return { ...confirmation, ...recoverQuestionDeliveryAssessment(database, registry, activity, receipt, content, mode) };
+    return { ...confirmation, ...recoverQuestionDeliveryAssessment(database, activity, receipt, content, mode) };
   });
 }

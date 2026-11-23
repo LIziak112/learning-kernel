@@ -44,7 +44,7 @@ const [, , phase] = process.argv;
 const scenarios = ["complete", "empty", "partial"] as const;
 const student = { role: "student", id: "grader-owner" } as const;
 let calls = 0;
-let scope: { activityId: string; stepAttemptId: string } | undefined;
+const known = new Map<string, string>();
 const choiceKey = z.strictObject({ acceptedChoice: z.string() });
 const evaluate: Evaluator = input => {
   calls += 1;
@@ -52,9 +52,7 @@ const evaluate: Evaluator = input => {
   const { acceptedChoice } = choiceKey.parse(input.key);
   const choice = z.string().nullable().parse(input.value);
   if (phase === "crash" && calls === 2) process.exit(47);
-  assert.ok(scope);
-  assert.equal(input.activityId, scope.activityId);
-  assert.equal(input.stepAttemptId, scope.stepAttemptId);
+  assert.equal(known.get(input.activityId), input.stepAttemptId);
   assert.equal(input.slotId, "answers");
   assert.deepEqual(input.practice, { id: practiceId, version: 1 });
   const question = frozen.questions.find(question => question.id === input.questionId);
@@ -71,9 +69,14 @@ const runtime = openLearningRuntime({
 try {
   if (phase === "init") runtime.publish(publication);
   for (const example of scenarios) {
+    const { activityId, stepAttemptId } = runtime.start(student, { protocolVersion: 1, operationId: example, practiceId, practiceVersion: 1 });
+    known.set(activityId, stepAttemptId);
+  }
+  if (phase === "crash" || phase === "recover") runtime.evaluatePending();
+  if (phase === "wrong-version") assert.deepEqual(runtime.evaluatePending(), { evaluated: 0, retrying: 0, failed: 0, deferred: 3 });
+  for (const example of scenarios) {
     const opened = runtime.start(student, { protocolVersion: 1, operationId: example, practiceId, practiceVersion: 1 });
     const { activityId, stepAttemptId } = opened;
-    scope = opened;
     const choices = frozen.cases[example];
     const key = { protocolVersion: 1, stepAttemptId, operationId: "hand-in" } as const;
     const input: ChoiceConfirmationInput = {
@@ -100,7 +103,7 @@ try {
     assert.throws(() => runtime.recoverChoiceConfirmation({ ...student, id: "another" }, activityId, key), { code: "FORBIDDEN" });
     if (phase === "init") continue;
     if (phase === "wrong-version") {
-      assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, key), { code: "EVALUATOR_UNAVAILABLE", status: 503 });
+      assert.deepEqual(runtime.recoverChoiceConfirmation(student, activityId, key).evaluation, { status: "pending", evaluator });
       continue;
     }
     const restored = runtime.recoverChoiceConfirmation(student, activityId, key);
@@ -108,7 +111,7 @@ try {
     assert.deepEqual(restored.receipt, receipt);
     assert.deepEqual(restored.confirmation.questions.map(({ choice }) => choice), choices.map(answer => answer ? String(answer.index) : null));
     assert.deepEqual(restored.evaluation, {
-      evaluator, questionCount: 2, correctCount: example === "complete" ? 1 : 0,
+      status: "evaluated", evaluator, questionCount: 2, correctCount: example === "complete" ? 1 : 0,
       questions: frozen.questions.map((question, index) => ({
         questionId: question.id, questionVersion: question.version, correct: example === "complete" && index === 1,
       })),

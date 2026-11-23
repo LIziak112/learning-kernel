@@ -64,6 +64,7 @@ try {
       { questionId: "q2", questionVersion: 1, revision: 1, original: { state: "uncollected" } },
     ],
   });
+  runtime.evaluatePending();
   assert.equal(receipt.stepAttemptId, stepAttemptId);
   assert.deepEqual(read(), expected);
   assert.throws(() => runtime.readChoiceDraftActivity(other, activityId), { code: "FORBIDDEN" });

@@ -24,6 +24,7 @@ try {
   if (mode === "race") {
     try {
       runtime.confirmChoices(student, activityId, input);
+      runtime.evaluatePending();
       console.log("committed");
     } catch (error) {
       if (!(error instanceof LearningError) || error.code !== "ALREADY_SUBMITTED") throw error;

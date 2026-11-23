@@ -58,6 +58,7 @@ try {
         { questionId: "q2", questionVersion: 1, revision: 0, original: { state: "uncollected" } },
       ],
     });
+    runtime.evaluatePending();
     const completed = runtime.read(owner, activityId);
     assert.equal(completed.status, "completed");
     assert.ok("formatVersion" in completed);

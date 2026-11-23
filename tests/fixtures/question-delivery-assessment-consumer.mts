@@ -77,6 +77,7 @@ function write() {
     });
     assert.equal(draft.revision, 1);
     const receipt = runtime.confirmQuestionDelivery(student, activityId, input(stepAttemptId));
+    runtime.evaluatePending();
     return { activityId, assessment, receipt };
   });
   writeFileSync(checkpointFile, JSON.stringify(saved));

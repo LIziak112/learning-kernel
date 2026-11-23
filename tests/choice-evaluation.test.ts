@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
 import { startActivity } from "../src/kernel/activity.ts";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
 import { openLearningRuntime } from "../src/server.ts";
@@ -91,7 +91,7 @@ test("发布仅接受已登记且覆盖本槽作答形态的精确评估器，�
   });
 });
 
-test("已确认评估在当前权限下恢复，坏回调和第二题写入失败都保留待评任务", t => {
+test("显式评估：恢复只读；坏回调、无效结果计入重试，评估器缺失延后，落库失败整体回滚", t => {
   const path = scenarioDatabase(t);
   let canRecover = false;
   let callbackCalls = 0;
@@ -128,24 +128,27 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
     assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, key), { status: 403, code: "FORBIDDEN" });
     canRecover = true;
     assert.throws(() => runtime.recoverChoiceConfirmation(other, activityId, key), { status: 403, code: "FORBIDDEN" });
+    assert.deepEqual(runtime.recoverChoiceConfirmation(student, activityId, key).evaluation, { status: "pending", evaluator });
     assert.equal(callbackCalls, 0);
+    assert.deepEqual(evaluationFacts(database, receipt.id), pending);
 
     const legacyReceipt = confirmLegacy(runtime, database);
-    assert.doesNotThrow(() => evaluatePending(database, defaultRegistry));
+    assert.deepEqual(evaluatePending(database, defaultRegistry), { evaluated: 1, retrying: 0, failed: 0, deferred: 1 });
     assert.deepEqual(evaluationFacts(database, receipt.id), pending);
     assert.deepEqual(evaluationFacts(database, legacyReceipt.id), {
       status: "done", verdicts: questions.map(question => [question.id, 1]),
     });
     assert.equal(callbackCalls, 0);
 
-    assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, key), /evaluator interrupted/);
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 0, retrying: 1, failed: 0, deferred: 0 });
     assert.equal(callbackCalls, 2);
     assert.deepEqual(evaluationFacts(database, receipt.id), pending);
+    assert.deepEqual(attemptsOf(database, receipt.id), { attempts: 1, last_error: "EVALUATOR_FAILED" });
     const baseOptions = { databasePath: path, authorizeConfirmationRecovery };
     const noEvaluator = openLearningRuntime(baseOptions);
     try {
-      assert.throws(() => noEvaluator.recoverChoiceConfirmation(student, activityId, key), { status: 503, code: "EVALUATOR_UNAVAILABLE" });
-      assert.deepEqual(evaluationFacts(database, receipt.id), pending);
+      assert.deepEqual(noEvaluator.evaluatePending(), { evaluated: 0, retrying: 0, failed: 0, deferred: 1 });
+      assert.deepEqual(attemptsOf(database, receipt.id), { attempts: 1, last_error: "EVALUATOR_FAILED" });
     } finally {
       noEvaluator.close();
     }
@@ -153,8 +156,9 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
       ...baseOptions, evaluators: [{ ...evaluator, responseTypes: ["choice"], evaluate: () => Promise.resolve(true) }],
     }]);
     try {
-      assert.throws(() => invalid.recoverChoiceConfirmation(student, activityId, key), { name: "ZodError" });
+      assert.deepEqual(invalid.evaluatePending(), { evaluated: 0, retrying: 1, failed: 0, deferred: 0 });
       assert.deepEqual(evaluationFacts(database, receipt.id), pending);
+      assert.deepEqual(attemptsOf(database, receipt.id), { attempts: 2, last_error: "INVALID_EVALUATOR_RESULT" });
     } finally {
       invalid.close();
     }
@@ -163,18 +167,20 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
     database.exec(`CREATE TRIGGER reject_second_verdict BEFORE INSERT ON automatic_verdicts
       WHEN EXISTS (SELECT 1 FROM automatic_verdicts WHERE submission_id = NEW.submission_id)
       BEGIN SELECT RAISE(ABORT, 'second verdict unavailable'); END`);
-    assert.throws(() => runtime.recoverChoiceConfirmation(student, activityId, key), /second verdict unavailable/);
+    assert.throws(() => runtime.evaluatePending(), /second verdict unavailable/);
     assert.equal(callbackCalls, 4);
     assert.deepEqual(evaluationFacts(database, receipt.id), pending);
     database.exec("DROP TRIGGER reject_second_verdict");
 
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const recovered = runtime.recoverChoiceConfirmation(student, activityId, key);
-    assert.deepEqual(recovered.evaluation, { evaluator, questionCount: 2, correctCount: 0,
+    assert.deepEqual(recovered.evaluation, { status: "evaluated", evaluator, questionCount: 2, correctCount: 0,
       questions: input.questions.map(({ questionId, questionVersion }) => ({ questionId, questionVersion, correct: false })),
     });
     assert.deepEqual(evaluationFacts(database, receipt.id), {
       status: "done", verdicts: input.questions.map(question => [question.questionId, 0]),
     });
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 0, retrying: 0, failed: 0, deferred: 0 });
     const withoutCallback = openLearningRuntime(baseOptions);
     try {
       assert.deepEqual(withoutCallback.recoverChoiceConfirmation(student, activityId, key), recovered);
@@ -195,6 +201,10 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
     runtime.close();
   }
 });
+
+function attemptsOf(database: DatabaseSync, submissionId: string) {
+  return { ...database.prepare("SELECT attempts, last_error FROM evaluation_tasks WHERE submission_id = ?").get(submissionId) };
+}
 
 function confirmLegacy(runtime: ReturnType<typeof openLearningRuntime>, database: DatabaseSync) {
   const legacy = "old-choice-key";

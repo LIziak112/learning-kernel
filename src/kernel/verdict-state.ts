@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ReadingActivity } from "./activity.ts";
 import { activeTeacherVerdict, verdictHistory } from "./verdict-history.ts";
 
-const storedAssessment = z.strictObject({ submissionId: z.uuid(), targetId: z.string(), status: z.enum(["pending", "done"]) });
+const storedAssessment = z.strictObject({ submissionId: z.uuid(), targetId: z.string(), status: z.enum(["pending", "done", "failed"]) });
 type Assessment = { submissionId: string; targetId: string; status: z.infer<typeof storedAssessment>["status"] | "unassessed" };
 const storedAutomatic = z.strictObject({
   questionId: z.string(), correct: z.literal([0, 1]).transform(Boolean), valid: z.literal([0, 1]).transform(Boolean),

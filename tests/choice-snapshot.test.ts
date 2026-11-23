@@ -122,6 +122,7 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
       { questionId: secondId, questionVersion: 1, revision: 0, original: { state: "uncollected" } },
     ] } as const;
     const receipt = runtime.confirmChoices(student, activityId, { ...proof, questions: [...proof.questions] });
+    runtime.evaluatePending();
     assert.deepEqual(runtime.confirmChoices(student, activityId, { ...proof, questions: [...proof.questions] }), receipt);
     const confirmed = runtime.recoverChoiceConfirmation(student, activityId, {
       protocolVersion: 1, stepAttemptId, operationId: "confirm",
@@ -181,6 +182,7 @@ test("内核已存整步草稿和撤权也能拒绝新勘误", t => {
     });
     const heads = confirmation.questions.map(question => question.questionId === secondId ? { ...question, revision: 1 } : question);
     runtime.confirmChoices(student, activityId, { ...confirmation, questions: heads });
+    runtime.evaluatePending();
     const frozen = runtime.read(student, activityId).submission;
     assert.ok(frozen && "confirmation" in frozen && frozen.confirmation);
     assert.deepEqual(frozen.confirmation.questions.map(question => [question.revision, question.choice]), [[0, null], [1, null]]);

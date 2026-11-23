@@ -114,6 +114,7 @@ test("旧题组没有冻结规则时，两个空格和 false 均沿用原回执�
       const draft = save(runtime, activity, value);
       const confirmation = request(activity, [[judge, draft.revision]]);
       const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, confirmation);
+      runtime.evaluatePending();
       assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, confirmation), receipt);
       const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(confirmation));
       assert.deepEqual(recovered.confirmation.questions.map(item => item.value), [value]);
@@ -146,6 +147,7 @@ test("冻结标量已答规则拒绝两个空格，false 确认一次并登记�
     const next = save(runtime, activity, false, judge, empty.revision);
     const accepted = request(activity, [[judge, next.revision]]);
     const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, accepted);
+    runtime.evaluatePending();
     assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, accepted), receipt);
     assert.deepEqual(observed, ["  ", false]);
     assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, evaluation_tasks: 1, performances: 1 });
@@ -192,6 +194,7 @@ test("允许空答时标题原样冻结，只有正文登记表现，回取与�
     assert.throws(() => Reflect.apply(runtime.confirmQuestionDelivery, runtime, [student, activity.activityId, claimed]), ZodError);
     assert.deepEqual(observed, []);
     receipt = runtime.confirmQuestionDelivery(student, activity.activityId, confirmation);
+    runtime.evaluatePending();
     assert.deepEqual(observed, [recorded, completed]);
     assert.deepEqual(observedScalar, ["  "]);
     assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, evaluation_tasks: 1, performances: 1 });
@@ -337,11 +340,13 @@ test("逐题确认和收尾只计算本次交付，忽略此前已确认的规�
     assert.ok(question);
     const firstIntent = { ...all, source: "question", operationId: "early", questions: [question] } satisfies QuestionDeliveryInput;
     const firstReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, firstIntent);
+    runtime.evaluatePending();
     assert.equal(firstReceipt.slotId, "position-judgment");
     assert.equal(viewOf(runtime, activity).status, "active");
     assert.deepEqual(observed, [judge.id]);
     const finish = { ...all, source: "finish" as const };
     const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, finish);
+    runtime.evaluatePending();
     assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, finish), receipt);
     assert.deepEqual(observed, [judge.id, written.id]);
     assert.deepEqual(facts(databasePath), { submissions: 2, completions: 1, evaluation_tasks: 2, performances: 1 });

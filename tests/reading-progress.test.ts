@@ -13,7 +13,7 @@ import reading from "../practices/reading-library.json" with { type: "json" };
 import { materialSchema, startReceipt, submissionReceipt, versionRef } from "../src/contracts/reading.ts";
 import { readingAnswer, readingAnswerDraft, readingDraftReceipt, readingSelection } from "../src/contracts/reading-runtime.ts";
 import { createLearningServer } from "../src/host/server.ts";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const activityView = startReceipt.extend({
@@ -288,11 +288,11 @@ test("交卷事务同时固定原答、活动完成和待评任务", async t => 
       UPDATE practices SET definition = json_set(definition, '$.grading.assessment.evaluator.id', ?) WHERE id = ?
     `);
     evaluator.run("unavailable-evaluator", reading.practice.id);
-    assert.throws(() => evaluatePending(database, defaultRegistry), /已发布评估器不可用/);
+    assert.deepEqual(evaluatePending(database, defaultRegistry), { evaluated: 0, retrying: 0, failed: 0, deferred: 1 });
     assert.equal(database.prepare("SELECT status FROM evaluation_tasks").get()?.status, "pending");
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts").get()?.count, 0);
     evaluator.run(reading.practice.grading.assessment.evaluator.id, reading.practice.id);
-    evaluatePending(database, defaultRegistry);
+    assert.deepEqual(evaluatePending(database, defaultRegistry), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const complete = await readResult(get(origin, path), activityView.extend({
       status: z.literal("completed"),
       assessment: z.strictObject({ status: z.literal("complete"), correctCount: z.int(), questionCount: z.int() }),

@@ -79,6 +79,7 @@ function write() {
   assert.deepEqual(view(activityId).questionDeliveryDrafts, [empty]);
   const saved = runtime.saveQuestionDeliveryDraft(student, activityId, { ...draft, operationId: "write", baseRevision: 1, value: false });
   const receipt = runtime.confirmQuestionDelivery(student, activityId, confirmIntent(stepAttemptId, saved.revision));
+  runtime.evaluatePending();
   assert.deepEqual(seen, ["  ", false]);
   writeFileSync("independent-rule.json", JSON.stringify({ activityId, stepAttemptId, receiptId: receipt.id }));
 }
@@ -86,6 +87,7 @@ function write() {
 function recover() {
   const { activityId, stepAttemptId, receiptId } = checkpoint.parse(JSON.parse(readFileSync("independent-rule.json", "utf8")));
   const confirmation = runtime.confirmQuestionDelivery(student, activityId, confirmIntent(stepAttemptId, 2));
+  runtime.evaluatePending();
   const result = runtime.recoverQuestionDelivery(student, activityId, { protocolVersion: 1, stepAttemptId, operationId: "confirm" });
   assert.equal(confirmation.id, receiptId);
   assert.deepEqual(result.receipt, confirmation);

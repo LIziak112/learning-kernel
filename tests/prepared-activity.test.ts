@@ -180,6 +180,7 @@ test("草稿、空答确认和步骤推进结束预备换版资格，重练仍�
         questionId: question.id, questionVersion: 1, revision: 0, original: { state: "uncollected" },
       })),
     });
+    runtime.evaluatePending();
     assert.equal(runtime.readChoiceDraftActivity(student, blank.activityId), undefined);
     assert.throws(() => runtime.replacePreparedActivityVersion(student, blank.activityId, replace(blank.stepAttemptId, 1, 2, "blocked")),
       { code: "ACTIVITY_ALREADY_STARTED" });

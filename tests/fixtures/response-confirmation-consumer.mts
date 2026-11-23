@@ -73,6 +73,7 @@ try {
       return { questionId, questionVersion: 1, revision: draft.revision, original: index === 0 ? original : { state: "uncollected" } };
     }) };
     const receipt = runtime.confirmResponses(student, activityId, input);
+    runtime.evaluatePending();
     assert.deepEqual(runtime.confirmResponses(student, activityId, input), receipt);
     writeFileSync(evidence, JSON.stringify({ activityId, stepAttemptId, receiptId: receipt.id }));
   } else {
@@ -83,6 +84,7 @@ try {
     assert.equal(confirmed.receipt.id, scope.receiptId);
     assert.deepEqual(confirmed.confirmation.questions.map(item => item.value), [text, false]);
     assert.deepEqual(confirmed.confirmation.questions[0]?.original, original);
+    assert.ok(confirmed.evaluation.status === "evaluated");
     assert.deepEqual(confirmed.evaluation.questions.map(item => item.result), [{ status: "needsReview" }, { status: "judged", correct: true }]);
     const view = runtime.read(student, scope.activityId);
     assert.ok("formatVersion" in view);

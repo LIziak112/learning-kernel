@@ -124,6 +124,7 @@ test("仅第二份重发新版，已保存的旧卷重开保留两个材料位�
     const receipt = reopened.confirmChoices(student, old.activityId, { ...key, slotId: "answers", questions: [saved, last].map(draft => ({
       questionId: draft.questionId, questionVersion: draft.questionVersion, revision: draft.revision, original: originals,
     })) });
+    reopened.evaluatePending();
     const found = reopened.recoverChoiceConfirmation(student, old.activityId, key);
     assert.deepEqual(found.receipt, receipt);
     assert.equal(found.evaluation?.correctCount, 2);

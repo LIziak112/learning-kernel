@@ -96,6 +96,7 @@ test("宿主经公开 SPI 登记新作答形态后，内核按形态校验题目
     const input = { protocolVersion: 1 as const, stepAttemptId: activity.stepAttemptId, slotId, source: "whole" as const, operationId: "hand-in",
       questions: [{ questionId: question.id, questionVersion: 2, revision: saved.revision, original: { state: "uncollected" as const } }] };
     runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    runtime.evaluatePending();
     const recovered = runtime.recoverQuestionDelivery(student, activity.activityId,
       { protocolVersion: 1, stepAttemptId: activity.stepAttemptId, operationId: "hand-in" });
     assert.deepEqual(recovered.evaluation.questions, [{ questionId: question.id, questionVersion: 2, result: { status: "judged", correct: true } }]);

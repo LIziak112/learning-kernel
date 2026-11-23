@@ -80,11 +80,12 @@ function reviewedVerdicts(
   positions: readonly { questionId: string; questionVersion: number }[], automatic: readonly { questionId: string }[],
 ) {
   const states = questionVerdictStates(database, target, positions);
-  const pending = new Set(target.status === "pending" ? automatic.map(({ questionId }) => questionId) : []);
+  const unfinished = new Set(target.status === "pending" || target.status === "failed" ? automatic.map(({ questionId }) => questionId) : []);
+  const waiting = target.status === "failed" ? "evaluationFailed" as const : "pendingEvaluation" as const;
   return states.map(({ questionId, questionVersion, revision, automatic, effective }) => {
     const state = { questionId, questionVersion, revision, ...automatic && { automatic } };
     if (effective) return { ...state, status: "judged" as const, effective };
-    return { ...state, status: pending.has(questionId) ? "pendingEvaluation" as const : "needsReview" as const };
+    return { ...state, status: unfinished.has(questionId) ? waiting : "needsReview" as const };
   });
 }
 

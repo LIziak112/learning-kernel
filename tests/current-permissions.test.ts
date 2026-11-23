@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { z } from "zod";
 import reading from "../practices/reading-library.json" with { type: "json" };
 import { startReceipt, submissionReceipt } from "../src/contracts/reading.ts";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { defaultRegistry } from "./fixtures/evaluators.ts";
 import {
   countFacts, firstChoices, firstClock, get, post, prepareAnswers, prepareScenario, readingState, rejection, result,

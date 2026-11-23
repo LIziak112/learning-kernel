@@ -134,6 +134,7 @@ function write() {
     questions: [...groupAnswers.map(answer => current(answer.questionId, answer.questionVersion, answer.revision)),
       current("missing-blanks", 5, 0)],
   });
+  runtime.evaluatePending();
   const [step] = published.steps;
   const individualQuestions = published.questions.filter(({ id }) => id === "choice" || id === "indexes");
   runtime.publish({ practice: { ...published, id: "individual-delivery", questions: individualQuestions,
@@ -159,6 +160,7 @@ function raceQuestion(activity: Activity) {
     runtime.confirmQuestionDelivery(student, activity.activityId, {
       ...key(activity, "question"), slotId, source: "question", questions: [current("choice", 2, 1)],
     });
+    runtime.evaluatePending();
     console.log("confirmed");
   } catch (error) {
     if (!(error instanceof LearningError) || error.code !== "ALREADY_SUBMITTED") throw error;
@@ -170,6 +172,7 @@ function raceFinish(activity: Activity) {
   runtime.confirmQuestionDelivery(student, activity.activityId, {
     ...key(activity, "finish"), slotId, source: "finish", questions: [current("choice", 2, 1), current("indexes", 4, 0)],
   });
+  runtime.evaluatePending();
   console.log("finished");
 }
 
@@ -181,6 +184,7 @@ function recover(questionStatus: "confirmed" | "closed") {
   assert.equal(recovered.receipt.id, groupReceipt);
   assert.deepEqual(recovered.confirmation.questions.map(({ value, revision }) => [value, revision]),
     [["yes", 1], [raw, 1], [indexes, 1], [filled, 1], [blank, 1], [null, 0]]);
+  assert.ok(recovered.evaluation.status === "evaluated");
   assert.deepEqual(recovered.evaluation.questions.map(question => question.result), [
     { status: "judged", correct: true }, { status: "needsReview" }, { status: "judged", correct: true },
     { status: "needsReview" }, { status: "needsReview" }, { status: "needsReview" },
@@ -197,6 +201,7 @@ function recover(questionStatus: "confirmed" | "closed") {
     const first = runtime.recoverQuestionDelivery(student, individually.activityId, key(individually, "question"));
     assert.equal(first.receipt.slotId, "position-choice");
     assert.deepEqual(first.confirmation.questions.map(question => question.value), ["yes"]);
+    assert.ok(first.evaluation.status === "evaluated");
     assert.deepEqual(first.evaluation.questions.map(question => question.questionId), ["choice"]);
     assert.deepEqual(endQuestions, [["indexes", null]]);
   } else {

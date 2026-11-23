@@ -90,6 +90,7 @@ function read() {
   assert.ok("questionDeliveries" in view);
   assert.doesNotMatch(JSON.stringify(view), /acceptedByQuestion|independent-writing-key|needsReview/);
   assert.throws(() => runtime.recoverQuestionDelivery({ ...student, id: "outsider" }, activityId, key), { code: "FORBIDDEN" });
+  if (phase === "recover") assert.deepEqual(runtime.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
   const recovered = runtime.recoverQuestionDelivery(student, activityId, key);
   assert.equal(recovered.receipt.id, receiptId);
   assert.deepEqual(view.questionDeliveries, [{ receipt: recovered.receipt, questionDelivery: recovered.confirmation }]);

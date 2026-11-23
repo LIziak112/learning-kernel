@@ -34,6 +34,8 @@ import { confirmQuestionDelivery, recoverQuestionDelivery } from "./kernel/quest
 import { readChoiceConfirmationVerdicts, readQuestionDeliveryReview, readQuestionDeliveryVerdicts, readResponseConfirmationVerdicts, writeQuestionDeliveryVerdict } from "./kernel/question-delivery-review.ts";
 import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
 import { registerPublication } from "./kernel/publication.ts";
+import { evaluatePending } from "./kernel/pending-evaluation.ts";
+import type { EvaluationSummary } from "./kernel/pending-evaluation.ts";
 import { createRegistry } from "./kernel/registry.ts";
 import { confirmResponses, recoverResponseConfirmation } from "./kernel/response-confirmation.ts";
 import { saveResponseDraft } from "./kernel/response-drafts.ts";
@@ -98,6 +100,7 @@ export { ChoiceSnapshotRevisionConflict } from "./kernel/choice-snapshot.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export { ResponseConfirmationConflict } from "./kernel/response-confirmation.ts";
 export { ResponseDraftConflict } from "./kernel/response-drafts.ts";
+export type { EvaluationSummary } from "./kernel/pending-evaluation.ts";
 export type { ResponseConfirmation, ResponseConfirmationInput, ResponseDraftInput, ResponseValue } from "./contracts/response.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
@@ -128,7 +131,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey): AutomaticQuestionDeliveryRecovery;
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, input?: "declared") {
     const mode = recoveryMode.parse(input);
-    const recovered = recoverQuestionDelivery(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+    const recovered = recoverQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
       confirmationKey.parse(key), settings.authorizeConfirmationRecovery, mode ?? "automatic");
     if (mode === "declared" || recovered.assessment !== "automatic") return recovered;
     const { assessment: _assessment, ...legacy } = recovered;
@@ -203,7 +206,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
         clock, settings.verifyOriginal);
     },
     recoverChoiceConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
-      return recoverChoiceConfirmation(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+      return recoverChoiceConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
         confirmationKey.parse(key), settings.authorizeConfirmationRecovery);
     },
     saveResponseDraft(
@@ -217,7 +220,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
         choiceConfirmationInput.parse(input), clock, settings.verifyOriginal);
     },
     recoverResponseConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
-      return recoverResponseConfirmation(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+      return recoverResponseConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
         confirmationKey.parse(key), settings.authorizeConfirmationRecovery);
     },
     saveQuestionDeliveryDraft(
@@ -238,6 +241,9 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
         : mode === "choiceConfirmation" ? settings.authorizeChoiceConfirmationVerdict : settings.authorizeQuestionDeliveryVerdict;
       return writeQuestionDeliveryVerdict(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
         confirmationKey.parse(key), verdictCommand.parse(command), authorize, clock, mode);
+    },
+    evaluatePending(scope?: { submissionId: string }): EvaluationSummary {
+      return evaluatePending(database, registry, undefined, scope && uuid.parse(scope.submissionId));
     },
     close() {
       database.close();

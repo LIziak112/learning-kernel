@@ -5,14 +5,14 @@ import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { readResponseConfirmation } from "../contracts/response.ts";
 import type { ResponseConfirmationInput } from "../contracts/response.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
-import { writeTransaction } from "./database.ts";
+import { readTransaction, writeTransaction } from "./database.ts";
 import {
   confirmedDraftChangeCount, confirmedWorkForOperation, mapConfirmationQuestions, replayQuestionConfirmation, requireConfirmationRecovery,
   writeQuestionConfirmation,
 } from "./question-confirmation.ts";
 import { requireBeforeDeadline } from "./reading-progress.ts";
 import type { Registry } from "./registry.ts";
-import { responseEvaluation } from "./response-evaluation.ts";
+import { readResponseEvaluation } from "./response-evaluation.ts";
 import { readResponseDrafts, ResponseDraftConflict, responseSlot } from "./response-drafts.ts";
 
 export class ResponseConfirmationConflict extends ResponseDraftConflict {
@@ -55,10 +55,9 @@ export function confirmResponses(
 }
 
 export function recoverResponseConfirmation(
-  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, key: ConfirmationKey,
-  authorize: AuthorizeConfirmationRecovery | undefined,
+  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmationRecovery | undefined,
 ) {
-  return writeTransaction(database, () => {
+  return readTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
     requireConfirmationRecovery({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }, authorize);
     const previous = confirmedWorkForOperation(database, activityId, key);
@@ -66,7 +65,7 @@ export function recoverResponseConfirmation(
     if (!previous || !confirmation) throw new LearningError(404, "CONFIRMATION_NOT_FOUND");
     const { receipt } = previous;
     const { id, version } = activity.practice;
-    const evaluation = responseEvaluation(database, registry)(activity, receipt, confirmation);
+    const evaluation = readResponseEvaluation(database, activity, receipt, confirmation);
     const drafts = draftsOfResponses(database, activityId, receipt);
     const responseDraftChangeCounts = confirmation.questions.map(question => ({
       questionId: question.questionId, changeCount: confirmedDraftChangeCount(question, drafts.get(question.questionId), "value"),

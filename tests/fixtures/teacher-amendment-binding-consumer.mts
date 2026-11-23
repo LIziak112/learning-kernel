@@ -96,6 +96,7 @@ withRuntime(runtime => {
     questions: [{ questionId: "first", questionVersion: 2, revision: 2, original: { state: "uncollected" } },
       { questionId: "second", questionVersion: 1, revision: 0, original: { state: "uncollected" } }],
   });
+  runtime.evaluatePending();
 });
 copyFileSync(working, late);
 

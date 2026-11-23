@@ -6,8 +6,8 @@ import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { ChoiceDraftConflict, readChoiceDrafts } from "./choice-drafts.ts";
-import { recoverChoiceEvaluation } from "./choice-evaluation.ts";
-import { writeTransaction } from "./database.ts";
+import { readChoiceEvaluation } from "./choice-evaluation.ts";
+import { readTransaction, writeTransaction } from "./database.ts";
 import type { Registry } from "./registry.ts";
 import { LearningError } from "../contracts/learning-error.ts";
 import { requireBeforeDeadline, writableOutput } from "./reading-progress.ts";
@@ -47,17 +47,16 @@ export function confirmChoices(
 }
 
 export function recoverChoiceConfirmation(
-  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, key: ConfirmationKey,
-  authorize: AuthorizeConfirmationRecovery | undefined,
+  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmationRecovery | undefined,
 ) {
-  return writeTransaction(database, () => {
+  return readTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
     requireConfirmationRecovery({ studentId, activityId, stepAttemptId: key.stepAttemptId, operationId: key.operationId }, authorize);
     const recovered = confirmationForOperation(database, activityId, key);
     if (!recovered?.confirmation) throw new LearningError(404, "CONFIRMATION_NOT_FOUND");
     const { receipt, confirmation } = recovered;
     const { id, version } = activity.practice;
-    const evaluation = recoverChoiceEvaluation(database, registry, activity, receipt, confirmation);
+    const evaluation = readChoiceEvaluation(database, activity, receipt, confirmation);
     const drafts = draftsByQuestion(database, activityId, receipt);
     const choiceDraftChangeCounts = confirmation.questions.map(question => ({
       questionId: question.questionId, changeCount: confirmedDraftChangeCount(question, drafts.get(question.questionId), "choice"),

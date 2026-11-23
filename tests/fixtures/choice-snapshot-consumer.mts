@@ -63,6 +63,7 @@ function execute() {
           { questionId: "second", questionVersion: 8, revision: 1, original: { state: "uncollected" } }],
       };
       const receipt = runtime.confirmChoices(student, activity.activityId, input);
+      runtime.evaluatePending();
       assert.deepEqual(runtime.confirmChoices(student, activity.activityId, input), receipt);
       return runtime.recoverChoiceConfirmation(student, activity.activityId, inputKey(input));
     };

@@ -100,6 +100,7 @@ try {
       protocolVersion: 1, operationId: "confirm", stepAttemptId, slotId: "choices",
       questions: ["q1", "q2"].map(questionId => ({ questionId, questionVersion: 1, revision: 3, original: { state: "uncollected" } })),
     });
+    runtime.evaluatePending();
     assert.throws(() => save(a), denied("ALREADY_SUBMITTED"));
     assert.throws(() => replay(a), denied("ALREADY_SUBMITTED"));
     const exact = runtime.saveChoiceDraft(owner, activityId, a);

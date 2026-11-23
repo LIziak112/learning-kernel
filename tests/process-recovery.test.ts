@@ -101,8 +101,8 @@ for (const afterDeadline of [false, true]) {
 for (const [label, point, acknowledged, initialVerdicts] of [
   ["提交后回执送达前", "afterConfirmationCommit", false, 0],
   ["任务投递前", "beforeEvaluation", true, 0],
-  ["首题落盘后", "afterAutomaticVerdict", true, 1],
-  ["三题落盘但任务尚未完成", "beforeEvaluationComplete", true, 3],
+  ["首题写入未提交", "afterAutomaticVerdict", true, 0],
+  ["三题写入但评估事务未提交", "beforeEvaluationComplete", true, 0],
 ] as const) {
   test(`交卷后重启｜${label}中止，跨截止重放并补齐评估`, async t => {
     const databasePath = scenarioDatabase(t);

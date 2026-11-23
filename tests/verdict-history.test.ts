@@ -7,7 +7,7 @@ import { startReceipt, submissionReceipt } from "../src/contracts/reading.ts";
 import { openLearningRuntime } from "../src/server.ts";
 import type { VerdictCommand } from "../src/server.ts";
 import { frozenChoicePublication, questionVersions } from "./fixtures/frozen-choice.ts";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { choiceEvaluator } from "./fixtures/evaluators.ts";
 import { defaultRegistry } from "./fixtures/evaluators.ts";
 import {
@@ -279,6 +279,7 @@ test("原单选连续改判后逐次撤销回落到上一条有效教师改判�
         return { questionId, questionVersion, revision: draft.revision, original: { state: "uncollected" } as const };
       });
       const receipt = runtime.confirmChoices(student, activityId, { ...key, slotId, questions: revisions });
+      runtime.evaluatePending();
       const original = runtime.recoverChoiceConfirmation(student, activityId, key);
       assert.equal(original.evaluation?.correctCount, 1);
       const studentPath = "/api/activities/" + activityId + "/assessment";

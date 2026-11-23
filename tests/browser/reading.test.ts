@@ -10,7 +10,7 @@ import { chromium } from "playwright";
 import type { Browser, Page } from "playwright";
 import { z } from "zod";
 import { createDemoServer } from "../../src/host/demo.ts";
-import { evaluatePending } from "../../src/kernel/evaluation.ts";
+import { evaluatePending } from "../../src/kernel/pending-evaluation.ts";
 import publication from "../../practices/single-quote.json" with { type: "json" };
 import reading from "../../practices/reading-library.json" with { type: "json" };
 import { savePageCoverage } from "../fixtures/browser-coverage.ts";

@@ -8,7 +8,7 @@ import { readingAnswerInput, readingSaveInput } from "../contracts/reading-runti
 import { verdictCommand } from "../contracts/verdict.ts";
 import { redoActivity, startActivity } from "../kernel/activity.ts";
 import { openDatabase } from "../kernel/database.ts";
-import { evaluatePending } from "../kernel/evaluation.ts";
+import { evaluatePending } from "../kernel/pending-evaluation.ts";
 import { LearningError } from "../contracts/learning-error.ts";
 import { registerPublication } from "../kernel/publication.ts";
 import { createRegistry } from "../kernel/registry.ts";

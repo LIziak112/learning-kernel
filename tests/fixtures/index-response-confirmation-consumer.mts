@@ -71,6 +71,7 @@ try {
     assert.ok("responseDrafts" in active);
     assert.deepEqual(active.responseDrafts.map(item => item.value), [[], ordered]);
     const receipt = runtime.confirmResponses(student, activityId, input);
+    runtime.evaluatePending();
     assert.deepEqual(runtime.confirmResponses(student, activityId, input), receipt);
     runtime.publish(publication(2, [1]));
     writeFileSync(evidence, JSON.stringify({ activityId, stepAttemptId, receiptId: receipt.id }));

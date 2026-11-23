@@ -1,16 +1,15 @@
 import type { DatabaseSync } from "node:sqlite";
-import { questionDeliveryReviewBasis, questionDeliveryScoringKey } from "../contracts/question-delivery.ts";
+import { questionDeliveryReviewBasis } from "../contracts/question-delivery.ts";
 import type { QuestionDelivery } from "../contracts/question-delivery.ts";
 import type { SubmissionReceipt, VersionRef } from "../contracts/reading.ts";
 import { LearningError } from "../contracts/learning-error.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { loadEvaluationKey, queueEvaluation } from "./evaluation.ts";
-import type { Registry } from "./registry.ts";
-import { readResponseReviewRequirements, recordResponseReviewRequirements, recoverEvaluatedResponses } from "./response-evaluation.ts";
+import { readEvaluatedResponses, readResponseReviewRequirements, recordResponseReviewRequirements } from "./response-evaluation.ts";
 import { submissionAssessmentTarget } from "./verdict-state.ts";
 
 export function confirmedDeliveryAssessment(
-  { practice: { grading: { assessment, manualReview, teacherReview } } }: ReadingActivity, { questions }: QuestionDelivery,
+  { practice: { grading: { assessment, manualReview, teacherReview } } }: Pick<ReadingActivity, "practice">, { questions }: QuestionDelivery,
 ) {
   const teacherIds = new Set(teacherReview?.questionIds);
   const review = manualReview ? questions : questions.filter(({ questionId }) => teacherIds.has(questionId));
@@ -29,12 +28,11 @@ export function registerDeliveryAssessment(
 }
 
 export function recoverQuestionDeliveryAssessment(
-  database: DatabaseSync, registry: Registry, activity: ReadingActivity, receipt: SubmissionReceipt, content: QuestionDelivery,
-  mode: "automatic" | "declared",
+  database: DatabaseSync, activity: ReadingActivity, receipt: SubmissionReceipt, content: QuestionDelivery, mode: "automatic" | "declared",
 ) {
   const { automatic, review } = confirmedDeliveryAssessment(activity, content);
   if (automatic.length) {
-    const evaluation = recoverQuestionDeliveryEvaluation(database, registry, activity, receipt, automatic);
+    const evaluation = readEvaluatedResponses(database, activity, receipt, automatic, submissionAssessmentTarget(database, receipt.id));
     const questions = mode === "declared" && review.length > 0
       ? readManualReviewQuestions(database, receipt, review, true)
       : undefined;
@@ -47,21 +45,6 @@ export function recoverQuestionDeliveryAssessment(
     return { assessment: "teacherReview" as const, review: { questions } };
   }
   return { assessment: "none" as const };
-}
-
-function recoverQuestionDeliveryEvaluation(
-  database: DatabaseSync, registry: Registry, activity: ReadingActivity, receipt: SubmissionReceipt, questions: QuestionDelivery["questions"],
-) {
-  const target = submissionAssessmentTarget(database, receipt.id);
-  return recoverEvaluatedResponses(database, registry, activity, receipt, questions, stored => {
-    const { acceptedByQuestion } = questionDeliveryScoringKey.parse(stored);
-    return question => {
-      const entry = Object.hasOwn(acceptedByQuestion, question.id) ? acceptedByQuestion[question.id] : undefined;
-      if (!entry || entry.response !== question.response) return undefined;
-      const { response, ...key } = entry;
-      return registry.requireResponseType(response).parseKey?.(key, question);
-    };
-  }, target);
 }
 
 export function readManualReviewQuestions(

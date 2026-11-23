@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { z } from "zod";
 import { startReceipt, submissionReceipt } from "../src/contracts/reading.ts";
 import type { SubmitInput } from "../src/contracts/reading.ts";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { defaultRegistry } from "./fixtures/evaluators.ts";
 import {
   answerSubmission, countFacts, deadline, firstChoices, firstClock, get, post, prepareAnswers, prepareScenario, readingState,

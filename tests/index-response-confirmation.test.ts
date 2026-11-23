@@ -120,6 +120,7 @@ test("不允许未作答时显式空选仍保稿，确认后依声明限制作�
     assert.deepEqual(saved.responseDrafts.find(item => item.questionId === "selected")?.value, []);
     drafts[0] = draft(runtime, activity, 0, [0], "replace-blank", 1);
     const receipt = runtime.confirmResponses(student, activity.activityId, input("completed"));
+    runtime.evaluatePending();
     const done = runtime.read(student, activity.activityId);
     assert.ok("formatVersion" in done);
     assert.deepEqual(done.submission, { receipt });
@@ -203,7 +204,8 @@ test("公开索引数组整卷区分空选与无稿，冻结原值和私有评�
     assert.doesNotMatch(JSON.stringify(done), /acceptedIndexes|acceptedResponses|scoringKey/);
     assert.deepEqual(rowCounts(databasePath), [1, 1, 1, 2, 0]);
     failedEvaluation = true;
-    assert.throws(() => runtime.recoverResponseConfirmation(student, activity.activityId, key), /评价暂不可用/);
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 0, retrying: 1, failed: 0, deferred: 0 });
+    assert.deepEqual(runtime.recoverResponseConfirmation(student, activity.activityId, key).evaluation, { status: "pending", evaluator });
     assert.deepEqual(rowCounts(databasePath), [1, 1, 1, 2, 0]);
     runtime.publish(publication(2, [1, 2]));
   } finally { runtime.close(); }
@@ -216,6 +218,7 @@ test("公开索引数组整卷区分空选与无稿，冻结原值和私有评�
     permitted = false;
     assert.throws(() => reopened.recoverResponseConfirmation(student, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
     permitted = true;
+    assert.deepEqual(reopened.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const reviewer = { role: "reviewer", id: "reviewer" } as const;
     const reviewed = reopened.readQuestionDeliveryReview(reviewer, activity.activityId, key, "responseConfirmation");
     assert.deepEqual(reviewed.receipt, receipt);
@@ -224,6 +227,7 @@ test("公开索引数组整卷区分空选与无稿，冻结原值和私有评�
     assert.deepEqual(proof.receipt, receipt);
     assert.deepEqual(proof.confirmation.questions.map(question => question.value), [[2, 0, 2], [], null, [0]]);
     assert.deepEqual(proof.responseDraftChangeCounts.map(item => item.changeCount), [1, 1, 0, 1]);
+    assert.ok(proof.evaluation.status === "evaluated");
     assert.deepEqual(proof.evaluation.questions.map(question => question.result),
       [true, false, false, false].map(correct => ({ status: "judged", correct })));
     assert.deepEqual(observed, [

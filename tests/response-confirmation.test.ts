@@ -175,13 +175,16 @@ test("正式确认逐题原值，重开按原版返回同一回执、原稿和�
     assert.throws(() => reopened.recoverResponseConfirmation(student, open.activityId, key), { status: 403, code: "FORBIDDEN" });
     assert.deepEqual(evaluations, []);
     canRecover = true;
+    assert.deepEqual(reopened.recoverResponseConfirmation(student, open.activityId, key).evaluation, { status: "pending", evaluator });
+    assert.deepEqual(evaluations, []);
+    assert.deepEqual(reopened.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     stored = reopened.recoverResponseConfirmation(student, open.activityId, key);
     assert.deepEqual(stored.receipt, receipt);
     assert.deepEqual(stored.practice, practice);
     assert.deepEqual(stored.confirmation.questions.map(({ questionId, value }) => [questionId, value]), ids.map(id => [id, values[id]]));
     assert.deepEqual(stored.confirmation.questions.find(({ questionId }) => questionId === "unrecognized")?.original, original);
     assert.deepEqual(stored.responseDraftChangeCounts, ids.map(questionId => ({ questionId, changeCount: values[questionId] === null ? 0 : 1 })));
-    assert.deepEqual(stored.evaluation, { evaluator, questionCount: 7, correctCount: 4, needsReviewCount: 2, questions: ids.map(questionId => ({
+    assert.deepEqual(stored.evaluation, { status: "evaluated", evaluator, questionCount: 7, correctCount: 4, needsReviewCount: 2, questions: ids.map(questionId => ({
       questionId, questionVersion: 1, result: testEvaluator({ value: values[questionId], acceptedResponse: keys[questionId] }),
     })) });
     assert.deepEqual(evaluations, ids.map(id => values[id]));
@@ -320,17 +323,20 @@ test("确认事务失败不泄漏完成或必要任务，重试同操作后评�
     const key = { protocolVersion, operationId, stepAttemptId: open.stepAttemptId } as const;
     const missing = openLearningRuntime({ databasePath, authorizeConfirmationRecovery: trusted });
     try {
-      assert.throws(() => missing.recoverResponseConfirmation(student, open.activityId, key), { status: 503, code: "EVALUATOR_UNAVAILABLE" });
+      assert.deepEqual(missing.evaluatePending(), { evaluated: 0, retrying: 0, failed: 0, deferred: 1 });
+      assert.deepEqual(missing.recoverResponseConfirmation(student, open.activityId, key).evaluation, { status: "pending", evaluator });
     } finally {
       missing.close();
     }
     database.exec(`CREATE TRIGGER fail_verdict BEFORE INSERT ON automatic_verdicts BEGIN SELECT RAISE(ABORT, 'verdict write'); END`);
-    assert.throws(() => runtime.recoverResponseConfirmation(student, open.activityId, key), /verdict write/);
+    assert.throws(() => runtime.evaluatePending(), /verdict write/);
     assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, observations: 1, pendingTasks: 1,
       evaluatedTasks: 0, judged: 0, reviewRequired: 0, confirmedWorks: 1 });
     database.exec("DROP TRIGGER fail_verdict");
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const recovered = runtime.recoverResponseConfirmation(student, open.activityId, key);
     assert.deepEqual(recovered.receipt, receipt);
+    assert.ok(recovered.evaluation.status === "evaluated");
     assert.deepEqual(recovered.evaluation.questions.find(({ questionId }) => questionId === "unrecognized")?.result, { status: "needsReview" });
     database.prepare("DELETE FROM response_review_requirements WHERE submission_id = ?").run(receipt.id);
     assert.throws(() => runtime.recoverResponseConfirmation(student, open.activityId, key), /缺少判定或待评事实/);
@@ -357,9 +363,12 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
     receipt = old.confirmChoices(student, open.activityId, { ...confirmedInput, stepAttemptId: open.stepAttemptId, questions: [
       { questionId: question.id, questionVersion: 1, revision: saved.revision, original },
     ] });
-    assert.equal(old.recoverChoiceConfirmation(student, open.activityId, {
+    old.evaluatePending();
+    const choiceRecovery = old.recoverChoiceConfirmation(student, open.activityId, {
       protocolVersion, operationId, stepAttemptId: open.stepAttemptId,
-    }).evaluation?.questions[0]?.correct, true);
+    });
+    assert.ok(choiceRecovery.evaluation?.status === "evaluated");
+    assert.equal(choiceRecovery.evaluation.questions[0]?.correct, true);
   } finally {
     old.close();
   }
@@ -377,6 +386,7 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
     const restored = upgraded.recoverChoiceConfirmation(student, open.activityId, key);
     assert.deepEqual(restored.receipt, receipt);
     assert.deepEqual(restored.confirmation.questions[0], { questionId: question.id, questionVersion: 1, revision: 1, original, choice: "yes" });
+    assert.ok(restored.evaluation?.status === "evaluated");
     assert.equal(restored.evaluation?.questions[0]?.correct, true);
     assert.throws(() => upgraded.recoverResponseConfirmation(student, open.activityId, key), { status: 404, code: "CONFIRMATION_NOT_FOUND" });
     using database = new DatabaseSync(databasePath);
@@ -411,10 +421,12 @@ test("标量正式确认的连续改判逐次撤销回落到上一条有效判�
         runtime.saveResponseDraft(student, activity.activityId, { ...draft(activity, id, value), questionVersion });
       }
       const receipt = runtime.confirmResponses(student, activity.activityId, wire);
+      runtime.evaluatePending();
       const other = runtime.start(student, { protocolVersion, operationId: "start-other", practiceId: practice.id, practiceVersion: questionVersion });
       const otherReceipt = runtime.confirmResponses(student, other.activityId, { ...wire, stepAttemptId: other.stepAttemptId,
         questions: wire.questions.map(position => ({ ...position, revision: 0 })),
       });
+      runtime.evaluatePending();
       return { activityId: activity.activityId, key, wire, receipt, otherReceipt,
         originalRecovery: runtime.recoverResponseConfirmation(student, activity.activityId, key), studentView: runtime.read(student, activity.activityId),
       };

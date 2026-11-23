@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { openLearningRuntime, QuestionDeliveryConflict } from "../src/server.ts";
 import type { ChoiceConfirmationInput, PublicationInput, QuestionDeliveryInput, VerifyOriginal } from "../src/server.ts";
@@ -155,6 +155,7 @@ test("K16 公开入口的纯单选、纯标量和纯索引数组均能各自确�
     const selected = runtime.saveChoiceDraft(student, single.activityId, { ...target(single, strictChoice), choice: "1" });
     const singleInput = intent(single, [revision(strictChoice, selected.revision), revision(nextChoice, 0)]);
     const singleReceipt = runtime.confirmChoices(student, single.activityId, singleInput);
+    runtime.evaluatePending();
     const singleResult = runtime.recoverChoiceConfirmation(student, single.activityId, recoveryKey(singleInput));
     assert.deepEqual(singleResult.receipt, singleReceipt);
     assert.deepEqual(singleResult.confirmation.questions.map(item => item.choice), ["1", null]);
@@ -164,6 +165,7 @@ test("K16 公开入口的纯单选、纯标量和纯索引数组均能各自确�
     const unknown = runtime.saveResponseDraft(student, scalar.activityId, { ...target(scalar, pendingQuestion), value: "  原话  " });
     const scalarInput = intent(scalar, [revision(judgeQuestion, understood.revision), revision(pendingQuestion, unknown.revision)]);
     const scalarReceipt = runtime.confirmResponses(student, scalar.activityId, scalarInput);
+    runtime.evaluatePending();
     const scalarResult = runtime.recoverResponseConfirmation(student, scalar.activityId, recoveryKey(scalarInput));
     assert.deepEqual(scalarResult.receipt, scalarReceipt);
     assert.deepEqual(scalarResult.confirmation.questions.map(item => item.value), [true, "  原话  "]);
@@ -177,6 +179,7 @@ test("K16 公开入口的纯单选、纯标量和纯索引数组均能各自确�
     const blank = runtime.saveResponseDraft(student, multi.activityId, { ...target(multi, emptyIndexes), value: [] });
     const multiInput = intent(multi, [revision(selectedIndexes, chosen.revision), revision(emptyIndexes, blank.revision), revision(noDraft, 0)]);
     const multiReceipt = runtime.confirmResponses(student, multi.activityId, multiInput);
+    runtime.evaluatePending();
     const multiResult = runtime.recoverResponseConfirmation(student, multi.activityId, recoveryKey(multiInput));
     assert.deepEqual(multiResult.receipt, multiReceipt);
     assert.deepEqual(multiResult.confirmation.questions.map(item => item.value), [[2, 0, 2], [], null]);
@@ -279,6 +282,7 @@ for (const mode of ["whole", "perQuestion"] as const) {
       const revisions = [choiceRevision, revision(judgeQuestion, judge.revision)];
       if (mode === "perQuestion") {
         firstReceipt = runtime.confirmQuestionDelivery(student, previous.activityId, byQuestion(previous, choiceRevision, "first-only"));
+        runtime.evaluatePending();
         assert.equal(firstReceipt.slotId, "choice-delivery");
         const remaining = deliveredView(runtime, previous);
         assert.equal(remaining.status, "active");
@@ -287,6 +291,7 @@ for (const mode of ["whole", "perQuestion"] as const) {
       }
       confirm = { ...intent(previous, revisions), source: mode === "whole" ? "whole" : "finish" };
       receipt = runtime.confirmQuestionDelivery(student, previous.activityId, confirm);
+      runtime.evaluatePending();
       assert.equal(receipt.slotId, "answers");
     } finally { runtime.close(); }
 
@@ -428,13 +433,15 @@ test("A 同组混合作答原子确认，按冻结私钥评估并重开取回同
     direct.exec("DROP TRIGGER reject_task");
 
     receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
-    evaluatePending(direct, defaultRegistry);
+    assert.deepEqual(evaluatePending(direct, defaultRegistry), { evaluated: 0, retrying: 0, failed: 0, deferred: 1 });
     assert.equal(direct.prepare("SELECT status FROM evaluation_tasks WHERE submission_id = ?").get(receipt.id)?.status, "pending");
     assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, { ...input, questions: input.questions.toReversed() }), receipt);
     assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, { ...input, source: "finish" }),
       { status: 409, code: "OPERATION_CONFLICT" });
     runtime.publish(mixedGroup(2));
-    assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(input)), /评分暂时失败/);
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 0, retrying: 1, failed: 0, deferred: 0 });
+    const interim = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(input));
+    assert.equal(interim.evaluation.status, "pending");
     const formalWork = direct.prepare("SELECT work_id FROM submissions WHERE id = ?").get(receipt.id)?.work_id;
     assert.ok(typeof formalWork === "string");
     assert.throws(() => readPersonalDraft(direct, student.id, formalWork), { status: 403, code: "FORBIDDEN" });
@@ -448,12 +455,14 @@ test("A 同组混合作答原子确认，按冻结私钥评估并重开取回同
   try {
     assert.deepEqual(open(reopened, "mixed-delivery"), activity);
     const key = recoveryKey(input);
+    assert.deepEqual(reopened.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const recovered = reopened.recoverQuestionDelivery(student, activity.activityId, key);
     assert.deepEqual(recovered.receipt, receipt);
     assert.deepEqual(recovered.practice, { id: "mixed-delivery", version: 1 });
     assert.deepEqual(recovered.confirmation.questions.map(question => [question.questionId, question.revision, question.value]), [
       ["choice", 1, "1"], ["judge", 1, true], ["unrecognized", 1, "  原话  "], ["indexes", 1, [2, 0, 2]], ["empty", 1, []], ["missing", 0, null],
     ]);
+    assert.ok(recovered.evaluation.status === "evaluated");
     assert.deepEqual(recovered.evaluation.questions.map(({ result }) => result), [
       { status: "judged", correct: true }, { status: "judged", correct: true }, { status: "needsReview" }, { status: "judged", correct: true },
       { status: "judged", correct: false }, { status: "judged", correct: false },
@@ -530,6 +539,7 @@ test("B 同一活动逐题交、主动空交、关机复读，早收余稿和被
       state: "frozen", documentId: "paper", versionId: "paper-v1", sha256: "ad".repeat(32),
     } }, "first-only");
     firstReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, firstInput);
+    runtime.evaluatePending();
     assert.equal(firstReceipt.slotId, "position-choice");
     assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, firstInput), firstReceipt);
     assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, { ...firstInput, operationId: "competing-first" }),
@@ -544,6 +554,7 @@ test("B 同一活动逐题交、主动空交、关机复读，早收余稿和被
     const interim = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(firstInput));
     assert.equal(interim.confirmation.source, "question");
     assert.deepEqual(interim.confirmation.questions, [{ ...firstInput.questions[0], value: "1" }]);
+    assert.ok(interim.evaluation.status === "evaluated");
     assert.deepEqual(interim.evaluation.questions.map(question => question.questionId), ["choice"]);
     assert.equal(deliveredView(runtime, activity).status, "active");
     assert.deepEqual(deliveredView(runtime, activity).questionDeliveryDrafts, [laterDraft]);
@@ -551,6 +562,7 @@ test("B 同一活动逐题交、主动空交、关机复读，早收余稿和被
 
     blankInput = byQuestion(activity, revision(activeBlank, 0), "blank-only");
     blankReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, blankInput);
+    runtime.evaluatePending();
     const blank = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(blankInput));
     assert.deepEqual(blank.receipt, blankReceipt);
     assert.equal(blank.confirmation.source, "question");
@@ -591,6 +603,7 @@ test("B 同一活动逐题交、主动空交、关机复读，早收余稿和被
     assert.deepEqual(deliveredView(reopened, activity).questionDeliveryDrafts, [later]);
 
     endReceipt = reopened.confirmQuestionDelivery(student, activity.activityId, finish);
+    reopened.evaluatePending();
     assert.equal(endReceipt.slotId, "answers");
     const completed = reopened.recoverQuestionDelivery(student, activity.activityId, recoveryKey(finish));
     assert.deepEqual(completed.receipt, endReceipt);
@@ -647,11 +660,13 @@ test("逐题末次确认直接完成，未配置当前授权时两种回取入�
     }
     const first = byQuestion(activity, revision(strictChoice, 1), "first");
     const firstReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, first);
+    runtime.evaluatePending();
     const active = deliveredView(runtime, activity);
     assert.equal(active.status, "active");
     assert.deepEqual(active.questionDeliveries, [{ receipt: firstReceipt }]);
     const last = byQuestion(activity, revision(nextChoice, 1), "last");
     const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, last);
+    runtime.evaluatePending();
     assert.equal(runtime.read(student, activity.activityId).status, "completed");
     assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, last), { status: 403, code: "FORBIDDEN" });
     assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(last)), { status: 403, code: "FORBIDDEN" });
@@ -710,6 +725,7 @@ test("K16 纯单选把无稿题纳入全清单会确认空值并完成整卷", t
     const first = runtime.saveChoiceDraft(student, activity.activityId, { ...target(activity, strictChoice), choice: "1" });
     const input = intent(activity, [revision(strictChoice, first.revision), revision(nextChoice, 0)]);
     const receipt = runtime.confirmChoices(student, activity.activityId, input);
+    runtime.evaluatePending();
     const result = runtime.recoverChoiceConfirmation(student, activity.activityId, recoveryKey(input));
     assert.deepEqual(result.receipt, receipt);
     assert.deepEqual(result.confirmation.questions.map(item => [item.questionId, item.revision, item.choice]), [
@@ -830,6 +846,9 @@ test("有序文本空位与客观题共用整卷确认，保存原值并以旧�
     assert.throws(() => reopened.recoverQuestionDelivery(student, activity.activityId, key), { status: 403, code: "FORBIDDEN" });
     assert.equal(observed.length, 0);
     authorized = true;
+    assert.equal(reopened.recoverQuestionDelivery(student, activity.activityId, key).evaluation.status, "pending");
+    assert.equal(observed.length, 0);
+    assert.deepEqual(reopened.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const result = reopened.recoverQuestionDelivery(student, activity.activityId, key);
     assert.deepEqual(result.receipt, receipt);
     assert.deepEqual(result.practice, { id: published.practice.id, version: 1 });
@@ -1044,8 +1063,8 @@ test("文字原稿精确重开，缺稿与空正文分离，旧版回执和评�
     assert.deepEqual(questions.map(({ id }) => drafts.get(id) ?? null), raw);
     receipt = write.confirmQuestionDelivery(student, activity.activityId, request);
     assert.deepEqual(write.confirmQuestionDelivery(student, activity.activityId, request), receipt);
-    assert.throws(() => write.recoverQuestionDelivery(student, activity.activityId, key),
-      { status: 503, code: "EVALUATOR_UNAVAILABLE" });
+    assert.deepEqual(write.evaluatePending(), { evaluated: 0, retrying: 0, failed: 0, deferred: 1 });
+    assert.equal(write.recoverQuestionDelivery(student, activity.activityId, key).evaluation.status, "pending");
     assert.equal(recorded.length, 0);
     assert.deepEqual(counts(databasePath), {
       practices: 2, scoring_keys: 2, activities: 1, submissions: 1, completions: 1, evaluation_tasks: 1, performances: 2,
@@ -1056,6 +1075,7 @@ test("文字原稿精确重开，缺稿与空正文分离，旧版回执和评�
 
   const runtime = openLearningRuntime(config);
   try {
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const result = runtime.recoverQuestionDelivery(student, activity.activityId, key);
     assert.deepEqual(result.receipt, receipt);
     assert.deepEqual(result.confirmation.questions.map(question => [question.revision, question.value]),
@@ -1205,6 +1225,7 @@ test("有未确认题组草稿也可换交付范围并保留原答和修订", t 
     assert.deepEqual(runtime.readChoiceDraftActivity(student, activity.activityId), timing);
     const firstDelivery = byQuestion(changed, revision(strictChoice, 2), "first-delivery");
     const firstReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, firstDelivery);
+    runtime.evaluatePending();
     assert.equal(firstReceipt.slotId, "choice-delivery");
     const partial = deliveredView(runtime, activity);
     assert.equal(partial.status, "active");
@@ -1294,6 +1315,7 @@ test("切换失败回滚草稿和回执，成功往返拒绝陈旧步骤并跨�
     assert.deepEqual(replayed, before.questionDeliveryDrafts);
     const confirmation = { ...intent(whole, originalDrafts.map(({ question }) => revision(question, 1))), source: "whole" } as const;
     const receipt = reopened.confirmQuestionDelivery(student, activity.activityId, confirmation);
+    reopened.evaluatePending();
     assert.deepEqual(reopened.confirmQuestionDelivery(student, activity.activityId, confirmation), receipt);
     const recovered = reopened.recoverQuestionDelivery(student, activity.activityId, recoveryKey(confirmation));
     assert.equal(recovered.evaluation.correctCount, 2);
@@ -1430,6 +1452,7 @@ test("无自动评分的题组可切换，人工评阅依据只接受同内容�
       const changed = runtime.replacePreparedActivityVersion(student, activity.activityId, switchDelivery(activity, 1, 2));
       const confirmation = byQuestion(changed, revision(strictChoice, 1), "answer");
       runtime.confirmQuestionDelivery(student, changed.activityId, confirmation);
+      runtime.evaluatePending();
       const recovered = runtime.recoverQuestionDelivery(student, changed.activityId, recoveryKey(confirmation), "declared");
       assert.equal(recovered.assessment, expectedAssessment);
       assert.ok("review" in recovered && recovered.review);

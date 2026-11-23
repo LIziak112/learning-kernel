@@ -146,12 +146,14 @@ test("草稿时间与工作版本及操作回执一起回滚，确认和撤权�
     });
     t.mock.timers.setTime(Date.parse(time(4)));
     const receipt = runtime.confirmChoices(owner, activityId, complete(stepAttemptId, 1));
+    runtime.evaluatePending();
     assert.deepEqual(runtime.read(owner, activityId).submission, { receipt });
     assert.deepEqual(read(), expected);
     assert.throws(() => save(change), { status: 409, code: "ALREADY_SUBMITTED" });
     assert.deepEqual(read(), expected);
     const empty = runtime.start(owner, { ...opening, operationId: "empty" });
     runtime.confirmChoices(owner, empty.activityId, complete(empty.stepAttemptId, 0));
+    runtime.evaluatePending();
     assert.equal(runtime.readChoiceDraftActivity(owner, empty.activityId), undefined);
     assert.deepEqual(manageReading(database, "teacher", activityId, "revokeStudent"), { studentActive: false });
     assert.throws(read, { status: 403, code: "FORBIDDEN" });

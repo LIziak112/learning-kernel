@@ -50,6 +50,7 @@ try {
     questions: questions.map(question => ({ questionId: question.id, questionVersion: question.version, revision: 0,
       original: { state: "uncollected" } })),
   });
+  next.evaluatePending();
 } finally {
   next.close();
 }

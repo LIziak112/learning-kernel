@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
+import { latestDatabaseVersion } from "../src/kernel/database.ts";
 import { openLearningRuntime } from "../src/server.ts";
 import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
@@ -102,6 +103,7 @@ test("仅收作品的已发布题组可确认、按现行权限重开，保持�
       const saved = save(first, activity);
       const input = confirmation(activity, [revision(question, saved.revision)]);
       const receipt = first.confirmQuestionDelivery(student, activity.activityId, input);
+      first.evaluatePending();
       assert.deepEqual(first.confirmQuestionDelivery(student, activity.activityId, input), receipt);
       assert.equal(verified, 1);
       return { activity, input, receipt };
@@ -177,6 +179,7 @@ test("人工评阅与逐题确认同事务登记，按旧确认重开实际量�
         automatic_verdicts: 0, response_review_requirements: 0, performances: 0 });
       database.exec("DROP TRIGGER abort_review_requirement");
       const receipt = first.confirmQuestionDelivery(student, activity.activityId, input);
+      first.evaluatePending();
       assert.throws(() => first.readQuestionDeliveryReview(reviewer, activity.activityId, recoveryKey(input)), { code: "FORBIDDEN" });
       assert.equal(facts(databasePath).response_review_requirements, 1);
       assert.throws(() => first.recoverQuestionDelivery(student, activity.activityId, recoveryKey(input), "declared"), { code: "FORBIDDEN" });
@@ -185,6 +188,7 @@ test("人工评阅与逐题确认同事务登记，按旧确认重开实际量�
       const last = save(first, activity, optional, titleOnly);
       const finish = confirmation(activity, [record, revision(optional, last.revision), revision(omitted, 0)], "finish");
       const finishReceipt = first.confirmQuestionDelivery(student, activity.activityId, finish);
+      first.evaluatePending();
       const changedBasis = { ...basis, version: basis.version + 1, reviewCriteria: "新版评阅要求补充对照。" };
       const newer = { ...manual.practice, grading: { manualReview: { keyRef: { id: changedBasis.id, version: changedBasis.version } } } };
       assert.throws(() => first.publish({ practice: newer, scoringKey: changedBasis }), /版本不能更改/);
@@ -270,6 +274,7 @@ test("自动题组按旧调用读取精确评估事实，声明式回读与其�
       const draft = save(first, activity, judge, false);
       const input = confirmation(activity, [revision(judge, draft.revision)]);
       const receipt = first.confirmQuestionDelivery(student, activity.activityId, input);
+      first.evaluatePending();
       const evaluation = first.recoverQuestionDelivery(student, activity.activityId, recoveryKey(input));
       assert.equal(evaluation.evaluation.correctCount, 1);
       assert.equal(evaluated, 1);
@@ -359,6 +364,8 @@ test("题组教师改判｜连续改判逐次撤销回落到上一条有效教�
       const read = () => runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts");
       assert.deepEqual(read().questions.map(({ revision, status }) => ({ revision, status })),
         [{ revision: 0, status: "pendingEvaluation" }, { revision: 0, status: "pendingEvaluation" }]);
+      assert.equal(evaluated, 0);
+      runtime.evaluatePending();
       const automaticBefore = runtime.recoverQuestionDelivery(student, activityId, key);
       assert.equal(evaluated, 2);
       const readBefore = read();
@@ -471,6 +478,7 @@ test("题组教师改判｜人工题逐题按原确认授权，拒绝同组未�
     const record = revision(question, draft.revision);
     const input: QuestionDeliveryInput = { ...confirmation(activity, [record]), source: "question", operationId: "confirm-first", questions: [record] };
     const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    runtime.evaluatePending();
     const key = recoveryKey(input);
     const command = { protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId: question.id,
       operationId: "manual", action: "override", correct: true, reason: "原稿符合量表", expectedRevision: 0 } as const;
@@ -500,6 +508,7 @@ test("题组教师改判｜人工题逐题按原确认授权，拒绝同组未�
     const other = revision(optional, draft2.revision);
     const finish = confirmation(activity, [record, other], "finish");
     const newReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, finish);
+    runtime.evaluatePending();
     assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, { ...command, submissionId: newReceipt.id }),
       { code: "FORBIDDEN" });
     assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, recoveryKey(finish),
@@ -518,6 +527,7 @@ test("题组教师改判｜人工题逐题按原确认授权，拒绝同组未�
     const saved = save(runtime, ungraded);
     const confirmationInput = confirmation(ungraded, [revision(question, saved.revision)]);
     const ungradedReceipt = runtime.confirmQuestionDelivery(student, ungraded.activityId, confirmationInput);
+    runtime.evaluatePending();
     const ungradedKey = recoveryKey(confirmationInput);
     assert.throws(() => runtime.readQuestionDeliveryReview(reviewer, ungraded.activityId, ungradedKey, "verdicts"), { code: "REVIEW_NOT_FOUND" });
     assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, ungraded.activityId, ungradedKey,
@@ -557,6 +567,7 @@ test("题组教师改判｜写入失败可重试，迟到初判不覆盖教师�
     const teacher = { source: "teacherReview", id: marked.id, correct: false };
     const position = { questionId: judge.id, questionVersion: judge.version };
     assert.deepEqual(read(), { ...position, revision: 1, status: "judged", effective: teacher });
+    runtime.evaluatePending();
     assert.equal(runtime.recoverQuestionDelivery(student, activityId, key).evaluation.correctCount, 1);
     assert.deepEqual(read(), { ...position, revision: 1, status: "judged", effective: teacher, automatic: { correct: true, valid: true } });
     assert.deepEqual(runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, command), marked);
@@ -617,13 +628,17 @@ test("按题教师评阅｜混合回执只调用有私钥的评估器，无参�
     const marked = submit(correction);
     assert.deepEqual(submit(correction), marked);
     assert.throws(() => submit({ ...correction, correct: true }), { code: "OPERATION_CONFLICT" });
-    assert.throws(() => runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared"), /temporary evaluation failure/);
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 0, retrying: 1, failed: 0, deferred: 0 });
+    const interim = runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared");
+    assert.ok(interim.assessment === "automatic");
+    assert.equal(interim.evaluation.status, "pending");
     assert.deepEqual(read().questions[1]?.status, "judged");
     failEvaluation = false;
+    assert.deepEqual(runtime.evaluatePending(), { evaluated: 1, retrying: 0, failed: 0, deferred: 0 });
     const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared");
     assert.equal(recovered.assessment, "automatic");
     assert.deepEqual(recovered.review?.questions, registered);
-    const evaluation = { evaluator, questionCount: 1, correctCount: 1, needsReviewCount: 0, questions: [
+    const evaluation = { status: "evaluated", evaluator, questionCount: 1, correctCount: 1, needsReviewCount: 0, questions: [
       { questionId: judge.id, questionVersion: judge.version, result: { status: "judged", correct: true } },
     ] };
     assert.deepEqual(recovered.evaluation, evaluation);
@@ -666,6 +681,7 @@ test("按题教师评阅｜无参考教师只读写声明题位，重开保留�
       const activity = start(runtime, base.practice.id);
       const input = confirmation(activity, [revision(ordering, 0), revision(optional, 0)]);
       const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+      runtime.evaluatePending();
       const key = recoveryKey(input);
       const pending = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts");
       assert.equal(pending.assessment, "teacherReview");
@@ -719,6 +735,7 @@ test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升�
       const activity = start(runtime, base.practice.id);
       const input = confirmation(activity, [revision(ordering, 0)]);
       const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+      runtime.evaluatePending();
       const key = recoveryKey(input);
       runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, { protocolVersion: 1, submissionId: receipt.id,
         targetId: "observe", questionId: ordering.id, operationId: "legacy-mark", action: "override", correct: true,
@@ -735,7 +752,7 @@ test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升�
         status TEXT NOT NULL CHECK (status IN ('pending', 'done')), CHECK ((key_id IS NULL) = (key_version IS NULL)),
         CHECK (key_id IS NOT NULL OR status = 'done'), FOREIGN KEY (key_id, key_version) REFERENCES scoring_keys (id, version)
       ) STRICT;
-      INSERT INTO legacy_tasks SELECT * FROM evaluation_tasks;
+      INSERT INTO legacy_tasks SELECT submission_id, key_id, key_version, target_id, status FROM evaluation_tasks;
       DROP TABLE evaluation_tasks;
       ALTER TABLE legacy_tasks RENAME TO evaluation_tasks;
       INSERT INTO evaluation_tasks (submission_id, target_id, status) VALUES ('${before.receipt.id}', 'observe', 'done');
@@ -755,7 +772,7 @@ test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升�
       INSERT INTO legacy_events SELECT * FROM verdict_events;
       DROP TABLE verdict_events;
       ALTER TABLE legacy_events RENAME TO verdict_events;
-      DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations);
+      DELETE FROM schema_migrations WHERE version > ${latestDatabaseVersion - 2};
       COMMIT;
     `);
     assert.deepEqual(legacy.prepare("PRAGMA foreign_key_check").all(), []);
@@ -787,6 +804,7 @@ test("按题教师评阅｜逐题仅为本次确认的声明位置建目标", t 
     const collected = revision(optional, 0);
     const input: QuestionDeliveryInput = { ...confirmation(activity, [collected]), source: "question", questions: [collected], operationId: "collect" };
     const collectedReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    runtime.evaluatePending();
     const collectedKey = recoveryKey(input);
     assert.equal(collectedReceipt.slotId, "collect");
     assert.equal(runtime.recoverQuestionDelivery(student, activity.activityId, collectedKey, "declared").assessment, "none");
@@ -795,6 +813,7 @@ test("按题教师评阅｜逐题仅为本次确认的声明位置建目标", t 
       automatic_verdicts: 0, response_review_requirements: 0, performances: 0 });
     const finish = confirmation(activity, [collected, revision(ordering, 0)], "finish");
     const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, finish);
+    runtime.evaluatePending();
     const review = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, recoveryKey(finish), "verdicts");
     assert.deepEqual(review.receipt, receipt);
     assert.deepEqual(review.questions, [{ questionId: ordering.id, questionVersion: ordering.version, revision: 0, status: "needsReview" }]);
@@ -824,6 +843,7 @@ test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t 
     const request: QuestionDeliveryInput = { ...confirmation(activity, [revision(ordering, 0)]),
       source: "question", questions: [revision(ordering, 0)], operationId: "sort" };
     const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, request);
+    runtime.evaluatePending();
     const key = recoveryKey(request);
     assert.equal(receipt.slotId, "sort");
     assert.equal(runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared").assessment, "teacherReview");
@@ -831,6 +851,7 @@ test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t 
     assert.deepEqual(inputs, []);
     const finished = confirmation(activity, [revision(ordering, 0), revision(judge, 0)], "finish");
     const finishReceipt = runtime.confirmQuestionDelivery(student, activity.activityId, finished);
+    runtime.evaluatePending();
     const result = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(finished), "declared");
     assert.equal(result.assessment, "automatic");
     assert.equal(result.review, undefined);
@@ -901,6 +922,7 @@ test("零位置有序答案｜同一确认保留显式空答与缺稿，重开�
       assert.deepEqual(save(first, activity, noReference, []), draft);
       const input = confirmation(activity, [revision(noReference, 1), revision(noReferenceMissing, 0)]);
       const receipt = first.confirmQuestionDelivery(student, activity.activityId, input);
+      first.evaluatePending();
       return { activity, input, receipt };
     } finally { first.close(); }
   })();
@@ -968,6 +990,7 @@ test("零位置有序答案｜混合题组仅把非零位置题及真实键交�
     assert.equal(save(runtime, activity, ordering, value).revision, 1);
     const input = confirmation(activity, [revision(noReference, 0), revision(ordering, 1)]);
     runtime.confirmQuestionDelivery(student, activity.activityId, input);
+    runtime.evaluatePending();
     const recovered = runtime.recoverQuestionDelivery(student, activity.activityId, recoveryKey(input), "declared");
     assert.equal(recovered.assessment, "automatic");
     assert.equal(recovered.evaluation.questionCount, 1);

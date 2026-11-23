@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import project from "../package.json" with { type: "json" };
@@ -141,7 +142,13 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
           if (result.status === "rejected") throw result.reason;
           return Number(result.value.stdout.trim());
         });
-        assert.equal(evaluated.reduce((sum, count) => sum + count, 0), 6);
+        const calls = evaluated.reduce((sum, count) => sum + count, 0);
+        assert.ok(calls >= 6 && calls <= 12);
+        {
+          using scored = new DatabaseSync(join(directory, "scored.sqlite"), { readOnly: true });
+          assert.equal(scored.prepare("SELECT count(*) AS n FROM automatic_verdicts").get()?.n, 6);
+          assert.equal(scored.prepare("SELECT count(*) AS n FROM evaluation_tasks WHERE status = 'done'").get()?.n, 3);
+        }
         const responses = "response-confirmation-consumer.mts";
         cpSync(new URL("./fixtures/response-confirmation-consumer.mts", import.meta.url), join(directory, responses));
         inputs.push(responses);

@@ -10,6 +10,7 @@ import { choiceSnapshotMigration } from "./choice-snapshot-migration.ts";
 import { preparedActivityIntentMigration, preparedActivityMigration } from "./prepared-activity-migration.ts";
 import { responseEvaluationMigration } from "./response-evaluation-migration.ts";
 import { reviewAnchorMigration } from "./review-anchor-migration.ts";
+import { evaluationFailureMigration } from "./evaluation-failure-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
 const migrations = [
@@ -54,12 +55,14 @@ const migrations = [
   teacherReviewTargetMigration,
   preparedActivityIntentMigration,
   reviewAnchorMigration,
+  evaluationFailureMigration,
 ];
 export const latestDatabaseVersion = migrations.length + 1;
 
 export function openDatabase(path: string): DatabaseSync {
   const database = new DatabaseSync(path, { timeout: 5000, enableForeignKeyConstraints: false });
   try {
+    database.exec("PRAGMA journal_mode = WAL");
     writeTransaction(database, () => migrate(database));
     database.exec("PRAGMA foreign_keys = ON");
     return database;

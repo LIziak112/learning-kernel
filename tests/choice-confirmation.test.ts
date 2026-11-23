@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
 import { startActivity } from "../src/kernel/activity.ts";
-import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { evaluatePending } from "../src/kernel/pending-evaluation.ts";
 import { readReview } from "../src/kernel/review.ts";
 import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
@@ -103,6 +103,7 @@ test("确认有答、部分答、全空三卷并保留全题分母、四类原�
         })),
       };
       const receipt = runtime.confirmChoices(student, activityId, input);
+      runtime.evaluatePending();
       const countAfterWrite = verificationCount;
       currentVersion = "a-newer-head";
       assert.deepEqual(runtime.confirmChoices(student, activityId, { ...input, questions: input.questions.toReversed() }), receipt);
@@ -213,6 +214,7 @@ test("重启按稳定操作找回同一事实，学生受限投影和宿主授�
     assert.deepEqual(active.choiceDrafts, [draft]);
     input = intent(started.stepAttemptId, [1, 0]);
     receipt = runtime.confirmChoices(student, activityId, input);
+    runtime.evaluatePending();
     const restricted = authorizedView(runtime, activityId);
     assert.deepEqual(restricted.submission, { receipt });
     assert.equal("choiceDrafts" in restricted, false);
@@ -305,6 +307,7 @@ test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐�
     assert.throws(() => runtime.confirmChoices(student, activityId, supported), denial(409, "ORIGINAL_NOT_VERIFIED"));
     const legacyEvidence = { ...supported, questions: supported.questions.map(question => ({ ...question, original: originals.uncollected })) };
     const receipt = runtime.confirmChoices(student, activityId, legacyEvidence);
+    runtime.evaluatePending();
     assert.equal(authorizedView(runtime, activityId).submission?.receipt?.id, receipt.id);
     const ungradedKey = inputKey(legacyEvidence);
     assert.throws(() => runtime.readQuestionDeliveryReview(teacher, activityId, ungradedKey, "choiceConfirmation"),
@@ -336,6 +339,7 @@ test("收尾写入失败保留个人草稿，重发后仅确认一次", t => {
     assert.equal(runtime.read(student, activityId).status, "active");
     database.exec("DROP TRIGGER reject_completion");
     const receipt = runtime.confirmChoices(student, activityId, request);
+    runtime.evaluatePending();
     assert.deepEqual(runtime.confirmChoices(student, activityId, request), receipt);
     assert.deepEqual(facts(database), [2, 2, 1, 1, 1, 1, 0, 0]);
   } finally {
@@ -416,6 +420,8 @@ test("原单选交卷在同一确认上独立改判和清除，原稿、评分�
       const write = (command: VerdictCommand) => runtime.writeQuestionDeliveryVerdict(teacher, activityId, key, command, "choiceConfirmation");
       assert.deepEqual(read().questions.map(({ status, revision }) => [status, revision]),
         [["pendingEvaluation", 0], ["pendingEvaluation", 0]]);
+      assert.equal(evaluated, 0);
+      runtime.evaluatePending();
       const original = runtime.recoverChoiceConfirmation(student, activityId, key);
       const studentView = runtime.read(student, activityId);
       assert.equal(original.evaluation?.correctCount, 1);
