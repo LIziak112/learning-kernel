@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
 import { openLearningRuntime } from "learning-kernel";
-import type { IndexResponseEvaluator, PublicationInput, ResponseConfirmationInput } from "learning-kernel";
+import type { Evaluator, PublicationInput, ResponseConfirmationInput } from "learning-kernel";
 import { z } from "zod";
 
 const phase = z.enum(["write", "recover", "read-stored"]).parse(process.argv[2]);
@@ -14,7 +14,9 @@ const operationId = "hand-in";
 const protocolVersion = 1;
 const slotId = "answers";
 
-const evaluate: IndexResponseEvaluator = ({ value, acceptedIndexes, questionId, practice }) => {
+const evaluate: Evaluator = ({ responseType, value, key, questionId, practice }) => {
+  assert.equal(responseType, "optionIndexArray");
+  const { acceptedIndexes } = z.strictObject({ acceptedIndexes: z.array(z.int()) }).parse(key);
   assert.equal(practice.version, 1);
   assert.deepEqual(acceptedIndexes, [0, 2]);
   if (questionId === "ordered") assert.deepEqual(value, ordered);
@@ -24,7 +26,7 @@ const evaluate: IndexResponseEvaluator = ({ value, acceptedIndexes, questionId, 
 };
 const runtime = openLearningRuntime({
   databasePath: "index-response.sqlite",
-  ...(phase !== "read-stored" && { indexResponseEvaluators: [{ ...evaluator, evaluate }] }),
+  ...(phase !== "read-stored" && { evaluators: [{ ...evaluator, responseTypes: ["optionIndexArray"], evaluate }] }),
   authorizeConfirmationRecovery: ({ studentId, operationId: requested }) => studentId === student.id && requested === operationId,
 });
 function publication(version: number, accepted: number[]) {
@@ -59,17 +61,17 @@ try {
     runtime.publish(publication(1, [0, 2]));
     const { activityId, stepAttemptId } = runtime.start(student, opening);
     const input: ResponseConfirmationInput = { protocolVersion, stepAttemptId, slotId, operationId, questions: questionIds.map(questionId => {
-      const revision = questionId === "absent" ? 0 : runtime.saveIndexResponseDraft(student, activityId, {
+      const revision = questionId === "absent" ? 0 : runtime.saveResponseDraft(student, activityId, {
         protocolVersion, stepAttemptId, slotId, questionId, questionVersion: 1,
         operationId: "save", baseRevision: 0, value: questionId === "ordered" ? ordered : [],
       }).revision;
       return { questionId, questionVersion: 1, revision, original: { state: "uncollected" } };
     }) };
     const active = runtime.read(student, activityId);
-    assert.ok("indexResponseDrafts" in active);
-    assert.deepEqual(active.indexResponseDrafts.map(item => item.value), [[], ordered]);
-    const receipt = runtime.confirmIndexResponses(student, activityId, input);
-    assert.deepEqual(runtime.confirmIndexResponses(student, activityId, input), receipt);
+    assert.ok("responseDrafts" in active);
+    assert.deepEqual(active.responseDrafts.map(item => item.value), [[], ordered]);
+    const receipt = runtime.confirmResponses(student, activityId, input);
+    assert.deepEqual(runtime.confirmResponses(student, activityId, input), receipt);
     runtime.publish(publication(2, [1]));
     writeFileSync(evidence, JSON.stringify({ activityId, stepAttemptId, receiptId: receipt.id }));
   } else {
@@ -77,15 +79,14 @@ try {
       .parse(JSON.parse(readFileSync(evidence, "utf8")));
     assert.equal(runtime.start(student, opening).activityId, scope.activityId);
     const key = { protocolVersion, stepAttemptId: scope.stepAttemptId, operationId } as const;
-    assert.throws(() => runtime.recoverIndexResponseConfirmation({ ...student, id: "other" }, scope.activityId, key), { code: "FORBIDDEN" });
-    const confirmation = runtime.recoverIndexResponseConfirmation(student, scope.activityId, key);
+    assert.throws(() => runtime.recoverResponseConfirmation({ ...student, id: "other" }, scope.activityId, key), { code: "FORBIDDEN" });
+    const confirmation = runtime.recoverResponseConfirmation(student, scope.activityId, key);
     assert.equal(confirmation.receipt.id, scope.receiptId);
     assert.deepEqual(confirmation.confirmation.questions.map(item => item.value), [ordered, [], null]);
     assert.equal(confirmation.evaluation.correctCount, 1);
     const view = runtime.read(student, scope.activityId);
     assert.ok("formatVersion" in view);
-    assert.deepEqual(view.submission?.indexResponseConfirmation, confirmation.confirmation);
-    assert.equal(view.submission?.responseConfirmation, undefined);
+    assert.deepEqual(view.submission?.responseConfirmation, confirmation.confirmation);
     assert.doesNotMatch(JSON.stringify([view, confirmation]), /acceptedIndexes|acceptedResponses|scoringKey/);
   }
 } finally { runtime.close(); }

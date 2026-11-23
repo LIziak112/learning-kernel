@@ -7,7 +7,7 @@ import { readingPracticeSchema } from "../contracts/reading-publication.ts";
 import { loadStudentActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { rebindQuestionDeliveryDrafts } from "./question-delivery-mode-switch.ts";
 
 const storedChange = preparedVersionReceipt.pick({ stepAttemptId: true, practiceVersion: true }).extend({

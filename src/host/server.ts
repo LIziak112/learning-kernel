@@ -9,8 +9,10 @@ import { verdictCommand } from "../contracts/verdict.ts";
 import { redoActivity, startActivity } from "../kernel/activity.ts";
 import { openDatabase } from "../kernel/database.ts";
 import { evaluatePending } from "../kernel/evaluation.ts";
-import { LearningError } from "../kernel/learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { registerPublication } from "../kernel/publication.ts";
+import { createRegistry } from "../kernel/registry.ts";
+import { defaultEvaluators, defaultResponseTypes, defaultTools } from "../extensions/index.ts";
 import { managementInput, managementView, manageReading } from "../kernel/review-access.ts";
 import { readReview, selectionFeedbackInput, writeSelectionFeedback, writeVerdict } from "../kernel/review.ts";
 import type { RuntimeCheckpoint } from "../kernel/runtime-checkpoint.ts";
@@ -47,11 +49,13 @@ type HostContext = {
 };
 const saveRequest = z.union([saveInput, readingSaveInput, readingAnswerInput]);
 
+const registry = createRegistry({ tools: defaultTools, responseTypes: defaultResponseTypes, evaluators: defaultEvaluators, answerRules: [] });
+
 function openHostDatabase(options: HostOptions) {
   const database = openDatabase(options.databasePath);
   try {
-    registerPublication(database, options.publication);
-    options.additionalPublications?.forEach(publication => registerPublication(database, publication));
+    registerPublication(database, options.publication, registry);
+    options.additionalPublications?.forEach(publication => registerPublication(database, publication, registry));
   } catch (error) {
     database.close();
     throw error;
@@ -67,7 +71,7 @@ function evaluationSchedule(database: DatabaseSync, enabled = true, checkpoint?:
       scheduled = setImmediate(() => {
         scheduled = undefined;
         try {
-          evaluatePending(database, checkpoint);
+          evaluatePending(database, registry, checkpoint);
         } catch (error) {
           console.error(error);
         }
@@ -230,7 +234,7 @@ async function post(
   if (resource === "drafts") {
     const input = saveRequest.parse(await readJSON(request));
     requireSameIdentity(request, context, { id: student, role: "student" });
-    return saveDraft(context.database, student, activityId, input);
+    return saveDraft(context.database, registry, student, activityId, input);
   }
   if (resource === "submissions") {
     const input = submitInput.parse(await readJSON(request));
@@ -247,7 +251,7 @@ async function post(
 async function confirmRequest(request: IncomingMessage, context: HostContext, student: string, activityId: string, input: SubmitInput) {
   await context.beforeConfirmation?.(input);
   requireSameIdentity(request, context, { id: student, role: "student" });
-  const receipt = submitDraft(context.database, student, activityId, input, context.clock, context.checkpoint);
+  const receipt = submitDraft(context.database, registry, student, activityId, input, context.clock, context.checkpoint);
   context.checkpoint?.({ point: "afterConfirmationCommit", operationId: input.operationId });
   context.scheduleEvaluation();
   return receipt;

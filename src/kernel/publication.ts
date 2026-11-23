@@ -1,28 +1,35 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { publicationSchema } from "../contracts/reading.ts";
 import type { Material, VersionRef } from "../contracts/reading.ts";
 import { readingPublicationSchema } from "../contracts/reading-publication.ts";
 import { writeTransaction } from "./database.ts";
 import { validateBindings } from "./publication-bindings.ts";
-import type { PublicationEvaluators } from "./publication-bindings.ts";
+import type { Registry } from "./registry.ts";
 
 const storedDefinition = z.object({ definition: z.string() });
 const publicationFormat = z.object({ practice: z.object({ formatVersion: z.unknown().optional() }) });
-function parseReadingPublication(input: unknown, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules) {
+function parseReadingPublication(input: unknown, registry: Registry) {
   return readingPublicationSchema.superRefine((value, context) => {
-    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registered, answerRules);
+    validateBindings(value, (path, message) => context.addIssue({ code: "custom", path, message }), registry);
   }).parse(input);
 }
 
-export function registerPublication(
-  database: DatabaseSync, input: unknown, registered: PublicationEvaluators = {}, answerRules: BoundQuestionAnswerRules = [],
-) {
+function parseSingleQuotePublication(input: unknown, registry: Registry) {
+  return publicationSchema.superRefine(({ practice }, context) => {
+    for (const [index, step] of practice.steps.entries()) {
+      if (!registry.tool(step.tool)?.outputs.includes("textRange")) {
+        context.addIssue({ code: "custom", path: ["practice", "steps", index, "tool"], message: "须绑定已登记且输出文本范围的工具版本" });
+      }
+    }
+  }).parse(input);
+}
+
+export function registerPublication(database: DatabaseSync, input: unknown, registry: Registry) {
   const { practice: format } = publicationFormat.parse(input);
   const { material, materials, practice, scoringKey } = Object.hasOwn(format, "formatVersion")
-    ? parseReadingPublication(input, registered, answerRules)
-    : { ...publicationSchema.parse(input), materials: undefined, scoringKey: undefined };
+    ? parseReadingPublication(input, registry)
+    : { ...parseSingleQuotePublication(input, registry), materials: undefined, scoringKey: undefined };
   requireMatchingMaterial(practice.material, material);
   const practiceJSON = JSON.stringify(practice);
   writeTransaction(database, () => {

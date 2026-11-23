@@ -1,6 +1,6 @@
 import type { Material, SaveInput, Step } from "../contracts/reading.ts";
 import { selectionSchema } from "../contracts/reading.ts";
-import { LearningError } from "../kernel/learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 export function selectedText(material: Material, range: SaveInput["range"]) {
   const paragraph = material.paragraphs.find(item => item.id === range.paragraphId);

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { startReceipt, submissionReceipt } from "../src/contracts/reading.ts";
 import type { SubmitInput } from "../src/contracts/reading.ts";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 import {
   answerSubmission, countFacts, deadline, firstChoices, firstClock, get, post, prepareAnswers, prepareScenario, readingState,
   rejection, result, scenarioDatabase, secondChoices, sessions, withScenarioServer,
@@ -71,7 +72,7 @@ for (const [title, winningWindow, sameAnswers] of [
       await rejection(post(origin, submit, { ...winner, draft: loser.draft }, winningSession), 409, "OPERATION_CONFLICT");
       await rejection(post(origin, submit, { ...loser, operationId: "sealed-after-deadline" }, losingSession), 409, "ALREADY_SUBMITTED");
       await rejection(post(origin, submit, winner, "other"), 403, "FORBIDDEN");
-      evaluatePending(database);
+      evaluatePending(database, defaultRegistry);
       const score = winningWindow === "a" ? 1 : 2;
       for (const session of ["window-a", "window-b"]) {
         const state = await result(get(origin, scenario.path, session), readingState);

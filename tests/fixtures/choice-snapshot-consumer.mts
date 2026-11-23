@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { LearningError, openLearningRuntime } from "learning-kernel";
+import { z } from "zod";
 import type { ChoiceConfirmationInput, ChoiceDraftInput, ChoiceSnapshotRevisionInput, PublicationInput } from "learning-kernel";
 
 const [, , phase, race, outcome] = process.argv;
@@ -38,7 +39,7 @@ const publication = {
 
 function execute() {
   const runtime = openLearningRuntime({ databasePath: "snapshots.sqlite",
-    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }) => choice === acceptedChoice }],
+    evaluators: [{ ...evaluator, responseTypes: ["choice"], evaluate: ({ value, key }) => ({ status: "judged", correct: value === z.object({ acceptedChoice: z.string() }).parse(key).acceptedChoice }) }],
     authorizeConfirmationRecovery: () => true,
     authorizeChoiceSnapshotRevision: scope => scope.reviewerId === teacher.id && [author.id, peer.id].some(id => id === scope.studentId),
   });

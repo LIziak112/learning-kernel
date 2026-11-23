@@ -1,17 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { choiceKeyCapability, readingCapability } from "../builtins/reading-capabilities.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
-import { readingPracticeSchema, scoringKeySchema } from "../contracts/reading-publication.ts";
+import { readingPracticeSchema, wholePaperScoringKey } from "../contracts/reading-publication.ts";
 import { readingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { questionDeliverySlot } from "./question-delivery-publication.ts";
+import { evaluateFrozenAnswers, judgedOnly } from "./question-evaluation.ts";
+import { frozenResponseType, wholePaperQuestionKey } from "./question-types.ts";
+import type { Registry } from "./registry.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 
 const storedKey = z.object({ definition: z.string() });
 const task = z.strictObject({
   submissionId: z.uuid(),
   targetId: z.string(),
+  activityId: z.uuid(),
+  stepAttemptId: z.uuid(),
   stepId: z.string(),
   slotId: z.string(),
   keyJSON: z.string(),
@@ -35,9 +39,10 @@ export function queueEvaluation(
   `).run(receipt.id, keyRef.id, keyRef.version, targetId);
 }
 
-export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeCheckpoint) {
+export function evaluatePending(database: DatabaseSync, registry: Registry, checkpoint?: RuntimeCheckpoint) {
   const pending = database.prepare(`
-    SELECT t.submission_id AS submissionId, t.target_id AS targetId, a.step_id AS stepId, s.slot_id AS slotId, k.definition AS keyJSON,
+    SELECT t.submission_id AS submissionId, t.target_id AS targetId, a.activity_id AS activityId, a.id AS stepAttemptId,
+      a.step_id AS stepId, s.slot_id AS slotId, k.definition AS keyJSON,
       p.definition AS practiceJSON, v.selection AS answerJSON
     FROM evaluation_tasks t
     JOIN scoring_keys k ON k.id = t.key_id AND k.version = t.key_version
@@ -48,21 +53,24 @@ export function evaluatePending(database: DatabaseSync, checkpoint?: RuntimeChec
     JOIN work_versions v ON v.work_id = s.work_id AND v.version = s.work_version
     WHERE t.status = 'pending' ORDER BY s.confirmed_at, s.id
   `).all();
-  for (const row of pending) evaluateTask(database, task.parse(row), checkpoint);
+  for (const row of pending) evaluateTask(database, registry, task.parse(row), checkpoint);
 }
 
-function evaluateTask(database: DatabaseSync, input: z.infer<typeof task>, checkpoint?: RuntimeCheckpoint) {
+function evaluateTask(database: DatabaseSync, registry: Registry, input: z.infer<typeof task>, checkpoint?: RuntimeCheckpoint) {
   const practice = readingPracticeSchema.parse(JSON.parse(input.practiceJSON));
   if (usesHostEvaluation(practice, input)) return;
   checkpoint?.({ point: "beforeEvaluation", submissionId: input.submissionId });
   const assessment = practice.grading.assessment;
-  if (!assessment || readingCapability(assessment.evaluator) !== choiceKeyCapability) throw new Error("已发布评估器不可用");
-  const key = scoringKeySchema.parse(JSON.parse(input.keyJSON));
+  if (!assessment || !registry.evaluator(assessment.evaluator)) throw new Error("已发布评估器不可用");
+  const key = wholePaperScoringKey.parse(JSON.parse(input.keyJSON));
   const answer = readingAnswer.parse(JSON.parse(input.answerJSON));
-  const verdicts = practice.questions.map(({ id: questionId }) => ({
-    questionId, correct: key.acceptedChoices[questionId] === answer.choices[questionId],
+  const context = { activityId: input.activityId, stepAttemptId: input.stepAttemptId, slotId: input.slotId, practice: { id: practice.id, version: practice.version } };
+  const answers = practice.questions.map(({ id: questionId, version }) => ({
+    questionId, questionVersion: version ?? 1, value: answer.choices[questionId] ?? null,
   }));
-  recordEvaluation(database, input, verdicts, checkpoint);
+  const outcomes = evaluateFrozenAnswers(registry, practice, assessment.evaluator, context, answers,
+    question => wholePaperQuestionKey(key, frozenResponseType(registry, practice, question), question));
+  recordEvaluation(database, input, judgedOnly(outcomes), checkpoint);
 }
 
 function usesHostEvaluation(practice: z.infer<typeof readingPracticeSchema>, { stepId, slotId }: z.infer<typeof task>) {

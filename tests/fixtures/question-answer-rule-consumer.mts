@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
 import { openLearningRuntime } from "learning-kernel";
-import type { PublicationInput, QuestionAnswerRuleRegistration, QuestionDeliveryInput, ResponseValue } from "learning-kernel";
+import type { PublicationInput, QuestionAnswerRule, QuestionDeliveryInput, ResponseValue } from "learning-kernel";
 import { z } from "zod";
 
 const phase = z.enum(["write", "recover"]).parse(process.argv[2]);
@@ -15,15 +15,16 @@ const slotId = "answers";
 const practiceId = "independent-rule";
 const seen: ResponseValue[] = [];
 const registration = {
-  ...ruleRef, response: "booleanOrString", isAnswered(value) {
+  ...ruleRef, responseType: "booleanOrString", isAnswered(raw) {
+    const value = z.union([z.boolean(), z.string()]).parse(raw);
     seen.push(value);
     return typeof value === "boolean" || value.trim() !== "";
   },
-} satisfies QuestionAnswerRuleRegistration;
+} satisfies QuestionAnswerRule;
 
 const runtime = openLearningRuntime({
   databasePath: "independent-rule.sqlite",
-  responseEvaluators: [{ ...evaluator, evaluate: ({ value }) => ({ status: "judged", correct: value === false }) }],
+  evaluators: [{ ...evaluator, responseTypes: ["booleanOrString"], evaluate: ({ value }) => ({ status: "judged", correct: value === false }) }],
   authorizeConfirmationRecovery: ({ studentId }) => studentId === student.id,
   ...(phase === "write" && { questionAnswerRules: [registration] }),
 });

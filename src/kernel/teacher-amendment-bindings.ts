@@ -5,7 +5,7 @@ import type { TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "../
 import { readingPracticeSchema } from "../contracts/reading-publication.ts";
 import { choiceSnapshotOffsetForWork } from "./choice-snapshot-store.ts";
 import { latestDatabaseVersion } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const ledger = z.strictObject({ first: z.literal(1), version: z.int().min(1).max(latestDatabaseVersion), count: z.int().positive() });
 const publishedStep = z.strictObject({ definition: z.string(), stepId: z.string() });

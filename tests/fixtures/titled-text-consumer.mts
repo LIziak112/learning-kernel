@@ -1,14 +1,14 @@
 import { strict as assert } from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
 import { openLearningRuntime } from "learning-kernel";
-import type { PublicationInput, ResponseValue, TitledTextEvaluationInput, TitledTextResponseValue } from "learning-kernel";
+import type { EvaluationInput, PublicationInput, ResponseValue } from "learning-kernel";
 import { z } from "zod";
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type Same<L, R> = [L] extends [R] ? [R] extends [L] ? true : false : false;
 const scalarStable: Same<Parameters<Runtime["saveResponseDraft"]>[2]["value"], ResponseValue> = true;
-const titleIsOptional: Same<TitledTextResponseValue, { body: string; title?: string }> = true;
-assert.ok(scalarStable && titleIsOptional);
+type TitledTextResponseValue = { body: string; title?: string };
+assert.ok(scalarStable);
 
 const phase = z.enum(["write", "recover", "read-stored"]).parse(process.argv[2]);
 const checkpoint = z.strictObject({ activityId: z.uuid(), stepAttemptId: z.uuid(), receiptId: z.uuid() });
@@ -23,13 +23,15 @@ const cases: readonly [string, TitledTextResponseValue | null][] = [
   ["only-title", { body: " \t\n\u3000", title: " 独立标题 " }],
   ["empty-title", { body, title: "" }], ["omitted-title", { body }], ["missing", null],
 ];
-const seen: TitledTextEvaluationInput[] = [];
+const seen: EvaluationInput[] = [];
 const runtime = openLearningRuntime({
   databasePath: "independent-writing.sqlite",
   authorizeConfirmationRecovery: ({ studentId }) => studentId === student.id,
-  ...(phase !== "read-stored" && { titledTextEvaluators: [{
+  ...(phase !== "read-stored" && { evaluators: [{
     ...evaluator,
+    responseTypes: ["textWithOptionalTitle"],
     evaluate: input => {
+      assert.deepEqual(input.key, {});
       seen.push(input);
       return { status: "needsReview" };
     },

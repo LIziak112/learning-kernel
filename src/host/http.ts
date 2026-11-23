@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z, ZodError } from "zod";
-import { LearningError } from "../kernel/learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const httpChunk = z.instanceof(Buffer);
 const maximumBodyBytes = 64 * 1024;

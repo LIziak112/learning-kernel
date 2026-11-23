@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { openLearningRuntime } from "learning-kernel";
-import type { ChoiceConfirmationInput, ChoiceEvaluator, PublicationInput } from "learning-kernel";
+import type { ChoiceConfirmationInput, Evaluator, PublicationInput } from "learning-kernel";
 import { z } from "zod";
 
 const answers = z.array(z.object({ index: z.int() }).nullable());
@@ -45,8 +45,12 @@ const scenarios = ["complete", "empty", "partial"] as const;
 const student = { role: "student", id: "grader-owner" } as const;
 let calls = 0;
 let scope: { activityId: string; stepAttemptId: string } | undefined;
-const evaluate: ChoiceEvaluator = input => {
+const choiceKey = z.strictObject({ acceptedChoice: z.string() });
+const evaluate: Evaluator = input => {
   calls += 1;
+  assert.equal(input.responseType, "choice");
+  const { acceptedChoice } = choiceKey.parse(input.key);
+  const choice = z.string().nullable().parse(input.value);
   if (phase === "crash" && calls === 2) process.exit(47);
   assert.ok(scope);
   assert.equal(input.activityId, scope.activityId);
@@ -56,13 +60,13 @@ const evaluate: ChoiceEvaluator = input => {
   const question = frozen.questions.find(question => question.id === input.questionId);
   assert.ok(question);
   assert.equal(input.questionVersion, question.version);
-  assert.equal(input.acceptedChoice, String(question.answers.index));
-  return input.choice !== null && input.choice !== input.acceptedChoice;
+  assert.equal(acceptedChoice, String(question.answers.index));
+  return { status: "judged", correct: choice !== null && choice !== acceptedChoice };
 };
 const runtime = openLearningRuntime({
   databasePath: "scored.sqlite",
   authorizeConfirmationRecovery: requested => requested.studentId === student.id && requested.operationId === "hand-in",
-  choiceEvaluators: [{ ...evaluator, version: phase === "wrong-version" ? 2 : 1, evaluate }],
+  evaluators: [{ ...evaluator, version: phase === "wrong-version" ? 2 : 1, responseTypes: ["choice"], evaluate }],
 });
 try {
   if (phase === "init") runtime.publish(publication);

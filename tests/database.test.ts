@@ -11,6 +11,7 @@ import { readingMigration } from "../src/kernel/reading-migration.ts";
 import { registerPublication } from "../src/kernel/publication.ts";
 import { openLearningRuntime } from "../src/server.ts";
 import single from "../practices/single-quote.json" with { type: "json" };
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const appliedVersions = Array.from({ length: latestDatabaseVersion }, (_, index) => index + 1);
 
@@ -95,7 +96,7 @@ test("从 T03 版本迁移时原样保留发布、活动和已有表现标识", 
   {
     using original = new DatabaseSync(path);
     installT03(original);
-    registerPublication(original, single);
+    registerPublication(original, single, defaultRegistry);
     original.prepare(`
       INSERT INTO activities (id, student_id, practice_id, practice_version, start_operation_id, started_at)
       VALUES (?, 'student', ?, ?, 'start', ?)

@@ -13,6 +13,7 @@ import { openLearningRuntime } from "../src/server.ts";
 import type { PreparedActivityVersionInput, PublicationInput } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase, selectionRanges } from "./fixtures/online-reading.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "owner" } as const;
 const other = { role: "student", id: "other" } as const;
@@ -193,8 +194,8 @@ test("草稿、空答确认和步骤推进结束预备换版资格，重练仍�
     runtime.publish({ ...publishedReading, practice: { ...publishedReading.practice, version: 2 } });
     const readingOpen = runtime.prepare(student, { ...open, operationId: "read", practiceId: reading.practice.id });
     const first = { protocolVersion: 1, stepAttemptId: readingOpen.stepAttemptId, slotId: "quotes" } as const;
-    const saved = saveDraft(database, student.id, readingOpen.activityId, { ...first, ranges: selectionRanges });
-    submitDraft(database, student.id, readingOpen.activityId, { ...first, operationId: "quotes", draft: saved.draft }, () => new Date());
+    const saved = saveDraft(database, defaultRegistry, student.id, readingOpen.activityId, { ...first, ranges: selectionRanges });
+    submitDraft(database, defaultRegistry, student.id, readingOpen.activityId, { ...first, operationId: "quotes", draft: saved.draft }, () => new Date());
     const progressed = runtime.read(student, readingOpen.activityId);
     assert.notEqual(progressed.stepAttemptId, readingOpen.stepAttemptId);
     assert.throws(() => runtime.replacePreparedActivityVersion(student, readingOpen.activityId, replace(progressed.stepAttemptId, 1, 2, "blocked")),

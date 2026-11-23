@@ -11,14 +11,15 @@ import { createLearningServer } from "../src/host/server.ts";
 import { openDatabase } from "../src/kernel/database.ts";
 import { registerPublication } from "../src/kernel/publication.ts";
 import { contrastB, contrastC } from "./fixtures/reading-contrasts.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 test("发布两步阅读并固定材料版本、独立使用位置和前序槽位引用", t => {
   const path = databasePath(t);
   {
     using database = openDatabase(path);
     assert.doesNotThrow(() => {
-      registerPublication(database, reading);
-      registerPublication(database, reading);
+      registerPublication(database, reading, defaultRegistry);
+      registerPublication(database, reading, defaultRegistry);
     });
   }
   using database = openDatabase(path);
@@ -288,7 +289,7 @@ const failures: { title: string; input: unknown; path: (string | number)[] }[] =
 for (const { title, input, path } of failures) {
   test(title, t => {
     using database = openDatabase(databasePath(t));
-    assert.throws(() => registerPublication(database, input), (error: unknown) => {
+    assert.throws(() => registerPublication(database, input, defaultRegistry), (error: unknown) => {
       assert.ok(error instanceof ZodError);
       assert.ok(error.issues.some(issue => JSON.stringify(issue.path) === JSON.stringify(path)),
         JSON.stringify(error.issues));
@@ -302,11 +303,11 @@ test("评分键版本冲突时回滚同次发布的材料和练法", t => {
   const filename = databasePath(t);
   {
     using database = openDatabase(filename);
-    registerPublication(database, reading);
+    registerPublication(database, reading, defaultRegistry);
     const material = { ...reading.material, version: 2 };
     const practice = { ...reading.practice, version: 2, material: { id: material.id, version: material.version } };
     const scoringKey = { ...reading.scoringKey, acceptedChoices: { ...reading.scoringKey.acceptedChoices, q2: "B" } };
-    assert.throws(() => registerPublication(database, { material, practice, scoringKey }), /已发布.*不能更改/);
+    assert.throws(() => registerPublication(database, { material, practice, scoringKey }, defaultRegistry), /已发布.*不能更改/);
   }
   using reopened = openDatabase(filename);
   assert.deepEqual(publicationCounts(reopened), [1, 1, 1]);

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ChoiceReviewerScope } from "../contracts/choice-amendment.ts";
 import type { ChoiceDraftScope } from "../contracts/choice-draft.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const amendmentActor = z.strictObject({ studentId: z.string(), assignedReviewer: z.string().nullable(), reviewerActive: z.literal([0, 1]).nullable() });
 

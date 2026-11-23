@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
 import { openLearningRuntime } from "learning-kernel";
-import type { PublicationInput, ResponseEvaluator, ResponseConfirmationInput } from "learning-kernel";
+import type { Evaluator, PublicationInput, ResponseConfirmationInput } from "learning-kernel";
 import { z } from "zod";
 
 const phase = z.enum(["write", "recover", "read-stored"]).parse(process.argv[2]);
@@ -11,7 +11,8 @@ const assessment = { id: "local-judgment", version: 1 };
 const questions = ["open-text", "boolean-control"];
 const text = "  待教师辨认的判断文本  ";
 const original = { state: "frozen", documentId: "original", versionId: "V1" } as const;
-const evaluate: ResponseEvaluator = ({ questionId, value, acceptedResponse }) => {
+const evaluate: Evaluator = ({ questionId, value, key }) => {
+  const { acceptedResponse } = z.strictObject({ acceptedResponse: z.boolean() }).parse(key);
   if (questionId === "open-text") {
     assert.equal(value, text);
     return { status: "needsReview" };
@@ -25,7 +26,7 @@ const operationId = "hand-in";
 const slotId = "answers";
 const runtime = openLearningRuntime({
   databasePath: "response.sqlite",
-  ...(phase !== "read-stored" && { responseEvaluators: [{ ...assessment, evaluate }] }),
+  ...(phase !== "read-stored" && { evaluators: [{ ...assessment, responseTypes: ["booleanOrString"], evaluate }] }),
   authorizeConfirmationRecovery: scope => scope.studentId === student.id && scope.operationId === operationId,
   verifyOriginal: scope => scope.original.state === "uncollected" ||
     (scope.original.state === "frozen" && scope.original.documentId === original.documentId && scope.original.versionId === original.versionId),

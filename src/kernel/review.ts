@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { VerdictCommand } from "../contracts/verdict.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { findSource } from "./reading-answers.ts";
 import { readingSubmissionView } from "./reading-progress.ts";
 import { assignedReading } from "./review-access.ts";

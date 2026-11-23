@@ -1,11 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ChoiceDraftInput, ChoiceDraftScope } from "../contracts/choice-draft.ts";
-import type { StoredResponseValue } from "../contracts/response.ts";
+import type { ResponseValue } from "../contracts/response.ts";
 import { choiceSnapshotOffsetForWork } from "./choice-snapshot-store.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
-type DraftValue = Pick<ChoiceDraftInput, "questionVersion" | "choice"> | { questionVersion: number; value: StoredResponseValue };
+type DraftValue = Pick<ChoiceDraftInput, "questionVersion" | "choice"> | { questionVersion: number; value: ResponseValue };
 
 export class QuestionDraftConflict<Current extends { revision: number }> extends LearningError {
   readonly current: Readonly<Current>;

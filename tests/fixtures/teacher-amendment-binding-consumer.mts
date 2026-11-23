@@ -38,7 +38,7 @@ const afterSave = "amendment-student-save.sqlite";
 const late = "amendment-late.sqlite";
 const open = { protocolVersion: 1, practiceId: declaration.practice.id, practiceVersion: 1, operationId: "opening" } as const;
 const options = { databasePath: working, authorizeChoiceDraftAmendment: () => true, authorizeChoiceSnapshotRevision: () => true,
-  choiceEvaluators: [{ ...evaluator, evaluate: () => true }],
+  evaluators: [{ ...evaluator, responseTypes: ["choice"], evaluate: () => ({ status: "judged" as const, correct: true }) }],
 };
 type Student = typeof alice | typeof bob;
 function withRuntime<T>(operation: (runtime: ReturnType<typeof openLearningRuntime>) => T) {

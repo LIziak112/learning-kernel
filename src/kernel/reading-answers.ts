@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
 import type { ReadingAnswer } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { activitySubmissions } from "./submission-store.ts";
 import type { Observation, StoredSubmission } from "./submission-store.ts";
 

@@ -3,19 +3,20 @@ import type { DatabaseSync } from "node:sqlite";
 import { questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { ChoiceConfirmation } from "../contracts/choice-confirmation.ts";
-import { readIndexResponseConfirmation, readResponseConfirmation } from "../contracts/response.ts";
-import type { IndexResponseConfirmation, ResponseConfirmation } from "../contracts/response.ts";
-import { studentTool } from "../builtins/reading-capabilities.ts";
-import { selectedText } from "../builtins/selection.ts";
-import type { ActivityDetail, Material, SubmitInput } from "../contracts/reading.ts";
+import { readResponseConfirmation } from "../contracts/response.ts";
+import type { ResponseConfirmation } from "../contracts/response.ts";
+import type { StudentValue } from "../contracts/capabilities.ts";
+import type { ActivityDetail, Material, SubmitInput, VersionRef } from "../contracts/reading.ts";
 import type { ReadingStep } from "../contracts/reading-publication.ts";
 import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingAnswer, ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { queueEvaluation } from "./evaluation.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { loadMaterialAtVersion } from "./material-positions.ts";
+import { selectedText } from "./material-selection.ts";
 import { questionDeliverySlot } from "./question-delivery-publication.ts";
+import type { Registry } from "./registry.ts";
 import { answerObservations, findSource, verifyAnswerReferences } from "./reading-answers.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 import { studentResults } from "./student-results.ts";
@@ -33,9 +34,19 @@ function stepForAttempt(database: DatabaseSync, activity: ReadingActivity, attem
 
 export function boundOutput(step: ReadingStep, slotId: string) {
   const slot = step.submit.slots[slotId];
-  if (!slot || slot.type === "reuse" || !studentTool(step.tool)?.outputs.includes(slot.type)) {
+  if (!slot || slot.type === "reuse") {
     throw new LearningError(422, "INVALID_SLOT");
   }
+  return slot;
+}
+
+export function requireAvailableTool(registry: Registry, step: { tool: VersionRef }, output: StudentValue) {
+  if (!registry.tool(step.tool)?.outputs.includes(output)) throw new LearningError(422, "INVALID_SLOT");
+}
+
+export function writableOutput(registry: Registry, step: ReadingStep, slotId: string) {
+  const slot = boundOutput(step, slotId);
+  requireAvailableTool(registry, step, slot.type);
   return slot;
 }
 
@@ -43,9 +54,9 @@ function workScope(activity: ReadingActivity, input: { stepAttemptId: string; sl
   return { activityId: activity.activityId, step: { id: input.stepAttemptId, slotId: input.slotId } };
 }
 
-export function saveReadingSelection(database: DatabaseSync, activity: ReadingActivity, input: ReadingSaveInput) {
+export function saveReadingSelection(database: DatabaseSync, registry: Registry, activity: ReadingActivity, input: ReadingSaveInput) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
-  const slot = boundOutput(step, input.slotId);
+  const slot = writableOutput(registry, step, input.slotId);
   if (slot.type !== "passageSelection") throw new LearningError(422, "INVALID_SLOT");
   const source = step.inputs[slot.source];
   const { material } = activity;
@@ -62,9 +73,9 @@ export function saveReadingSelection(database: DatabaseSync, activity: ReadingAc
   return { draft, selection };
 }
 
-export function saveReadingAnswer(database: DatabaseSync, activity: ReadingActivity, input: ReadingAnswerInput) {
+export function saveReadingAnswer(database: DatabaseSync, registry: Registry, activity: ReadingActivity, input: ReadingAnswerInput) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
-  if (boundOutput(step, input.slotId).type !== "oneChoicePerQuestion") throw new LearningError(422, "INVALID_SLOT");
+  if (writableOutput(registry, step, input.slotId).type !== "oneChoicePerQuestion") throw new LearningError(422, "INVALID_SLOT");
   const { choices, references, reason } = input;
   const answer = readingAnswer.parse({ choices, references, reason });
   verifyAnswerReferences(database, activity.activityId, step, answer);
@@ -72,7 +83,7 @@ export function saveReadingAnswer(database: DatabaseSync, activity: ReadingActiv
 }
 
 export function confirmReadingDraft(
-  database: DatabaseSync, activity: ReadingActivity, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
+  database: DatabaseSync, registry: Registry, activity: ReadingActivity, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
 ) {
   const step = stepForAttempt(database, activity, input.stepAttemptId);
   if (questionDeliverySlot(step)) throw new LearningError(422, "INVALID_SLOT");
@@ -83,7 +94,7 @@ export function confirmReadingDraft(
   }
   const confirmedAt = clock();
   requireBeforeDeadline(activity, confirmedAt);
-  const slot = boundOutput(step, input.slotId);
+  const slot = writableOutput(registry, step, input.slotId);
   rejectDraftConfirmation(slot);
   const content = loadWorkVersion(database, workScope(activity, input), input.draft);
   const observations = readingObservations(database, activity, slot, content);
@@ -166,7 +177,6 @@ type StudentSubmissionView = {
   receipt?: StoredSubmission["receipt"];
   confirmation?: ChoiceConfirmation;
   responseConfirmation?: ResponseConfirmation;
-  indexResponseConfirmation?: IndexResponseConfirmation;
   questionDelivery?: ReturnType<typeof questionDeliveryView>;
   selection?: ReadingSelection;
   answer?: Omit<ReadingAnswer, "references"> & { references?: ReadingAnswer["references"] };
@@ -210,8 +220,6 @@ function legacyStudentSubmission(submitted: StoredSubmission, fields: ReadonlySe
   if (confirmation) return fields.has("ownChoices") ? { ...receipt, confirmation } : receipt;
   const responseConfirmation = readResponseConfirmation(submitted.content);
   if (responseConfirmation) return fields.has("ownResponses") ? { ...receipt, responseConfirmation } : receipt;
-  const indexResponseConfirmation = readIndexResponseConfirmation(submitted.content);
-  if (indexResponseConfirmation) return fields.has("ownResponses") ? { ...receipt, indexResponseConfirmation } : receipt;
   return studentReadingEvidence(submitted, fields, receipt);
 }
 

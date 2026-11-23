@@ -5,10 +5,8 @@ import { choiceDraftAmendmentInput } from "./contracts/choice-amendment.ts";
 import type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDraftAmendmentScope } from "./contracts/choice-amendment.ts";
 import { choiceDraftScope, choiceDraftInput, currentChoiceDraftMode } from "./contracts/choice-draft.ts";
 import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftInput } from "./contracts/choice-draft.ts";
-import { choiceEvaluators } from "./contracts/choice-evaluation.ts";
 import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
-import { questionAnswerRules } from "./contracts/question-answer-rule.ts";
 import { questionDeliveryDraftInput, questionDeliveryInput, questionDeliveryReviewMode } from "./contracts/question-delivery.ts";
 import type { AuthorizeQuestionDeliveryReview, AuthorizeQuestionDeliveryVerdict, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
 import { frozenConfirmationVerdictMode, verdictCommand } from "./contracts/verdict.ts";
@@ -17,9 +15,12 @@ import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
 import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
-import { indexResponseDraftInput, responseDraftInput } from "./contracts/response.ts";
-import type { IndexResponseDraftInput, ResponseConfirmationInput, ResponseDraftInput } from "./contracts/response.ts";
-import { indexResponseEvaluators, orderedTextEvaluators, responseEvaluators, titledTextEvaluators } from "./contracts/response-evaluation.ts";
+import type { ToolCapability } from "./contracts/capabilities.ts";
+import type { Evaluator, EvaluatorRegistration, QuestionAnswerRule } from "./contracts/evaluator.ts";
+import { responseDraftInput } from "./contracts/response.ts";
+import type { ResponseConfirmationInput, ResponseDraftInput } from "./contracts/response.ts";
+import type { RegisteredResponseType } from "./contracts/response-type.ts";
+import { defaultEvaluators, defaultResponseTypes, defaultTools } from "./extensions/index.ts";
 import { startActivity } from "./kernel/activity.ts";
 import { amendChoiceDraft, readChoiceDraftForAmendment } from "./kernel/choice-amendment.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
@@ -27,25 +28,31 @@ import { readChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 import { saveChoiceDraft, saveCurrentChoiceDraft } from "./kernel/choice-drafts.ts";
 import { reviseChoiceSnapshot } from "./kernel/choice-snapshot.ts";
 import { openDatabase, readTransaction } from "./kernel/database.ts";
-import { LearningError } from "./kernel/learning-error.ts";
+import { LearningError } from "./contracts/learning-error.ts";
 import { replacePreparedActivityVersion } from "./kernel/prepared-activity.ts";
 import { confirmQuestionDelivery, recoverQuestionDelivery } from "./kernel/question-delivery-confirmation.ts";
 import { readChoiceConfirmationVerdicts, readQuestionDeliveryReview, readQuestionDeliveryVerdicts, readResponseConfirmationVerdicts, writeQuestionDeliveryVerdict } from "./kernel/question-delivery-review.ts";
 import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
 import { registerPublication } from "./kernel/publication.ts";
-import { confirmResponses, indexResponses, recoverResponseConfirmation, scalarResponses } from "./kernel/response-confirmation.ts";
-import { indexResponseDrafts, saveResponseDraft, scalarResponseDrafts } from "./kernel/response-drafts.ts";
-import { indexResponseEvaluation, scalarResponseEvaluation } from "./kernel/response-evaluation.ts";
+import { createRegistry } from "./kernel/registry.ts";
+import { confirmResponses, recoverResponseConfirmation } from "./kernel/response-confirmation.ts";
+import { saveResponseDraft } from "./kernel/response-drafts.ts";
 import { readActivity } from "./kernel/submission.ts";
 
+const callable = <T>() => z.custom<T>(value => typeof value === "function");
+const evaluatorShape = versionRef.extend({ responseTypes: z.array(id).min(1), evaluate: callable<Evaluator>() });
+const evaluatorRegistration = z.custom<EvaluatorRegistration>(value => evaluatorShape.safeParse(value).success);
+const answerRuleShape = versionRef.extend({ responseType: id, isAnswered: callable<QuestionAnswerRule["isAnswered"]>() });
+const answerRuleRegistration = z.custom<QuestionAnswerRule>(value => answerRuleShape.safeParse(value).success);
+const responseTypeRegistration = z.custom<RegisteredResponseType>(value => typeof value === "object" && value !== null
+  && typeof Reflect.get(value, "parseValue") === "function" && typeof Reflect.get(value, "isAnswered") === "function");
+const toolRegistration = z.custom<ToolCapability>(value => typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "outputs")));
 const runtimeOptions = z.strictObject({
   databasePath: z.string().min(1),
-  choiceEvaluators: choiceEvaluators.default([]),
-  responseEvaluators: responseEvaluators.default([]),
-  indexResponseEvaluators: indexResponseEvaluators.default([]),
-  orderedTextEvaluators: orderedTextEvaluators.default([]),
-  titledTextEvaluators: titledTextEvaluators.default([]),
-  questionAnswerRules: questionAnswerRules.default([]),
+  tools: z.array(toolRegistration).default([]),
+  responseTypes: z.array(responseTypeRegistration).default([]),
+  evaluators: z.array(evaluatorRegistration).default([]),
+  questionAnswerRules: z.array(answerRuleRegistration).default([]),
   authorizeChoiceDraftAmendment: z.custom<AuthorizeChoiceDraftAmendment>(value => typeof value === "function").optional(),
   authorizeChoiceSnapshotRevision: z.custom<AuthorizeChoiceSnapshotRevision>(value => typeof value === "function").optional(),
   hasChoiceSnapshotEvidence: z.custom<HasChoiceSnapshotEvidence>(value => typeof value === "function").optional(),
@@ -73,7 +80,11 @@ export type { AuthorizeChoiceDraftAmendment, ChoiceDraftAmendmentInput, ChoiceDr
 export type ReviewerPrincipal = z.input<typeof reviewerPrincipal>;
 export type { ActivityBindingClaims, TeacherAmendmentBinding, TeacherAmendmentBindingClaims } from "./contracts/activity-bindings.ts";
 export type { PreparedActivityVersionInput, PreparedActivityVersionReceipt };
-export type { QuestionAnswerRuleRegistration } from "./contracts/question-answer-rule.ts";
+export type { StudentValue, ToolCapability } from "./contracts/capabilities.ts";
+export type { EvaluationContext, EvaluationInput, Evaluator, EvaluatorRegistration, QuestionAnswerRule, VerdictResult } from "./contracts/evaluator.ts";
+export type { QuestionDefinition, QuestionIssue, RegisteredResponseType, ResponseType } from "./contracts/response-type.ts";
+export { defineResponseType } from "./contracts/response-type.ts";
+export { defaultEvaluators, defaultResponseTypes, defaultTools } from "./extensions/index.ts";
 export type { AuthorizeQuestionDeliveryReview, AuthorizeQuestionDeliveryVerdict, QuestionDeliveryDraftInput, QuestionDeliveryInput };
 export type {
   AuthorizeConfirmedReview as AuthorizeChoiceConfirmationReview, AuthorizeConfirmedVerdict as AuthorizeChoiceConfirmationVerdict,
@@ -81,20 +92,13 @@ export type {
   VerdictCommand, VerdictReceipt,
 } from "./contracts/verdict.ts";
 export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
-export type { ChoiceEvaluationInput, ChoiceEvaluator, ChoiceEvaluatorRegistration } from "./contracts/choice-evaluation.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
 export type { ChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
 export { ChoiceSnapshotRevisionConflict } from "./kernel/choice-snapshot.ts";
 export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export { ResponseConfirmationConflict } from "./kernel/response-confirmation.ts";
-export { IndexResponseDraftConflict, ResponseDraftConflict } from "./kernel/response-drafts.ts";
+export { ResponseDraftConflict } from "./kernel/response-drafts.ts";
 export type { ResponseConfirmation, ResponseConfirmationInput, ResponseDraftInput, ResponseValue } from "./contracts/response.ts";
-export type { IndexResponseConfirmation, IndexResponseDraftInput } from "./contracts/response.ts";
-export type { ResponseEvaluationInput, ResponseEvaluator, ResponseEvaluatorRegistration, ResponseVerdict } from "./contracts/response-evaluation.ts";
-export type { IndexResponseEvaluationInput, IndexResponseEvaluator, IndexResponseEvaluatorRegistration } from "./contracts/response-evaluation.ts";
-export type { OrderedTextEvaluationInput, OrderedTextEvaluator, OrderedTextEvaluatorRegistration } from "./contracts/response-evaluation.ts";
-export type { TitledTextResponseValue } from "./contracts/response.ts";
-export type { TitledTextEvaluationInput, TitledTextEvaluator, TitledTextEvaluatorRegistration } from "./contracts/response-evaluation.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
 export type StudentPrincipal = z.input<typeof studentPrincipal>;
@@ -112,20 +116,20 @@ type AutomaticQuestionDeliveryRecovery = Omit<Extract<DeclaredQuestionDeliveryRe
 
 export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   const settings = runtimeOptions.parse(options);
+  const registry = createRegistry({
+    tools: [...defaultTools, ...settings.tools],
+    responseTypes: [...defaultResponseTypes, ...settings.responseTypes],
+    evaluators: [...defaultEvaluators, ...settings.evaluators],
+    answerRules: settings.questionAnswerRules,
+  });
   const database = openDatabase(settings.databasePath);
-  const registered = {
-    choice: settings.choiceEvaluators, scalar: settings.responseEvaluators, indexes: settings.indexResponseEvaluators,
-    orderedText: settings.orderedTextEvaluators, titledText: settings.titledTextEvaluators,
-  };
-  const evaluateScalarResponse = scalarResponseEvaluation(database, settings.responseEvaluators);
-  const evaluateIndexResponse = indexResponseEvaluation(database, settings.indexResponseEvaluators);
 
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, mode: "declared"): DeclaredQuestionDeliveryRecovery;
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey): AutomaticQuestionDeliveryRecovery;
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, input?: "declared") {
     const mode = recoveryMode.parse(input);
-    const recovered = recoverQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
-      confirmationKey.parse(key), settings.authorizeConfirmationRecovery, registered, mode ?? "automatic");
+    const recovered = recoverQuestionDelivery(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+      confirmationKey.parse(key), settings.authorizeConfirmationRecovery, mode ?? "automatic");
     if (mode === "declared" || recovered.assessment !== "automatic") return recovered;
     const { assessment: _assessment, ...legacy } = recovered;
     return legacy;
@@ -152,7 +156,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
 
   return {
     publish(input: PublicationInput) {
-      registerPublication(database, input, registered, settings.questionAnswerRules);
+      registerPublication(database, input, registry);
     },
     start(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, principalId(studentPrincipal, principal), publishedStartInput.parse(input), clock);
@@ -172,12 +176,12 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
       return readChoiceDraftActivity(database, principalId(studentPrincipal, principal), uuid.parse(activityId));
     },
     saveChoiceDraft(principal: StudentPrincipal, activityId: string, input: ChoiceDraftInput | UnversionedChoiceDraftInput) {
-      return saveChoiceDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceDraftInput.parse(input), clock);
+      return saveChoiceDraft(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceDraftInput.parse(input), clock);
     },
     saveCurrentChoiceDraft(
       principal: StudentPrincipal, activityId: string, input: ChoiceDraftInput | UnversionedChoiceDraftInput, mode: CurrentChoiceDraftMode = "save",
     ) {
-      return saveCurrentChoiceDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceDraftInput.parse(input),
+      return saveCurrentChoiceDraft(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceDraftInput.parse(input),
         currentChoiceDraftMode.parse(mode), clock);
     },
     readChoiceDraftForAmendment(principal: ReviewerPrincipal, activityId: string, scope: ChoiceDraftAmendmentScope) {
@@ -195,50 +199,36 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
         });
     },
     confirmChoices(principal: StudentPrincipal, activityId: string, input: ChoiceConfirmationInput) {
-      return confirmChoices(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
+      return confirmChoices(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
         clock, settings.verifyOriginal);
     },
     recoverChoiceConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
-      return recoverChoiceConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
-        settings.authorizeConfirmationRecovery, settings.choiceEvaluators);
+      return recoverChoiceConfirmation(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        confirmationKey.parse(key), settings.authorizeConfirmationRecovery);
     },
     saveResponseDraft(
       principal: StudentPrincipal, activityId: string, input: ResponseDraftInput, mode: CurrentChoiceDraftMode = "save",
     ) {
-      return saveResponseDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId), responseDraftInput.parse(input),
-        currentChoiceDraftMode.parse(mode), clock, scalarResponseDrafts);
+      return saveResponseDraft(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        responseDraftInput.parse(input), currentChoiceDraftMode.parse(mode), clock);
     },
     confirmResponses(principal: StudentPrincipal, activityId: string, input: ResponseConfirmationInput) {
-      return confirmResponses(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
-        clock, scalarResponses, settings.verifyOriginal);
+      return confirmResponses(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        choiceConfirmationInput.parse(input), clock, settings.verifyOriginal);
     },
     recoverResponseConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
-      return recoverResponseConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
-        settings.authorizeConfirmationRecovery, scalarResponses, evaluateScalarResponse);
-    },
-    saveIndexResponseDraft(
-      principal: StudentPrincipal, activityId: string, input: IndexResponseDraftInput, mode: CurrentChoiceDraftMode = "save",
-    ) {
-      return saveResponseDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId), indexResponseDraftInput.parse(input),
-        currentChoiceDraftMode.parse(mode), clock, indexResponseDrafts);
-    },
-    confirmIndexResponses(principal: StudentPrincipal, activityId: string, input: ResponseConfirmationInput) {
-      return confirmResponses(database, principalId(studentPrincipal, principal), uuid.parse(activityId), choiceConfirmationInput.parse(input),
-        clock, indexResponses, settings.verifyOriginal);
-    },
-    recoverIndexResponseConfirmation(principal: StudentPrincipal, activityId: string, key: ConfirmationKey) {
-      return recoverResponseConfirmation(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
-        settings.authorizeConfirmationRecovery, indexResponses, evaluateIndexResponse);
+      return recoverResponseConfirmation(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        confirmationKey.parse(key), settings.authorizeConfirmationRecovery);
     },
     saveQuestionDeliveryDraft(
       principal: StudentPrincipal, activityId: string, input: QuestionDeliveryDraftInput, mode: CurrentChoiceDraftMode = "save",
     ) {
-      return saveQuestionDeliveryDraft(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
+      return saveQuestionDeliveryDraft(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
         questionDeliveryDraftInput.parse(input), currentChoiceDraftMode.parse(mode), clock);
     },
     confirmQuestionDelivery(principal: StudentPrincipal, activityId: string, input: QuestionDeliveryInput) {
-      return confirmQuestionDelivery(database, principalId(studentPrincipal, principal), uuid.parse(activityId),
-        questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery, settings.questionAnswerRules);
+      return confirmQuestionDelivery(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
+        questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery);
     },
     recoverQuestionDelivery: recoverDelivery,
     readQuestionDeliveryReview: readDeliveryReview,

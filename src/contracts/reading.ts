@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { textSelectionCapability } from "../builtins/reading-capabilities.ts";
 
 export const id = z.string().min(1).max(128);
 const version = z.int().positive();
@@ -18,10 +17,7 @@ export const materialSchema = versionRef.extend({
 export const stepSchema = z.strictObject({
   id,
   instructions: z.string().min(1),
-  tool: z.strictObject({
-    id: z.literal(textSelectionCapability.id),
-    version: z.literal(textSelectionCapability.version),
-  }),
+  tool: z.strictObject({ id, version }),
   positionId: id,
   slotId: id,
   targetId: id,

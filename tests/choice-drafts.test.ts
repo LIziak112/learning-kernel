@@ -10,6 +10,7 @@ import { ChoiceDraftConflict, LearningError, openLearningRuntime } from "../src/
 import type { ChoiceDraftInput, UnversionedChoiceDraftInput } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const [firstQuestion, secondQuestion] = questions;
 assert.ok(firstQuestion && secondQuestion);
@@ -101,7 +102,7 @@ test("分题改稿、陈旧相同答案收敛与原操作重发共享同一冻�
     assert.equal("choiceDrafts" in runtime.read(student, sibling.activityId), false);
     const workId = String(database.prepare("SELECT id FROM works WHERE question_id = ?").get(questionId)?.id);
     assert.throws(() => readPersonalDraft(database, student.id, workId), denial(403, "FORBIDDEN"));
-    assert.throws(() => saveDraft(database, student.id, activityId, {
+    assert.throws(() => saveDraft(database, defaultRegistry, student.id, activityId, {
       protocolVersion: 1, stepAttemptId, slotId: first.slotId, workId, choices: {}, references: {},
     }), denial(403, "FORBIDDEN"));
     assert.deepEqual(counts(database), [2, 3, 4, 0, 0, 0]);
@@ -195,10 +196,10 @@ test("旧入口确认后草稿写入关闭，撤权后原操作也不交付本�
     const { activityId, stepAttemptId } = startActivity(database, student.id, opening, () => new Date(), teacher);
     const input = firstChoice(stepAttemptId);
     const saved = runtime.saveChoiceDraft(student, activityId, input);
-    const oldDraft = saveDraft(database, student.id, activityId, {
+    const oldDraft = saveDraft(database, defaultRegistry, student.id, activityId, {
       protocolVersion: 1, stepAttemptId, slotId: input.slotId, choices: { [questionId]: "1", [otherQuestionId]: "2" }, references: {},
     });
-    submitDraft(database, student.id, activityId, {
+    submitDraft(database, defaultRegistry, student.id, activityId, {
       protocolVersion: 1, stepAttemptId, slotId: input.slotId, operationId: "legacy-confirm", draft: oldDraft.draft,
     }, () => new Date());
     assert.throws(() => runtime.saveChoiceDraft(student, activityId, { ...input, operationId: "late" }), denial(409, "ALREADY_SUBMITTED"));

@@ -5,7 +5,7 @@ import { requireChoiceReviewerActivity } from "./choice-reviewer.ts";
 import { appendChoiceVersion, ChoiceDraftConflict, choiceState, draftReceipt, readChoiceHead, readChoiceRevision, requireDraftQuestion,
   requireWritableChoice } from "./choice-drafts.ts";
 import { readTransaction, writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const storedAmendment = z.strictObject({ workId: z.uuid(), revision: z.int().positive(), reason: z.string() });
 

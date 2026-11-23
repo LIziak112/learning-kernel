@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { loadActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 export const managementInput = z.strictObject({
   protocolVersion: z.literal(1),

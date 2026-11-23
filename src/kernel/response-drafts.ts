@@ -1,71 +1,55 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import type { ChoiceDraftScope, CurrentChoiceDraftMode } from "../contracts/choice-draft.ts";
-import { indexResponseDraftValue, responseDraftValue, sameStoredResponse } from "../contracts/response.ts";
-import type { ResponseDraftInput, ResponseFormat, ResponseValue, StoredResponseValue } from "../contracts/response.ts";
+import { LearningError } from "../contracts/learning-error.ts";
+import { responseDraftValue, responseValue } from "../contracts/response.ts";
+import type { ResponseDraftInput, ResponseDraftRequest, ResponseValue } from "../contracts/response.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { recordChoiceDraftChange } from "./choice-draft-activity.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
 import {
   isLatestQuestionDraftOperation, publicDraft, QuestionDraftConflict, readQuestionDraftHead, readQuestionDraftOperation,
   readQuestionDrafts, rememberQuestionDraftOperation,
 } from "./question-draft-store.ts";
-import { boundOutput } from "./reading-progress.ts";
+import { writableOutput } from "./reading-progress.ts";
+import type { Registry } from "./registry.ts";
 import { saveWorkVersion } from "./work-versions.ts";
 
-export class ResponseDraftConflict extends QuestionDraftConflict<{ revision: number; value: ResponseValue | null }> {}
-export class IndexResponseDraftConflict extends QuestionDraftConflict<{ revision: number; value: number[] | null }> {
+type DraftState = { revision: number; value: ResponseValue | null };
+
+export class ResponseDraftConflict extends QuestionDraftConflict<DraftState> {
   readonly questionId: string | undefined;
 
-  constructor(current: { revision: number; value: number[] | null }, code?: "ANSWER_REVISION_CONFLICT" | "OPERATION_CONFLICT", questionId?: string) {
+  constructor(current: DraftState, code?: "ANSWER_REVISION_CONFLICT" | "OPERATION_CONFLICT", questionId?: string) {
     super(current, code);
     this.questionId = questionId;
   }
 }
 
-type DraftInput<Value> = Omit<ResponseDraftInput, "value"> & { value: Value };
-type DraftContent<Value> = Pick<DraftInput<Value>, "questionVersion" | "value">;
+type DraftConflict = new (current: DraftState, code?: "ANSWER_REVISION_CONFLICT" | "OPERATION_CONFLICT") => LearningError;
 
-export type ResponseDraftMode<Value> = {
-  format: ResponseFormat;
-  schema: z.ZodType<DraftContent<Value>>;
-  Conflict: typeof QuestionDraftConflict<{ revision: number; value: Value | null }>;
-};
-
-export const scalarResponseDrafts: ResponseDraftMode<ResponseValue> = {
-  format: "booleanOrString", schema: responseDraftValue, Conflict: ResponseDraftConflict,
-};
-export const indexResponseDrafts: ResponseDraftMode<number[]> = {
-  format: "optionIndexArray", schema: indexResponseDraftValue, Conflict: IndexResponseDraftConflict,
-};
-
-export function responseSlot(activity: ReadingActivity, slotId: string, format: ResponseFormat) {
-  const slot = boundOutput(activity.step, slotId);
-  if (slot.type !== "oneResponsePerQuestion" || slot.input !== format) throw new LearningError(422, "INVALID_SLOT");
+export function responseSlot(registry: Registry, activity: ReadingActivity, slotId: string) {
+  const slot = writableOutput(registry, activity.step, slotId);
+  if (slot.type !== "oneResponsePerQuestion") throw new LearningError(422, "INVALID_SLOT");
   return slot;
 }
 
-export function readResponseDrafts<Value extends StoredResponseValue>(
-  database: DatabaseSync, activityId: string, stepAttemptId: string, { schema }: ResponseDraftMode<Value>,
-) {
-  return readQuestionDrafts(database, activityId, stepAttemptId, schema);
+export function readResponseDrafts(database: DatabaseSync, activityId: string, stepAttemptId: string) {
+  return readQuestionDrafts(database, activityId, stepAttemptId, responseDraftValue);
 }
 
-export function saveResponseDraft<Value extends ResponseValue | readonly number[]>(
-  database: DatabaseSync, studentId: string, activityId: string, input: DraftInput<Value>,
-  mode: CurrentChoiceDraftMode, clock: () => Date, draftMode: ResponseDraftMode<Value>,
+export function saveResponseDraft(
+  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, input: ResponseDraftRequest,
+  mode: CurrentChoiceDraftMode, clock: () => Date,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
     if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
-    responseSlot(activity, input.slotId, draftMode.format);
+    const slot = responseSlot(registry, activity, input.slotId);
     const question = requireQuestionVersion(activity, input);
-    if (typeof input.value === "object" && input.value.some(index => !Object.hasOwn(question.options, String(index)))) {
-      throw new LearningError(422, "INVALID_OPTION_INDEX");
-    }
-    return saveCurrentResponse(database, activityId, input, mode, clock, draftMode);
+    const value = responseValue.parse(registry.requireResponseType(slot.input).parseValue(input.value, question));
+    return saveCurrentResponse(database, activityId, { ...input, value }, mode, clock, ResponseDraftConflict);
   });
 }
 
@@ -76,34 +60,27 @@ function requireQuestionVersion(activity: ReadingActivity, input: ChoiceDraftSco
   return question;
 }
 
-export function saveCurrentResponse<Value extends StoredResponseValue>(
-  database: DatabaseSync, activityId: string, input: DraftInput<Value>,
-  mode: CurrentChoiceDraftMode, clock: () => Date, { schema, Conflict }: Omit<ResponseDraftMode<Value>, "format">,
+export function saveCurrentResponse(
+  database: DatabaseSync, activityId: string, input: ResponseDraftInput, mode: CurrentChoiceDraftMode, clock: () => Date,
+  Conflict: DraftConflict,
 ) {
-  const current = readQuestionDraftHead(database, activityId, input, schema);
-  const previous = readQuestionDraftOperation(database, activityId, input, schema);
-  if (previous && current) return publicDraft(replayResponseOperation(database, input, current, previous, Conflict));
+  const current = readQuestionDraftHead(database, activityId, input, responseDraftValue);
+  const previous = readQuestionDraftOperation(database, activityId, input, responseDraftValue);
+  if (previous && current) {
+    if (isLatestQuestionDraftOperation(database, current.workId, input.operationId)
+      && previous.baseRevision === input.baseRevision && isDeepStrictEqual(previous.draft.value, input.value)) return publicDraft(current);
+    throw new Conflict({ revision: current.revision, value: current.value }, "OPERATION_CONFLICT");
+  }
   const state = current ?? { revision: 0, value: null };
   if (mode === "replayLatestOnly") throw new LearningError(409, "DRAFT_REPLAY_REQUIRED");
   if (state.revision !== input.baseRevision) throw new Conflict({ revision: state.revision, value: state.value });
-  const written = current && sameStoredResponse(current.value, input.value) ? current : appendResponse(database, activityId, input, current, clock);
+  const written = current && isDeepStrictEqual(current.value, input.value) ? current : appendResponse(database, activityId, input, current, clock);
   rememberQuestionDraftOperation(database, input, written);
   return publicDraft(written);
 }
 
-type ResponseHead<Value extends StoredResponseValue> = NonNullable<ReturnType<typeof readQuestionDraftHead<DraftContent<Value>>>>;
-
-function replayResponseOperation<Value extends StoredResponseValue>(
-  database: DatabaseSync, input: DraftInput<Value>, current: ResponseHead<Value>,
-  previous: { baseRevision: number; draft: DraftContent<Value> }, Conflict: ResponseDraftMode<Value>["Conflict"],
-) {
-  if (isLatestQuestionDraftOperation(database, current.workId, input.operationId)
-    && previous.baseRevision === input.baseRevision && sameStoredResponse(previous.draft.value, input.value)) return current;
-  throw new Conflict({ revision: current.revision, value: current.value }, "OPERATION_CONFLICT");
-}
-
-function appendResponse<Value>(
-  database: DatabaseSync, activityId: string, input: DraftInput<Value>,
+function appendResponse(
+  database: DatabaseSync, activityId: string, input: ResponseDraftInput,
   current: { workId: string; revision: number; changeCount: number } | undefined, clock: () => Date,
 ) {
   const { stepAttemptId, slotId, questionId, questionVersion, value } = input;

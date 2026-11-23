@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { LearningError, openLearningRuntime } from "learning-kernel";
-import type { OrderedTextEvaluationInput, PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, ResponseValue } from "learning-kernel";
+import type { EvaluationInput, PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, ResponseValue, VerdictResult } from "learning-kernel";
 import { z } from "zod";
 
 const phase = z.enum(["write", "race-question", "race-finish", "recover", "read-stored"]).parse(process.argv[2]);
@@ -30,21 +30,32 @@ const runtime = openLearningRuntime({
   databasePath,
   authorizeConfirmationRecovery: ({ studentId }) => studentId === student.id,
   ...(phase !== "read-stored" && {
-    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }) => choice === acceptedChoice }],
-    responseEvaluators: [{ ...evaluator, evaluate: ({ value, acceptedResponse }) =>
-      typeof value === "string" ? { status: "needsReview" } : { status: "judged", correct: value === acceptedResponse } }],
-    indexResponseEvaluators: [{ ...evaluator, evaluate: ({ value, acceptedIndexes }) => {
-      assert.deepEqual(acceptedIndexes, [0, 2]);
-      return { status: "judged", correct: value !== null && [...new Set(value)].toSorted().join() === acceptedIndexes.join() };
-    } }],
-    orderedTextEvaluators: [{ ...evaluator, evaluate: (input: OrderedTextEvaluationInput) => {
-      assert.deepEqual(input.practice, { id: "grouped-delivery", version: 1 });
-      assert.deepEqual(input.acceptedBlanks, acceptedBlanks);
-      assert.equal(input.questionVersion, 5);
-      return { status: "needsReview" };
-    } }],
+    evaluators: [{ ...evaluator, responseTypes: ["choice", "booleanOrString", "optionIndexArray", "orderedTextBlanks"], evaluate: groupedEvaluation }],
   }),
 });
+
+function groupedEvaluation(input: EvaluationInput): VerdictResult {
+  switch (input.responseType) {
+    case "choice":
+      return { status: "judged", correct: input.value === z.object({ acceptedChoice: z.string() }).parse(input.key).acceptedChoice };
+    case "booleanOrString": {
+      const { acceptedResponse } = z.object({ acceptedResponse: z.boolean() }).parse(input.key);
+      return typeof input.value === "string" ? { status: "needsReview" } : { status: "judged", correct: input.value === acceptedResponse };
+    }
+    case "optionIndexArray": {
+      const { acceptedIndexes } = z.object({ acceptedIndexes: z.array(z.int()) }).parse(input.key);
+      const value = z.array(z.int()).nullable().parse(input.value);
+      assert.deepEqual(acceptedIndexes, [0, 2]);
+      return { status: "judged", correct: value !== null && [...new Set(value)].toSorted().join() === acceptedIndexes.join() };
+    }
+    default:
+      assert.equal(input.responseType, "orderedTextBlanks");
+      assert.deepEqual(input.practice, { id: "grouped-delivery", version: 1 });
+      assert.deepEqual(z.object({ acceptedBlanks: z.array(z.array(z.string())) }).parse(input.key).acceptedBlanks, acceptedBlanks);
+      assert.equal(input.questionVersion, 5);
+      return { status: "needsReview" };
+  }
+}
 
 const published = {
   id: "grouped-delivery", version: 1, formatVersion: 1, title: "可独立安装的题组",

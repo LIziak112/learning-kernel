@@ -6,7 +6,7 @@ import { readingPracticeSchema } from "../contracts/reading-publication.ts";
 import type { StartInput } from "../contracts/reading.ts";
 import { effectiveChoiceQuestions } from "./choice-snapshot-store.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const storedStart = startReceipt.extend({ practiceId: z.string(), practiceVersion: z.int(), prepared: z.literal([0, 1]), redoOf: z.uuid().nullable() });
 const storedActivity = startReceipt.extend({

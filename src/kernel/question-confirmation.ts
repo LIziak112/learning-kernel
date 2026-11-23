@@ -1,27 +1,27 @@
 import type { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import type {
   AuthorizeConfirmationRecovery, ChoiceConfirmation, ChoiceConfirmationInput, ConfirmationKey,
   ConfirmationScope, VerifyOriginal,
 } from "../contracts/choice-confirmation.ts";
 import type { QuestionDelivery } from "../contracts/question-delivery.ts";
-import { hasStoredResponse, sameStoredResponse } from "../contracts/response.ts";
-import type { IndexResponseConfirmation, ResponseConfirmation, StoredResponseValue } from "../contracts/response.ts";
+import type { ResponseConfirmation } from "../contracts/response.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { queueEvaluation } from "./evaluation.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { finishActivity, recordSubmission, submissionForOperation } from "./submission-store.ts";
 import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
 
 type QuestionRevision = ChoiceConfirmationInput["questions"][number];
 type ConfirmedValue<Key extends "choice" | "value"> = Pick<QuestionRevision, "revision" | "questionVersion">
-  & Record<Key, StoredResponseValue | null>;
+  & Record<Key, unknown>;
 
 export function confirmedDraftChangeCount<Key extends "choice" | "value">(
   question: ConfirmedValue<Key>, draft: (ConfirmedValue<Key> & { changeCount: number }) | undefined, field: Key,
 ) {
   if (question[field] === null) return 0;
-  if (draft?.revision !== question.revision || !sameStoredResponse(draft[field], question[field]) || draft.questionVersion !== question.questionVersion) {
+  if (draft?.revision !== question.revision || !isDeepStrictEqual(draft[field], question[field]) || draft.questionVersion !== question.questionVersion) {
     throw new Error("已确认作答缺少对应的草稿版本");
   }
   return draft.changeCount;
@@ -49,19 +49,17 @@ export function mapConfirmationQuestions<T>(
 
 export function writeQuestionConfirmation(
   database: DatabaseSync, activity: ReadingActivity, studentId: string, input: ChoiceConfirmationInput, targetId: string,
-  content: ChoiceConfirmation | ResponseConfirmation | IndexResponseConfirmation | QuestionDelivery, now: Date, verify?: VerifyOriginal,
+  content: ChoiceConfirmation | ResponseConfirmation | QuestionDelivery, now: Date, verify: VerifyOriginal | undefined,
   { slotId = input.slotId, finishes = true, answeredQuestionIds }:
-  { slotId?: string; finishes?: boolean; answeredQuestionIds?: ReadonlySet<string> } = {},
+  { slotId?: string; finishes?: boolean; answeredQuestionIds: ReadonlySet<string> },
 ) {
   const { activityId } = activity;
   const write = { ...input, slotId };
   const { stepAttemptId } = write;
   verifyQuestionOriginals(studentId, activityId, write, content.questions, verify);
   const draft = saveWorkVersion(database, workScope(activityId, stepAttemptId, slotId), content);
-  const observations = content.questions.filter(question => answeredQuestionIds
-    ? answeredQuestionIds.has(question.questionId)
-    : hasStoredResponse("choice" in question ? question.choice : question.value)
-  ).map(({ questionId }) => ({ targetId, unitId: `question:${questionId}` }));
+  const observations = content.questions.filter(question => answeredQuestionIds.has(question.questionId))
+    .map(({ questionId }) => ({ targetId, unitId: `question:${questionId}` }));
   const receipt = recordSubmission(database, { ...write, draft }, observations, now);
   if (content.kind !== "questionDelivery") queueEvaluation(database, activity, receipt, targetId, input.slotId);
   if (finishes) finishActivity(database, activityId, receipt.id);

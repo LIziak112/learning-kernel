@@ -1,18 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { CurrentChoiceDraftMode } from "../contracts/choice-draft.ts";
 import { questionDeliveryDraftValue } from "../contracts/question-delivery.ts";
-import type { QuestionDeliveryDraftInput } from "../contracts/question-delivery.ts";
+import { responseValue } from "../contracts/response.ts";
+import type { ResponseDraftRequest, ResponseValue } from "../contracts/response.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
 import { QuestionDraftConflict, readQuestionDraftHead, readQuestionDrafts } from "./question-draft-store.ts";
-import { boundOutput } from "./reading-progress.ts";
+import { boundOutput, requireAvailableTool } from "./reading-progress.ts";
+import { frozenResponseType } from "./question-types.ts";
+import type { Registry } from "./registry.ts";
 import { saveCurrentResponse } from "./response-drafts.ts";
 import { submittedSlots } from "./submission-store.ts";
 
-type Value = QuestionDeliveryDraftInput["value"];
+type Value = ResponseValue;
 
 export class QuestionDeliveryConflict extends QuestionDraftConflict<{ revision: number; value: Value | null }> {
   readonly questionId: string | undefined;
@@ -23,19 +26,19 @@ export class QuestionDeliveryConflict extends QuestionDraftConflict<{ revision: 
 }
 
 export function saveQuestionDeliveryDraft(
-  database: DatabaseSync, studentId: string, activityId: string, input: QuestionDeliveryDraftInput, mode: CurrentChoiceDraftMode, clock: () => Date,
+  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, input: ResponseDraftRequest,
+  mode: CurrentChoiceDraftMode, clock: () => Date,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
     if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
     const slot = requireQuestionDeliverySlot(activity, input.slotId);
-    const value = input.value;
+    requireAvailableTool(registry, activity.step, slot.type);
     const question = requireFrozenQuestion(activity, input);
-    requireDeliveryDraftValue(question, value);
+    const value = responseValue.parse(frozenResponseType(registry, activity.practice, question).parseValue(input.value, question));
     const slotId = questionDeliveryPosition(slot, input.slotId, input.questionId);
     if (submittedSlots(database, activity.stepAttemptId).has(slotId)) throw new LearningError(409, "ALREADY_SUBMITTED");
-    const draft = saveCurrentResponse(database, activityId, { ...input, slotId }, mode, clock,
-      { schema: questionDeliveryDraftValue, Conflict: QuestionDeliveryConflict });
+    const draft = saveCurrentResponse(database, activityId, { ...input, value, slotId }, mode, clock, QuestionDeliveryConflict);
     return { ...draft, slotId: input.slotId };
   });
 }
@@ -71,36 +74,4 @@ export function requireFrozenQuestion(activity: ReadingActivity, { questionId, q
   if (!question) throw new LearningError(422, "INVALID_QUESTION");
   if (question.version !== questionVersion) throw new LearningError(409, "QUESTION_REVISION_STALE");
   return question;
-}
-
-function requireDeliveryDraftValue(question: ReturnType<typeof requireFrozenQuestion>, value: Value) {
-  const { response, options } = question;
-  if (response === "booleanOrString") {
-    if (typeof value === "object") throw new LearningError(422, "INVALID_RESPONSE");
-    return;
-  }
-  if (response === "textWithOptionalTitle") {
-    if (typeof value !== "object" || Array.isArray(value)) throw new LearningError(422, "INVALID_RESPONSE");
-    return;
-  }
-  if (response === "orderedTextBlanks") {
-    if (!Array.isArray(value) || value.some(item => typeof item !== "string")) {
-      throw new LearningError(422, "INVALID_RESPONSE");
-    }
-    return;
-  }
-  requireFrozenOptions(response, options, value);
-}
-
-function requireFrozenOptions(
-  format: "choice" | "optionIndexArray" | undefined, options: Readonly<Record<string, string>>, value: Value,
-) {
-  if (format === "choice") {
-    if (typeof value !== "string" || !Object.hasOwn(options, value)) throw new LearningError(422, "INVALID_CHOICE");
-    return;
-  }
-  if (format !== "optionIndexArray") throw new Error("冻结的题缺少作答形态");
-  if (!Array.isArray(value) || value.some(index => typeof index !== "number" || !Object.hasOwn(options, String(index)))) {
-    throw new LearningError(422, "INVALID_OPTION_INDEX");
-  }
 }

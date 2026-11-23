@@ -14,6 +14,7 @@ import { materialSchema, startReceipt, submissionReceipt, versionRef } from "../
 import { readingAnswer, readingAnswerDraft, readingDraftReceipt, readingSelection } from "../src/contracts/reading-runtime.ts";
 import { createLearningServer } from "../src/host/server.ts";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const activityView = startReceipt.extend({
   formatVersion: z.literal(1),
@@ -287,11 +288,11 @@ test("交卷事务同时固定原答、活动完成和待评任务", async t => 
       UPDATE practices SET definition = json_set(definition, '$.grading.assessment.evaluator.id', ?) WHERE id = ?
     `);
     evaluator.run("unavailable-evaluator", reading.practice.id);
-    assert.throws(() => evaluatePending(database), /已发布评估器不可用/);
+    assert.throws(() => evaluatePending(database, defaultRegistry), /已发布评估器不可用/);
     assert.equal(database.prepare("SELECT status FROM evaluation_tasks").get()?.status, "pending");
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM automatic_verdicts").get()?.count, 0);
     evaluator.run(reading.practice.grading.assessment.evaluator.id, reading.practice.id);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     const complete = await readResult(get(origin, path), activityView.extend({
       status: z.literal("completed"),
       assessment: z.strictObject({ status: z.literal("complete"), correctCount: z.int(), questionCount: z.int() }),
@@ -454,7 +455,7 @@ test("盲批声明缩小范围后，活动和原提交只交付获准字段", as
     assert.deepEqual(await readResult(get(origin, path + "/submissions/" + receipt.id), z.unknown()), result.submission);
     assert.deepEqual(await readResult(get(origin, path + "/submissions/" + references.basis), z.unknown()), {});
     using database = new DatabaseSync(file);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     const delivered = await readResult(get(origin, path), z.object({ assessment: z.unknown() }));
     assert.deepEqual(delivered.assessment, { status: "complete", questionCount: 3 });
     const teacher = await get(origin, review, "reviewer");

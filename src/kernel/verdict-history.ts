@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { verdictReceipt } from "../contracts/verdict.ts";
 import type { VerdictCommand, VerdictLocation, VerdictReceipt } from "../contracts/verdict.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const storedEvent = verdictReceipt.extend({
   reviewerId: z.string(),

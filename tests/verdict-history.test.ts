@@ -8,6 +8,8 @@ import { openLearningRuntime } from "../src/server.ts";
 import type { VerdictCommand } from "../src/server.ts";
 import { frozenChoicePublication, questionVersions } from "./fixtures/frozen-choice.ts";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { choiceEvaluator } from "./fixtures/evaluators.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 import {
   countFacts, firstChoices, get, post, prepareAnswers, prepareScenario, readingState, rejection, result,
   scenarioDatabase, withScenarioServer, reviewerSessions,
@@ -46,7 +48,7 @@ test("同题连续改判｜修订 0 到 4 保留全部历史并按次序回落",
     const scope = { submissionId: receipt.id, targetId: "interpret", questionId: "q2" };
     const path = review + "/verdicts";
     using database = new DatabaseSync(file);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     const facts = countFacts(database);
     const first = {
       ...scope, action: "override", operationId: "review-1", expectedRevision: 0,
@@ -130,7 +132,7 @@ for (const allowed of ["gradingBasis", "verdictHistory"] as const) {
     await withScenarioServer(file, { publication }, async origin => {
       const { receipt, review } = await submittedScenario(origin);
       using database = new DatabaseSync(file);
-      evaluatePending(database);
+      evaluatePending(database, defaultRegistry);
       const command = {
         submissionId: receipt.id, targetId: "interpret", questionId: "q2",
         action: "override", operationId: "one", expectedRevision: 0, reason: "仅历史可读的依据", correct: true,
@@ -170,7 +172,7 @@ test("同题连续改判｜迟到初判保留来源，候选失效后回到整�
     assert.equal(revision.revision, 1);
     assert.deepEqual((await result(get(origin, scenario.path), readingState)).assessment, { status: "pending" });
     using database = new DatabaseSync(file);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     await score(origin, scenario.path, 2);
     const amended = (await result(get(origin, review, "teacher"), verdicts)).verdicts.find(row => row.questionId === "q2");
     assert.deepEqual(amended?.automatic, { correct: false, valid: true });
@@ -202,7 +204,7 @@ test("同题连续改判｜写入失败不占用修订或操作标识，原命�
     };
     const path = review + "/verdicts";
     using database = new DatabaseSync(file);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     database.exec(`
       CREATE TRIGGER invalid_review BEFORE INSERT ON verdict_events
       BEGIN SELECT RAISE(ABORT, 'test review failure'); END;
@@ -241,7 +243,7 @@ test("原单选连续改判后逐次撤销回落到上一条有效教师改判�
   assert.ok(first && second);
   const runtime = openLearningRuntime({
     databasePath: file,
-    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }) => choice === acceptedChoice }],
+    evaluators: [choiceEvaluator(evaluator, ({ choice, acceptedChoice }) => choice === acceptedChoice)],
     authorizeConfirmationRecovery: ({ studentId }) => studentId === student.id,
     authorizeChoiceConfirmationReview: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,
     authorizeChoiceConfirmationVerdict: scope => scope.reviewerId === reviewer.id && scope.studentId === student.id,

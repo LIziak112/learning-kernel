@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { choiceAndResponseFormat, orderedQuestionValues, orderedTextFormat, questionDeliveryMode, questionDeliveryReviewBasis, questionDeliveryScoringKey, titledTextFormat } from "./question-delivery.ts";
+import { orderedQuestionValues, questionDeliveryMode, questionDeliveryReviewBasis, questionDeliveryScoringKey } from "./question-delivery.ts";
 import { id, materialSchema, versionRef } from "./reading.ts";
-import { optionIndex, responseFormat } from "./response.ts";
 
 const nonempty = z.string().min(1);
 const descriptions = z.record(id, nonempty).refine(value => Object.keys(value).length > 0);
@@ -24,7 +23,7 @@ const slot = z.discriminatedUnion("type", [
     confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }).optional(),
   }),
   newEvidence.extend({
-    type: z.literal("oneResponsePerQuestion"), input: responseFormat,
+    type: z.literal("oneResponsePerQuestion"), input: id,
     confirmFromDrafts: z.strictObject({ allowUnanswered: z.boolean() }),
   }),
   newEvidence.extend({
@@ -88,25 +87,18 @@ const policy = z.strictObject({
   externalAi: z.literal("disabled"),
 });
 
-export const readingQuestion = z.strictObject({
-  id, version: versionRef.shape.version.optional(), prompt: nonempty, options: descriptions,
+export const questionFields = ["id", "version", "prompt", "options", "response"] as const;
+export const readingQuestion = z.looseObject({
+  id, version: versionRef.shape.version.optional(), prompt: nonempty, options: z.record(id, nonempty).default({}),
+  response: id.optional(),
 });
-const noOptions = z.record(id, z.never()).default({});
-const readingQuestions = z.discriminatedUnion("response", [
-  readingQuestion.extend({ response: choiceAndResponseFormat.optional() }),
-  readingQuestion.extend({
-    response: orderedTextFormat, blankCount: z.int().nonnegative(),
-    options: noOptions,
-  }),
-  readingQuestion.extend({ response: titledTextFormat, options: noOptions }),
-]);
 
 export const readingPracticeSchema = versionRef.extend({
   formatVersion: z.literal(1),
   title: nonempty,
   material: versionRef.optional(),
   goals: descriptions,
-  questions: z.array(readingQuestions).default([]),
+  questions: z.array(readingQuestion).default([]),
   questionAnswerRules: z.record(id, versionRef).transform(orderedQuestionValues).optional(),
   steps: z.tuple([step]).rest(step),
   grading: z.strictObject({
@@ -127,24 +119,21 @@ export const readingPracticeSchema = versionRef.extend({
   policy,
 });
 
-export const scoringKeySchema = versionRef.extend({
-  acceptedChoices: z.record(id, id).transform(orderedQuestionValues),
-});
-
-export const responseScoringKeySchema = versionRef.extend({
-  acceptedResponses: z.record(id, z.boolean()).transform(orderedQuestionValues),
-});
-export const indexResponseScoringKeySchema = versionRef.extend({
-  acceptedIndexes: z.record(id, z.array(optionIndex).min(1)).transform(orderedQuestionValues),
-});
+const keyedValues = z.record(id, z.json());
+const keyIdentity = new Set(["id", "version"]);
+export const wholePaperScoringKey = z.looseObject(versionRef.shape)
+  .refine(key => Object.entries(key).every(([field, value]) => keyIdentity.has(field) || keyedValues.safeParse(value).success),
+    "整卷评分键的字段须按题编号")
+  .transform(({ id: keyId, version, ...fields }) => ({
+    id: keyId, version,
+    ...Object.fromEntries(Object.entries(fields).map(([field, value]) => [field, orderedQuestionValues(keyedValues.parse(value))])),
+  }));
 
 export const readingPublicationSchema = z.strictObject({
   material: materialSchema.optional(),
   materials: z.array(materialSchema).min(1).optional(),
   practice: readingPracticeSchema,
-  scoringKey: z.union([
-    scoringKeySchema, responseScoringKeySchema, indexResponseScoringKeySchema, questionDeliveryScoringKey, questionDeliveryReviewBasis,
-  ]).optional(),
+  scoringKey: z.union([questionDeliveryScoringKey, questionDeliveryReviewBasis, wholePaperScoringKey]).optional(),
 });
 
 export type ReadingPublication = z.infer<typeof readingPublicationSchema>;

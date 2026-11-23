@@ -5,11 +5,11 @@ import { ZodError } from "zod";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
 import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { openLearningRuntime, QuestionDeliveryConflict } from "../src/server.ts";
-import type {
-  ChoiceConfirmationInput, ChoiceEvaluationInput, IndexResponseEvaluationInput, PublicationInput,
-  OrderedTextEvaluationInput, QuestionDeliveryInput, ResponseEvaluationInput, TitledTextEvaluationInput, VerifyOriginal,
-} from "../src/server.ts";
+import type { ChoiceConfirmationInput, PublicationInput, QuestionDeliveryInput, VerifyOriginal } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { booleanEvaluator, choiceEvaluator, combinedEvaluator, indexEvaluator, orderedTextEvaluator, titledTextEvaluator } from "./fixtures/evaluators.ts";
+import type { ChoiceInput, IndexInput, OrderedTextInput, ScalarInput, TitledTextInput } from "./fixtures/evaluators.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "delivery-learner" } as const;
 const outsider = { ...student, id: "other-learner" };
@@ -81,25 +81,30 @@ function responseGroup(id: string, input: "booleanOrString" | "optionIndexArray"
   } satisfies PublicationInput;
 }
 
-type EvaluationInput = ChoiceEvaluationInput | ResponseEvaluationInput | IndexResponseEvaluationInput;
-function settings(databasePath: string, canRecover = () => true, observe?: (input: EvaluationInput) => void) {
-  return { databasePath, authorizeConfirmationRecovery: () => canRecover(),
-    choiceEvaluators: [{ ...evaluator, evaluate: (input: ChoiceEvaluationInput) => {
+type EvaluationInput = ChoiceInput | ScalarInput | IndexInput;
+function deliveryEvaluators(observe?: (input: EvaluationInput) => void, reference = evaluator) {
+  return {
+    choice: choiceEvaluator(reference, input => {
       observe?.(input);
       return input.choice === input.acceptedChoice;
-    } }],
-    responseEvaluators: [{ ...evaluator, evaluate: (input: ResponseEvaluationInput) => {
+    }),
+    scalar: booleanEvaluator(reference, input => {
       observe?.(input);
       return typeof input.value === "string" ? { status: "needsReview" as const } :
         { status: "judged" as const, correct: input.value === input.acceptedResponse };
-    } }],
-    indexResponseEvaluators: [{ ...evaluator, evaluate: (input: IndexResponseEvaluationInput) => {
+    }),
+    indexes: indexEvaluator(reference, input => {
       observe?.(input);
       const { value, acceptedIndexes } = input;
       return { status: "judged" as const, correct: value !== null && new Set(value).size === new Set(acceptedIndexes).size &&
         acceptedIndexes.every(index => value.includes(index)) };
-    } }],
+    }),
   };
+}
+
+function settings(databasePath: string, canRecover = () => true, observe?: (input: EvaluationInput) => void) {
+  const { choice, scalar, indexes } = deliveryEvaluators(observe);
+  return { databasePath, authorizeConfirmationRecovery: () => canRecover(), evaluators: [combinedEvaluator(choice, scalar, indexes)] };
 }
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
@@ -168,11 +173,11 @@ test("K16 公开入口的纯单选、纯标量和纯索引数组均能各自确�
     ]);
 
     const multi = open(runtime, "pure-indexes");
-    const chosen = runtime.saveIndexResponseDraft(student, multi.activityId, { ...target(multi, selectedIndexes), value: [2, 0, 2] });
-    const blank = runtime.saveIndexResponseDraft(student, multi.activityId, { ...target(multi, emptyIndexes), value: [] });
+    const chosen = runtime.saveResponseDraft(student, multi.activityId, { ...target(multi, selectedIndexes), value: [2, 0, 2] });
+    const blank = runtime.saveResponseDraft(student, multi.activityId, { ...target(multi, emptyIndexes), value: [] });
     const multiInput = intent(multi, [revision(selectedIndexes, chosen.revision), revision(emptyIndexes, blank.revision), revision(noDraft, 0)]);
-    const multiReceipt = runtime.confirmIndexResponses(student, multi.activityId, multiInput);
-    const multiResult = runtime.recoverIndexResponseConfirmation(student, multi.activityId, recoveryKey(multiInput));
+    const multiReceipt = runtime.confirmResponses(student, multi.activityId, multiInput);
+    const multiResult = runtime.recoverResponseConfirmation(student, multi.activityId, recoveryKey(multiInput));
     assert.deepEqual(multiResult.receipt, multiReceipt);
     assert.deepEqual(multiResult.confirmation.questions.map(item => item.value), [[2, 0, 2], [], null]);
     assert.equal(runtime.read(student, multi.activityId).status, "completed");
@@ -423,7 +428,7 @@ test("A 同组混合作答原子确认，按冻结私钥评估并重开取回同
     direct.exec("DROP TRIGGER reject_task");
 
     receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
-    evaluatePending(direct);
+    evaluatePending(direct, defaultRegistry);
     assert.equal(direct.prepare("SELECT status FROM evaluation_tasks WHERE submission_id = ?").get(receipt.id)?.status, "pending");
     assert.deepEqual(runtime.confirmQuestionDelivery(student, activity.activityId, { ...input, questions: input.questions.toReversed() }), receipt);
     assert.throws(() => runtime.confirmQuestionDelivery(student, activity.activityId, { ...input, source: "finish" }),
@@ -629,8 +634,7 @@ test("B 同一活动逐题交、主动空交、关机复读，早收余稿和被
 
 test("逐题末次确认直接完成，未配置当前授权时两种回取入口都拒绝", t => {
   const databasePath = scenarioDatabase(t);
-  const { choiceEvaluators } = settings(databasePath);
-  const runtime = openLearningRuntime({ databasePath, choiceEvaluators });
+  const runtime = openLearningRuntime({ databasePath, evaluators: [deliveryEvaluators().choice] });
   try {
     const publication = sequentialGroup("last-question", [strictChoice, nextChoice], false);
     publication.practice.policy.student.ownSubmission.fields = ["receipt"];
@@ -659,7 +663,8 @@ test("逐题末次确认直接完成，未配置当前授权时两种回取入�
 
 test("发布校验拒绝逐题位置撞卷槽、缺少精确评估版本及私有键不匹配，失败不登记", t => {
   const databasePath = scenarioDatabase(t);
-  const runtime = openLearningRuntime({ ...settings(databasePath), indexResponseEvaluators: [] });
+  const { choice, scalar } = deliveryEvaluators();
+  const runtime = openLearningRuntime({ ...settings(databasePath), evaluators: [combinedEvaluator(choice, scalar)] });
   try {
     const mixed = mixedGroup();
     const sequential = sequentialGroup("per-question");
@@ -740,19 +745,20 @@ function orderedTextGroup(version = 1, allowUnanswered = true) {
   } satisfies PublicationInput;
 }
 
-function orderedTextSettings(databasePath: string, canRecover: () => boolean, observed: OrderedTextEvaluationInput[]) {
+function orderedTextSettings(databasePath: string, canRecover: () => boolean, observed: OrderedTextInput[]) {
+  const { choice, scalar, indexes } = deliveryEvaluators();
   return {
     ...settings(databasePath, canRecover),
-    orderedTextEvaluators: [{ ...evaluator, evaluate: (input: OrderedTextEvaluationInput) => {
+    evaluators: [combinedEvaluator(choice, scalar, indexes, orderedTextEvaluator(evaluator, input => {
       observed.push(input);
       return input.questionId === "extra" ? { status: "judged", correct: false } as const : { status: "needsReview" } as const;
-    } }],
+    }))],
   };
 }
 
 test("有序文本空位与客观题共用整卷确认，保存原值并以旧版私有键评估", t => {
   const databasePath = scenarioDatabase(t);
-  const observed: OrderedTextEvaluationInput[] = [];
+  const observed: OrderedTextInput[] = [];
   let authorized = true;
   const config = orderedTextSettings(databasePath, () => authorized, observed);
   const runtime = openLearningRuntime(config);
@@ -943,8 +949,13 @@ test("带可选标题的正文发布要求专用精确版本评估器", t => {
 });
 
 
-function titledSettings(databasePath: string, evaluate: (input: TitledTextEvaluationInput) => { status: "needsReview" } = () => ({ status: "needsReview" })) {
-  return { ...settings(databasePath), titledTextEvaluators: [{ ...evaluator, evaluate }] };
+function titledEvaluator(reference: typeof evaluator, evaluate: (input: TitledTextInput) => { status: "needsReview" }) {
+  const { choice, scalar, indexes } = deliveryEvaluators(undefined, reference);
+  return combinedEvaluator(choice, scalar, indexes, titledTextEvaluator(reference, evaluate));
+}
+
+function titledSettings(databasePath: string, evaluate: (input: TitledTextInput) => { status: "needsReview" } = () => ({ status: "needsReview" })) {
+  return { ...settings(databasePath), evaluators: [titledEvaluator(evaluator, evaluate)] };
 }
 
 test("必答按正文拒绝仅标题，拒绝不写确认、评估任务或表现", t => {
@@ -986,7 +997,7 @@ test("必答按正文拒绝仅标题，拒绝不写确认、评估任务或表�
 
 test("文字原稿精确重开，缺稿与空正文分离，旧版回执和评估仅执行一次", t => {
   const databasePath = scenarioDatabase(t);
-  const recorded: TitledTextEvaluationInput[] = [];
+  const recorded: TitledTextInput[] = [];
   let mayRecover = true;
   const evaluationV2 = { ...evaluator, version: 2 };
   const baseConfig = titledSettings(databasePath, input => {
@@ -995,7 +1006,7 @@ test("文字原稿精确重开，缺稿与空正文分离，旧版回执和评�
   });
   const config = {
     ...baseConfig, authorizeConfirmationRecovery: () => mayRecover,
-    titledTextEvaluators: [...baseConfig.titledTextEvaluators, { ...evaluationV2, evaluate() { throw new Error("须使用冻结评估版本"); } }],
+    evaluators: [...baseConfig.evaluators, titledEvaluator(evaluationV2, () => { throw new Error("须使用冻结评估版本"); })],
   };
   const questions = ["empty", "whitespace", "omitted-title", "empty-title", "missing"].map(id => ({ ...writtenQuestion, id }));
   const body = "  第一段\n\n第二段  ";
@@ -1025,7 +1036,7 @@ test("文字原稿精确重开，缺稿与空正文分离，旧版回执和评�
     } finally { runtime.close(); }
   })();
   const { activity, request } = activityAndRequest;
-  const write = openLearningRuntime({ ...config, titledTextEvaluators: config.titledTextEvaluators.slice(1) });
+  const write = openLearningRuntime({ ...config, evaluators: config.evaluators.slice(1) });
   let receipt: ReturnType<Runtime["confirmQuestionDelivery"]>;
   const key = recoveryKey(request);
   try {
@@ -1100,7 +1111,8 @@ test("文字值和私有形态严格隔离，空标题变化单独推进修订",
     const activity = open(runtime, written.practice.id);
     const input = target(activity, writtenQuestion);
     for (const value of [{ title: "无正文" }, { body: 2 }, { body: "", title: null }, { body: "", title: 4 }, { body: "", kind: "其它" }, null]) {
-      assert.throws(() => Reflect.apply(runtime.saveQuestionDeliveryDraft, runtime, [student, activity.activityId, { ...input, value }]), ZodError);
+      assert.throws(() => Reflect.apply(runtime.saveQuestionDeliveryDraft, runtime, [student, activity.activityId, { ...input, value }]),
+        { status: 422, code: "INVALID_RESPONSE" });
     }
     for (const value of ["纯字符串", false, [0], ["原槽"], []]) {
       assert.throws(() => runtime.saveQuestionDeliveryDraft(student, activity.activityId, { ...input, value }),
@@ -1123,7 +1135,8 @@ test("文字值和私有形态严格隔离，空标题变化单独推进修订",
 
     const plain = open(runtime, scalar.practice.id);
     const scalarInput = { ...target(plain, judgeQuestion), value: { body } };
-    assert.throws(() => Reflect.apply(runtime.saveResponseDraft, runtime, [student, plain.activityId, scalarInput]), ZodError);
+    assert.throws(() => Reflect.apply(runtime.saveResponseDraft, runtime, [student, plain.activityId, scalarInput]),
+      { status: 422, code: "INVALID_RESPONSE" });
     assert.throws(() => runtime.saveQuestionDeliveryDraft(student, plain.activityId, scalarInput),
       { status: 422, code: "INVALID_SLOT" });
     const mixed = mixedGroup();
@@ -1297,11 +1310,8 @@ test("切换失败回滚草稿和回执，成功往返拒绝陈旧步骤并跨�
 test("切换只能改变题组交付范围，目标题面、材料、评估器和私有评分键仍按原冻结", t => {
   const databasePath = scenarioDatabase(t);
   const fixture = settings(databasePath);
-  const extraEvaluators = fixture.choiceEvaluators?.map(item => ({ ...item, version: 2 })) ?? [];
-  const extraResponses = fixture.responseEvaluators?.map(item => ({ ...item, version: 2 })) ?? [];
   const runtime = openLearningRuntime({ ...fixture,
-    choiceEvaluators: [...fixture.choiceEvaluators ?? [], ...extraEvaluators],
-    responseEvaluators: [...fixture.responseEvaluators ?? [], ...extraResponses],
+    evaluators: [...fixture.evaluators, ...fixture.evaluators.map(item => ({ ...item, version: 2 }))],
   });
   try {
     const original = switchableDelivery("whole", 1);

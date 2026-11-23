@@ -3,7 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
 import { openLearningRuntime } from "../src/server.ts";
-import type { ChoiceEvaluator, PublicationInput } from "../src/server.ts";
+import type { PublicationInput } from "../src/server.ts";
+import { choiceEvaluator } from "./fixtures/evaluators.ts";
 import { frozenChoicePublication } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
@@ -11,7 +12,6 @@ const student = { role: "student", id: "learner" } as const;
 const practiceId = "fixed-reading-pair";
 const protocolVersion = 1;
 const evaluator = { id: "frozen-choice-evaluator", version: 1 };
-const evaluate: ChoiceEvaluator = input => input.choice === input.acceptedChoice;
 const first = { id: "first-reading", version: 1, source: "第一来源", title: "第一份材料",
   paragraphs: [{ id: "opening", text: "第一份材料的固定正文。" }] };
 const second = { id: "second-reading", version: 1, source: "第二来源", title: "第二份材料",
@@ -42,7 +42,7 @@ function publishedPair(secondMaterial = second, version = 1) {
 
 type Runtime = ReturnType<typeof openLearningRuntime>;
 const settings = (databasePath: string) => ({
-  databasePath, choiceEvaluators: [{ ...evaluator, evaluate }],
+  databasePath, evaluators: [choiceEvaluator(evaluator, input => input.choice === input.acceptedChoice)],
   authorizeConfirmationRecovery: ({ studentId, operationId }: { studentId: string; operationId: string }) =>
     studentId === student.id && operationId === "confirm",
 });

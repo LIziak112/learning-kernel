@@ -47,7 +47,7 @@ function publication(material = second, version = 1) {
 }
 
 const runtime = openLearningRuntime({ databasePath: "material-pair.sqlite",
-  choiceEvaluators: [{ ...evaluator, evaluate: input => input.choice === input.acceptedChoice }],
+  evaluators: [{ ...evaluator, responseTypes: ["choice"], evaluate: ({ value, key }) => ({ status: "judged", correct: value === z.object({ acceptedChoice: z.string() }).parse(key).acceptedChoice }) }],
 });
 const opening = (practiceVersion: number) => ({
   protocolVersion, practiceId, practiceVersion, operationId: `open-${practiceVersion}`,

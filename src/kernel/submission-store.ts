@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { draftReceipt, submissionReceipt } from "../contracts/reading.ts";
 import type { SubmitInput } from "../contracts/reading.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 export function submissionForOperation(database: DatabaseSync, input: Pick<SubmitInput, "stepAttemptId" | "operationId">) {
   const row = database.prepare(`

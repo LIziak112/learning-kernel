@@ -3,8 +3,9 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
 import { openLearningRuntime } from "../src/server.ts";
-import type { PublicationInput, QuestionDeliveryInput, ResponseValue, TitledTextResponseValue } from "../src/server.ts";
+import type { PublicationInput, QuestionDeliveryInput, ResponseValue } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { answerRule, booleanEvaluator, combinedEvaluator, scalarValue, titledTextEvaluator, titledValue } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "rule-student" } as const;
 const outsider = { ...student, id: "rule-outsider" };
@@ -18,6 +19,7 @@ const slotId = "answers";
 type Runtime = ReturnType<typeof openLearningRuntime>;
 type Activity = ReturnType<Runtime["start"]>;
 type Question = { id: string } & (Omit<typeof judge, "id"> | Omit<typeof written, "id">);
+type TitledTextResponseValue = { body: string; title?: string };
 type Answer = ResponseValue | TitledTextResponseValue;
 type RuleRef = typeof scalarRule;
 
@@ -60,8 +62,8 @@ function publication(
 function baseSettings(databasePath: string, canRecover = () => true) {
   return {
     databasePath, authorizeConfirmationRecovery: canRecover,
-    responseEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" as const }) }],
-    titledTextEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" as const }) }],
+    evaluators: [combinedEvaluator(booleanEvaluator(evaluator, () => ({ status: "needsReview" as const })),
+      titledTextEvaluator(evaluator, () => ({ status: "needsReview" as const })))],
   };
 }
 
@@ -123,13 +125,13 @@ test("旧题组没有冻结规则时，两个空格和 false 均沿用原回执�
 
 test("冻结标量已答规则拒绝两个空格，false 确认一次并登记一次表现", t => {
   const databasePath = scenarioDatabase(t);
-  const observed: ResponseValue[] = [];
+  const observed: (boolean | string)[] = [];
   const runtime = openLearningRuntime({
     ...baseSettings(databasePath),
-    questionAnswerRules: [{ ...scalarRule, response: "booleanOrString", isAnswered(value: ResponseValue) {
+    questionAnswerRules: [answerRule(scalarRule, "booleanOrString", scalarValue, value => {
       observed.push(value);
       return typeof value === "boolean" || value.trim() !== "";
-    } }],
+    })],
   });
   try {
     const published = publication("rule-scalar", { questionAnswerRules: { [judge.id]: scalarRule } });
@@ -163,15 +165,13 @@ test("允许空答时标题原样冻结，只有正文登记表现，回取与�
   });
   const config = baseSettings(databasePath);
   const runtime = openLearningRuntime({
-    ...config, questionAnswerRules: [{ ...titleRule, response: "textWithOptionalTitle",
-      isAnswered(value: Readonly<TitledTextResponseValue>) {
-        observed.push(value);
-        return value.body.trim() !== "";
-      },
-    }, { ...scalarRule, response: "booleanOrString", isAnswered(value: ResponseValue) {
+    ...config, questionAnswerRules: [answerRule(titleRule, "textWithOptionalTitle", titledValue, value => {
+      observed.push(value);
+      return value.body.trim() !== "";
+    }), answerRule(scalarRule, "booleanOrString", scalarValue, value => {
       observedScalar.push(value);
       return typeof value === "boolean" || value.trim() !== "";
-    } }],
+    })],
   });
   let activity: Activity;
   let confirmation: ReturnType<typeof request>;
@@ -226,8 +226,8 @@ test("规则以冻结发布版本为准，缺失注册、错形态或异常结�
   const visits: number[] = [];
   const placeholder = "  合成占位词  ";
   const registrations = [
-    { ...scalarRule, response: "booleanOrString", isAnswered: () => { visits.push(1); return true; } },
-    { ...scalarV2, response: "booleanOrString", isAnswered: value => { visits.push(2); return value !== placeholder; } },
+    { ...scalarRule, responseType: "booleanOrString", isAnswered: () => { visits.push(1); return true; } },
+    { ...scalarV2, responseType: "booleanOrString", isAnswered: value => { visits.push(2); return value !== placeholder; } },
   ] satisfies NonNullable<Parameters<typeof openLearningRuntime>[0]["questionAnswerRules"]>;
   const config = baseSettings(databasePath);
   const runtime = openLearningRuntime({ ...config, questionAnswerRules: registrations });
@@ -256,7 +256,7 @@ test("规则以冻结发布版本为准，缺失注册、错形态或异常结�
 
   const expected = { submissions: 1, completions: 1, evaluation_tasks: 1, performances: 1 };
   for (const questionAnswerRules of [[], registrations.slice(0, 1),
-    [{ ...scalarV2, response: "textWithOptionalTitle", isAnswered: () => true }] as const,
+    [{ ...scalarV2, responseType: "textWithOptionalTitle", isAnswered: () => true }] as const,
   ]) {
     const reopened = openLearningRuntime({ ...config, questionAnswerRules: [...questionAnswerRules] });
     try {
@@ -266,7 +266,7 @@ test("规则以冻结发布版本为准，缺失注册、错形态或异常结�
     } finally { reopened.close(); }
   }
   const malformed = Reflect.apply(openLearningRuntime, undefined, [{
-    ...config, questionAnswerRules: [{ ...scalarV2, response: "booleanOrString", isAnswered: () => "truthy" }],
+    ...config, questionAnswerRules: [{ ...scalarV2, responseType: "booleanOrString", isAnswered: () => "truthy" }],
   }]) as Runtime;
   try {
     assert.throws(() => malformed.confirmQuestionDelivery(student, current.activityId, input), ZodError);
@@ -279,9 +279,9 @@ test("规则以冻结发布版本为准，缺失注册、错形态或异常结�
 test("发布只绑定已冻结题和精确形态，拒绝未注册规则与纯作答槽", t => {
   const databasePath = scenarioDatabase(t);
   const config = baseSettings(databasePath);
-  const scalar = { ...scalarRule, response: "booleanOrString" as const, isAnswered: () => true };
-  const writtenRule = { ...titleRule, response: "textWithOptionalTitle" as const, isAnswered: () => true };
-  assert.throws(() => openLearningRuntime({ ...config, questionAnswerRules: [scalar, scalar] }), ZodError);
+  const scalar = { ...scalarRule, responseType: "booleanOrString", isAnswered: () => true };
+  const writtenRule = { ...titleRule, responseType: "textWithOptionalTitle", isAnswered: () => true };
+  assert.throws(() => openLearningRuntime({ ...config, questionAnswerRules: [scalar, scalar] }), /已答规则重复登记/);
   const runtime = openLearningRuntime({ ...config, questionAnswerRules: [scalar, writtenRule] });
   try {
     const good = publication("bound-judgment", { questionAnswerRules: { [judge.id]: scalarRule } });
@@ -312,11 +312,11 @@ test("逐题确认和收尾只计算本次交付，忽略此前已确认的规�
   const databasePath = scenarioDatabase(t);
   const observed: string[] = [];
   const runtime = openLearningRuntime({ ...baseSettings(databasePath), questionAnswerRules: [
-    { ...scalarRule, response: "booleanOrString", isAnswered: () => { observed.push(judge.id); return true; } },
-    { ...titleRule, response: "textWithOptionalTitle", isAnswered: ({ body }) => {
+    { ...scalarRule, responseType: "booleanOrString", isAnswered: () => { observed.push(judge.id); return true; } },
+    answerRule(titleRule, "textWithOptionalTitle", titledValue, ({ body }) => {
       observed.push(written.id);
       return body.trim() !== "";
-    } },
+    }),
   ] });
   try {
     const group = publication("rule-per-question", { allowUnanswered: true, questions: [judge, written],

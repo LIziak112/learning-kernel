@@ -29,6 +29,6 @@ writeFileSync(join(output, "package.json"), JSON.stringify({
   name: project.name, version: project.version, private: true, type: "module",
   engines: project.engines, dependencies: project.dependencies,
   exports: { ".": { types: "./src/server.d.ts", node: "./src/server.js" } },
-  files: ["src/server.js", "src/server.d.ts", "src/builtins", "src/contracts", "src/kernel"],
+  files: ["src/server.js", "src/server.d.ts", "src/contracts", "src/extensions", "src/kernel"],
 }, null, 2) + "\n");
 console.log(`运行产物 ${output}`);

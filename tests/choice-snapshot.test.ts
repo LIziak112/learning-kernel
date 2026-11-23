@@ -8,6 +8,8 @@ import { ChoiceDraftConflict, ChoiceSnapshotRevisionConflict, LearningError, ope
 import type { ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, PublicationInput } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { choiceEvaluator } from "./fixtures/evaluators.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "author" } as const;
 const teacher = { role: "reviewer", id: "adviser" } as const;
@@ -33,7 +35,7 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
   let access = true;
   let external = false;
   const runtime = openLearningRuntime({ databasePath: path,
-    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }) => choice === acceptedChoice }],
+    evaluators: [choiceEvaluator(evaluator, ({ choice, acceptedChoice }) => choice === acceptedChoice)],
     authorizeChoiceSnapshotRevision: scope => access && scope.reviewerId === teacher.id && scope.studentId === student.id,
     hasChoiceSnapshotEvidence: scope => { checked.push(scope); return external; },
     authorizeChoiceDraftAmendment: () => true,
@@ -153,7 +155,7 @@ test("逐题勘误保留来源，题面修订与教师答案修正共同升版�
 test("内核已存整步草稿和撤权也能拒绝新勘误", t => {
   const path = scenarioDatabase(t);
   const runtime = openLearningRuntime({ databasePath: path,
-    choiceEvaluators: [{ ...evaluator, evaluate: () => false }],
+    evaluators: [choiceEvaluator(evaluator, () => false)],
     authorizeChoiceSnapshotRevision: () => true,
     hasChoiceSnapshotEvidence: () => false,
   });
@@ -162,7 +164,7 @@ test("内核已存整步草稿和撤权也能拒绝新勘误", t => {
     using database = new DatabaseSync(path);
     const { activityId, stepAttemptId } = startActivity(database, student.id, opening, () => new Date(), teacher.id);
     const scope = { protocolVersion: 1, stepAttemptId, slotId: "answers" } as const;
-    saveDraft(database, student.id, activityId, { ...scope, choices: { [firstId]: "0" }, references: {} });
+    saveDraft(database, defaultRegistry, student.id, activityId, { ...scope, choices: { [firstId]: "0" }, references: {} });
     const input = { ...scope, questionId: firstId, questionVersion: 1, operationId: "change", baseRevision: 0,
       prompt: "New question", options: { "1": "Correct" }, acceptedChoice: "1", reason: "Clarification",
     };

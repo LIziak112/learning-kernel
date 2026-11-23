@@ -6,9 +6,10 @@ import type { ReadingActivity } from "./activity.ts";
 import { recordChoiceDraftChange } from "./choice-draft-activity.ts";
 import { choiceRevisionBeforeAnswers } from "./choice-snapshot-store.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { questionDeliverySlot } from "./question-delivery-publication.ts";
-import { boundOutput } from "./reading-progress.ts";
+import { boundOutput, writableOutput } from "./reading-progress.ts";
+import type { Registry } from "./registry.ts";
 import { saveWorkVersion } from "./work-versions.ts";
 import {
   isLatestQuestionDraftOperation, publicDraft as draftReceipt, QuestionDraftConflict, readQuestionDraftHead, readQuestionDraftOperation,
@@ -27,10 +28,11 @@ type DraftInput = ChoiceDraftInput | UnversionedChoiceDraftInput;
 type DraftQuestion = ReadingActivity["practice"]["questions"][number];
 
 export function saveChoiceDraft(
-  database: DatabaseSync, student: string, activityId: string, input: DraftInput, clock: () => Date,
+  database: DatabaseSync, registry: Registry, student: string, activityId: string, input: DraftInput, clock: () => Date,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, student, activityId, input.stepAttemptId);
+    writableOutput(registry, activity.step, input.slotId);
     if (questionDeliverySlot(activity.step) || activity.step.submit.slots[input.slotId]?.type === "oneResponsePerQuestion") {
       throw new LearningError(422, "INVALID_SLOT");
     }
@@ -41,10 +43,12 @@ export function saveChoiceDraft(
 }
 
 export function saveCurrentChoiceDraft(
-  database: DatabaseSync, student: string, activityId: string, input: DraftInput, mode: CurrentChoiceDraftMode, clock: () => Date,
+  database: DatabaseSync, registry: Registry, student: string, activityId: string, input: DraftInput, mode: CurrentChoiceDraftMode,
+  clock: () => Date,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, student, activityId, input.stepAttemptId);
+    writableOutput(registry, activity.step, input.slotId);
     const question = requireDraftQuestion(activity, input);
     if (input.operationId !== undefined) return draftReceipt(saveAtCurrentHead(database, activityId, question, input, mode, clock));
     requireSaveMode(mode);

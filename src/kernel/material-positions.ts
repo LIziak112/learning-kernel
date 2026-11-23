@@ -3,11 +3,12 @@ import { z } from "zod";
 import { materialSchema } from "../contracts/reading.ts";
 import type { Material, VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingStep } from "../contracts/reading-publication.ts";
+import type { Registry } from "./registry.ts";
 
 type Issue = (path: (string | number)[], message: string) => void;
 type MaterialUse = { reference: VersionRef | undefined; path: (string | number)[] };
 
-export function validateMaterialPositions({ material, materials, practice }: ReadingPublication, issue: Issue) {
+export function validateMaterialPositions({ material, materials, practice }: ReadingPublication, registry: Registry, issue: Issue) {
   const uses = materialUses(practice.steps);
   if (materials === undefined) {
     if (uses.length > 0 && !practice.material) issue(["practice", "material"], "绑定材料输入时须声明材料版本");
@@ -17,7 +18,7 @@ export function validateMaterialPositions({ material, materials, practice }: Rea
     return;
   }
   if (material || practice.material) issue(["materials"], "显式材料位置不能与旧单材料声明混用");
-  requireSingleAnswerStep(practice.steps, issue);
+  requireSingleAnswerStep(practice.steps, registry, issue);
   validateMaterialClosure(materials, uses, issue);
 }
 
@@ -27,11 +28,10 @@ function materialUses(steps: readonly ReadingStep[]): MaterialUse[] {
     : []));
 }
 
-function requireSingleAnswerStep(steps: ReadingPublication["practice"]["steps"], issue: Issue) {
+function requireSingleAnswerStep(steps: ReadingPublication["practice"]["steps"], registry: Registry, issue: Issue) {
   const [step] = steps;
-  if (steps.length !== 1 || step.submit.purpose !== "finalAnswer" ||
-    (step.tool.id !== "single-choice-group" && step.tool.id !== "question-delivery")) {
-    issue(["practice", "steps"], "显式材料位置须绑定到单步单选或题组交付的最终作答");
+  if (steps.length !== 1 || step.submit.purpose !== "finalAnswer" || registry.tool(step.tool)?.supportsMaterialPositions !== true) {
+    issue(["practice", "steps"], "显式材料位置须绑定到声明支持材料位置的工具的单步最终作答");
   }
 }
 

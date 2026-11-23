@@ -2,16 +2,19 @@ import type { DatabaseSync } from "node:sqlite";
 import { draftReceipt, selectionSchema } from "../contracts/reading.ts";
 import type { ActivityDetail, SaveInput, SubmitInput } from "../contracts/reading.ts";
 import type { ReadingAnswerInput, ReadingSaveInput } from "../contracts/reading-runtime.ts";
-import { selectText } from "../builtins/selection.ts";
+import { selectText } from "./material-selection.ts";
 import { loadStudentActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { readChoiceDrafts } from "./choice-drafts.ts";
 import { readOpenDeliveryDrafts } from "./question-delivery-drafts.ts";
 import { questionDeliverySlot } from "./question-delivery-publication.ts";
-import { indexResponseDrafts, readResponseDrafts, scalarResponseDrafts } from "./response-drafts.ts";
+import { readResponseDrafts } from "./response-drafts.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
-import { confirmReadingDraft, readingActivityView, saveReadingAnswer, saveReadingSelection, studentSubmissionView } from "./reading-progress.ts";
+import { LearningError } from "../contracts/learning-error.ts";
+import {
+  confirmReadingDraft, readingActivityView, requireAvailableTool, saveReadingAnswer, saveReadingSelection, studentSubmissionView,
+} from "./reading-progress.ts";
+import type { Registry } from "./registry.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
 import { studentResults } from "./student-results.ts";
 import { activitySubmissions, finishActivity, recordSubmission, recoverReceipt } from "./submission-store.ts";
@@ -20,15 +23,17 @@ import { loadWorkVersion, saveWorkVersion } from "./work-versions.ts";
 
 export function saveDraft(
   database: DatabaseSync,
+  registry: Registry,
   student: string,
   activityId: string,
   input: SaveInput | ReadingSaveInput | ReadingAnswerInput,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentActivity(database, student, activityId);
-    if ("ranges" in input && activity.kind === "reading") return saveReadingSelection(database, activity, input);
-    if ("choices" in input && activity.kind === "reading") return saveReadingAnswer(database, activity, input);
+    if ("ranges" in input && activity.kind === "reading") return saveReadingSelection(database, registry, activity, input);
+    if ("choices" in input && activity.kind === "reading") return saveReadingAnswer(database, registry, activity, input);
     if ("range" in input && activity.kind === "single") {
+      requireAvailableTool(registry, activity.step, "textRange");
       const selection = selectText(activity.material, activity.step, input.range);
       const draft = saveWorkVersion(database, { activityId }, selection, input.workId);
       return draftReceipt.parse({ draft, selection });
@@ -38,15 +43,17 @@ export function saveDraft(
 }
 
 export function submitDraft(
-  database: DatabaseSync, student: string, activityId: string, input: SubmitInput, clock: () => Date, checkpoint?: RuntimeCheckpoint,
+  database: DatabaseSync, registry: Registry, student: string, activityId: string, input: SubmitInput, clock: () => Date,
+  checkpoint?: RuntimeCheckpoint,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentActivity(database, student, activityId);
-    if (activity.kind === "reading") return confirmReadingDraft(database, activity, input, clock, checkpoint);
+    if (activity.kind === "reading") return confirmReadingDraft(database, registry, activity, input, clock, checkpoint);
     if (activity.stepAttemptId !== input.stepAttemptId) throw new LearningError(403, "FORBIDDEN");
     const repeated = recoverReceipt(database, input);
     if (repeated) return repeated;
     if (input.slotId !== activity.step.slotId) throw new LearningError(422, "INVALID_SLOT");
+    requireAvailableTool(registry, activity.step, "textRange");
     if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
     loadWorkVersion(database, { activityId }, input.draft);
     const receipt = recordSubmission(database, input, [{ targetId: activity.step.targetId, unitId: "wholeSelection" }], clock());
@@ -73,11 +80,7 @@ function legacyReadingActivityView(database: DatabaseSync, activity: ReadingActi
   if (activity.completed) return view;
   const response = Object.values(activity.step.submit.slots).find(slot => slot.type === "oneResponsePerQuestion");
   if (response) {
-    if (response.input === "optionIndexArray") {
-      const indexResponseDraftsView = readResponseDrafts(database, activityId, activity.stepAttemptId, indexResponseDrafts);
-      return indexResponseDraftsView.length > 0 ? { ...view, indexResponseDrafts: indexResponseDraftsView } : view;
-    }
-    const responseDrafts = readResponseDrafts(database, activityId, activity.stepAttemptId, scalarResponseDrafts);
+    const responseDrafts = readResponseDrafts(database, activityId, activity.stepAttemptId);
     return responseDrafts.length > 0 ? { ...view, responseDrafts } : view;
   }
   const { stepAttemptId, choiceSnapshotRevisions } = activity;

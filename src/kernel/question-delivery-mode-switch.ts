@@ -5,7 +5,7 @@ import { questionDeliveryReviewBasis, questionDeliveryScoringKey } from "../cont
 import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication } from "../contracts/reading-publication.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { questionDeliveryPosition } from "./question-delivery-drafts.ts";
 import { questionDeliverySlot } from "./question-delivery-publication.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";

@@ -14,6 +14,7 @@ import { evaluatePending } from "../../src/kernel/evaluation.ts";
 import publication from "../../practices/single-quote.json" with { type: "json" };
 import reading from "../../practices/reading-library.json" with { type: "json" };
 import { savePageCoverage } from "../fixtures/browser-coverage.ts";
+import { defaultRegistry } from "../fixtures/evaluators.ts";
 
 test("浏览器拖选原文并提交，刷新可回看，另一学生读不到", { timeout: 25_000 }, async t => {
   await withDemo(t, async (browser, origin) => {
@@ -194,7 +195,7 @@ test("浏览器完成两步阅读并仅显示整篇初判和原答", { timeout: 
     await learner.goto(activityURL);
     await workspace.getByText("已交，待评", { exact: true }).waitFor();
     using database = new DatabaseSync(databasePath);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     await workspace.getByRole("button", { name: "刷新成绩" }).click();
     await workspace.getByText("1/3", { exact: true }).waitFor();
     assert.doesNotMatch(await workspace.innerText(), /第[一二三]题[对错]|评分键/);
@@ -361,7 +362,7 @@ test("撤权后重新读取｜学生页面随复盘开关闭合逐题反馈，�
     assert.equal(data.status(), 200);
     const { submission } = z.object({ submission: z.object({ receipt: z.object({ id: z.uuid() }) }) }).parse(await data.json());
     using database = new DatabaseSync(databasePath);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     const teacherPost = async (path: string, payload: Record<string, unknown>) => {
       const response = await fetch(origin + path, {
         method: "POST",

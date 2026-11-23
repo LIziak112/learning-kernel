@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { openLearningRuntime } from "../src/server.ts";
 import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { answerRule as answerRuleOf, booleanEvaluator, combinedEvaluator, orderedTextEvaluator, titledTextEvaluator, titledValue } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "delivery-assessment-student" } as const;
 const outsider = { ...student, id: "delivery-assessment-outsider" };
@@ -152,7 +153,7 @@ test("人工评阅与逐题确认同事务登记，按旧确认重开实际量�
   let verified = false;
   const first = openLearningRuntime({ databasePath, authorizeConfirmationRecovery: () => allowed,
     verifyOriginal: () => verified,
-    questionAnswerRules: [{ ...answerRule, response: question.response, isAnswered: value => value.body.trim() !== "" }],
+    questionAnswerRules: [answerRuleOf(answerRule, question.response, titledValue, value => value.body.trim() !== "")],
   });
   const saved = (() => {
     try {
@@ -254,13 +255,13 @@ test("自动题组按旧调用读取精确评估事实，声明式回读与其�
   const settings = { databasePath, authorizeConfirmationRecovery: () => true };
   let evaluated = 0;
   const first = openLearningRuntime({ ...settings, verifyOriginal: () => true,
-    responseEvaluators: [{ ...evaluator, evaluate({ value, questionVersion, acceptedResponse }) {
+    evaluators: [booleanEvaluator(evaluator, ({ value, questionVersion, acceptedResponse }) => {
       evaluated += 1;
       assert.equal(value, false);
       assert.equal(questionVersion, judge.version);
       assert.equal(acceptedResponse, false);
       return { status: "judged", correct: value === acceptedResponse };
-    } }],
+    })],
   });
   const saved = (() => {
     try {
@@ -291,7 +292,7 @@ test("自动题组按旧调用读取精确评估事实，声明式回读与其�
 
 test("发布拒绝多重评估、无实际量表的人工评阅、无评估的评分键和缺少评分键的自动评估", t => {
   const databasePath = scenarioDatabase(t);
-  const runtime = openLearningRuntime({ databasePath, titledTextEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" }) }] });
+  const runtime = openLearningRuntime({ databasePath, evaluators: [titledTextEvaluator(evaluator, () => ({ status: "needsReview" }))] });
   const base = publication("invalid");
   try {
     assert.throws(() => runtime.publish({ ...base, scoringKey }), ZodError);
@@ -334,11 +335,11 @@ test("题组教师改判｜连续改判逐次撤销回落到上一条有效教�
     authorizeQuestionDeliveryVerdict: authorizeQuestionDeliveryReview,
   };
   const runtime = openLearningRuntime({ ...settings,
-    titledTextEvaluators: [{ ...evaluator, evaluate: () => { evaluated += 1; return { status: "needsReview" }; } }],
-    responseEvaluators: [{ ...evaluator, evaluate: ({ value, acceptedResponse }) => {
-      evaluated += 1;
-      return { status: "judged", correct: value === acceptedResponse };
-    } }],
+    evaluators: [combinedEvaluator(titledTextEvaluator(evaluator, () => { evaluated += 1; return { status: "needsReview" }; }),
+      booleanEvaluator(evaluator, ({ value, acceptedResponse }) => {
+        evaluated += 1;
+        return { status: "judged", correct: value === acceptedResponse };
+      }))],
   });
   const committed = (() => {
     try {
@@ -532,7 +533,7 @@ test("题组教师改判｜写入失败可重试，迟到初判不覆盖教师�
   const base = publication("late-automation");
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
     authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
-    responseEvaluators: [{ ...evaluator, evaluate: ({ value, acceptedResponse }) => ({ status: "judged", correct: value === acceptedResponse }) }],
+    evaluators: [booleanEvaluator(evaluator, ({ value, acceptedResponse }) => ({ status: "judged", correct: value === acceptedResponse }))],
   });
   try {
     runtime.publish({ practice: { ...base.practice, questions: [judge], grading: automatic },
@@ -584,11 +585,11 @@ test("按题教师评阅｜混合回执只调用有私钥的评估器，无参�
     authorizeQuestionDeliveryReview: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id,
     authorizeQuestionDeliveryVerdict: scope => canReview && scope.studentId === student.id && scope.reviewerId === reviewer.id
       && scope.questionVersion === ordering.version && scope.slotId === slotId,
-    responseEvaluators: [{ ...evaluator, evaluate: input => {
+    evaluators: [booleanEvaluator(evaluator, input => {
       received.push(input);
       if (failEvaluation) throw new Error("temporary evaluation failure");
       return { status: "judged", correct: input.value === input.acceptedResponse };
-    } }],
+    })],
   });
   try {
     runtime.publish({ ...base, practice: { ...base.practice, questions: [judge, ordering], grading: { ...automatic, teacherReview } },
@@ -808,10 +809,10 @@ test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t 
   const inputs: unknown[] = [];
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
     authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true,
-    responseEvaluators: [{ ...evaluator, evaluate: input => {
+    evaluators: [booleanEvaluator(evaluator, input => {
       inputs.push(input);
       return { status: "needsReview" };
-    } }],
+    })],
   });
   try {
     const individual = { ...step, submit: { ...step.submit, slots: { [slotId]: { ...step.submit.slots[slotId],
@@ -846,7 +847,7 @@ test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t 
 
 test("按题教师评阅｜发布拒绝占位键、未绑定题位、重复、旧人工方式及无自动题的自动声明", t => {
   const databasePath = scenarioDatabase(t);
-  const runtime = openLearningRuntime({ databasePath, responseEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" }) }] });
+  const runtime = openLearningRuntime({ databasePath, evaluators: [booleanEvaluator(evaluator, () => ({ status: "needsReview" }))] });
   const { practice } = publication("declared-invalid");
   const questions = [judge, ordering];
   try {
@@ -953,11 +954,11 @@ test("零位置有序答案｜混合题组仅把非零位置题及真实键交�
   const value = ["甲", "乙"];
   const observed: unknown[] = [];
   const runtime = openLearningRuntime({ databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
-    orderedTextEvaluators: [{ ...evaluator, evaluate: input => {
+    evaluators: [orderedTextEvaluator(evaluator, input => {
       observed.push([input.questionId, input.questionVersion, input.value, input.acceptedBlanks]);
       return { status: "judged", correct: input.value?.length === input.acceptedBlanks.length
         && input.acceptedBlanks.every((candidates, index) => candidates.some(candidate => candidate === input.value?.[index])) };
-    } }],
+    })],
   });
   try {
     runtime.publish({ ...base, practice: { ...base.practice, questions: [noReference, ordering],
@@ -983,7 +984,7 @@ test("零位置有序答案｜保留自动评估的真实键及正位置约束",
   const databasePath = scenarioDatabase(t);
   const { practice } = publication("zero-ordered-invalid");
   const runtime = openLearningRuntime({ databasePath,
-    orderedTextEvaluators: [{ ...evaluator, evaluate: () => ({ status: "needsReview" }) }],
+    evaluators: [orderedTextEvaluator(evaluator, () => ({ status: "needsReview" }))],
   });
   try {
     const input = { practice: { ...practice, questions: [noReference], grading: automatic } };

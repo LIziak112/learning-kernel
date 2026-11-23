@@ -9,7 +9,7 @@ import type { AuthorizeConfirmedReview, AuthorizeConfirmedVerdict, FrozenConfirm
 import { loadActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { readTransaction, writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { confirmedWorkForOperation } from "./question-confirmation.ts";
 import { requireQuestionDeliverySlot } from "./question-delivery-drafts.ts";
 import { confirmedDeliveryAssessment, readManualReviewBasis, readManualReviewQuestions } from "./question-delivery-evaluation.ts";

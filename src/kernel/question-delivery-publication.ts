@@ -1,10 +1,7 @@
-import { findQuestionAnswerRule } from "../contracts/question-answer-rule.ts";
-import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
-import type { QuestionDeliveryFormat, QuestionDeliveryKey } from "../contracts/question-delivery.ts";
+import type { QuestionDeliveryKey } from "../contracts/question-delivery.ts";
 import type { VersionRef } from "../contracts/reading.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
-import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
-import type { PublicationEvaluators } from "./publication-bindings.ts";
+import type { Registry } from "./registry.ts";
 
 type Issue = (path: (string | number)[], message: string) => void;
 type Question = ReadingPublication["practice"]["questions"][number];
@@ -14,9 +11,7 @@ export function questionDeliverySlot(step: ReadingStep) {
   return Object.entries(step.submit.slots).find((entry): entry is [string, DeliverySlot] => entry[1].type === "questionDelivery");
 }
 
-export function validateQuestionDeliveryPublication(
-  publication: ReadingPublication, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules, issue: Issue,
-) {
+export function validateQuestionDeliveryPublication(publication: ReadingPublication, registry: Registry, issue: Issue) {
   const { practice } = publication;
   const delivery = locateDelivery(practice.steps);
   if (!delivery) {
@@ -33,14 +28,14 @@ export function validateQuestionDeliveryPublication(
   const ids = new Set(practice.questions.map(question => question.id));
   validateDeliveryLocations(delivery, practice.steps.length, ids, issue);
   validateQuestionFormats(practice.questions, issue);
-  validateAnswerRuleBindings(practice, answerRules, issue);
-  validateDeliveryGrading(publication, { stepId: step.id, slotId }, ids, registered, issue);
+  validateAnswerRuleBindings(practice, registry, issue);
+  validateDeliveryGrading(publication, { stepId: step.id, slotId }, ids, registry, issue);
   return true;
 }
 
 function validateDeliveryGrading(
   { practice, scoringKey }: ReadingPublication, output: Assessment["from"],
-  ids: ReadonlySet<string>, registered: PublicationEvaluators, issue: Issue,
+  ids: ReadonlySet<string>, registry: Registry, issue: Issue,
 ) {
   const { assessment, manualReview, teacherReview } = practice.grading;
   const teacherIds = new Set(teacherReview?.questionIds);
@@ -50,7 +45,7 @@ function validateDeliveryGrading(
     if (teacherReview) issue(["practice", "grading", "teacherReview"], "教师评阅与整组人工评阅不能同时声明");
     validateManualReviewBasis(scoringKey, manualReview.keyRef, issue);
   } else if (assessment) {
-    validateAutomaticQuestions(practice.questions.filter(({ id }) => !teacherIds.has(id)), scoringKey, assessment, output, ids, registered, issue);
+    validateAutomaticQuestions(practice.questions.filter(({ id }) => !teacherIds.has(id)), scoringKey, assessment, output, ids, registry, issue);
   } else if (scoringKey) {
     issue(["practice", "grading", "assessment"], "冻结的评分依据须有对应的评估声明");
   }
@@ -64,13 +59,13 @@ function validateTeacherReviewQuestions(teacherIds: ReadonlySet<string>, ids: Re
 
 function validateAutomaticQuestions(
   questions: readonly Question[], scoringKey: ReadingPublication["scoringKey"], assessment: Assessment, output: Assessment["from"],
-  ids: ReadonlySet<string>, registered: PublicationEvaluators, issue: Issue,
+  ids: ReadonlySet<string>, registry: Registry, issue: Issue,
 ) {
   if (!questions.length) issue(["practice", "grading", "assessment"], "自动评估须绑定至少一道题");
   const formats = new Set(questions.map(question => question.response).filter(format => format !== undefined));
-  validateDeliveryAssessment(assessment, output, formats, registered, issue);
+  validateDeliveryAssessment(assessment, output, formats, registry, issue);
   if (validateDeliveryKey(scoringKey, assessment.keyRef, issue)) {
-    validateQuestionKeys(questions, scoringKey.acceptedByQuestion, ids, issue);
+    validateQuestionKeys(questions, scoringKey.acceptedByQuestion, ids, registry, issue);
   }
 }
 
@@ -83,14 +78,14 @@ function validateManualReviewBasis(key: ReadingPublication["scoringKey"], refere
 }
 
 function validateAnswerRuleBindings(
-  { questions, questionAnswerRules }: ReadingPublication["practice"], registered: BoundQuestionAnswerRules, issue: Issue,
+  { questions, questionAnswerRules }: ReadingPublication["practice"], registry: Registry, issue: Issue,
 ) {
   if (!questionAnswerRules) return;
   for (const [questionId, reference] of Object.entries(questionAnswerRules)) {
     const path = ["practice", "questionAnswerRules", questionId];
     const question = questions.find(({ id }) => id === questionId);
     if (!question) issue(path, "已答规则须绑定已发布的题");
-    else if (!findQuestionAnswerRule(registered, reference, question.response)) {
+    else if (question.response === undefined || !registry.answerRule(reference, question.response)) {
       issue(path, "须注册与冻结题值形态匹配的精确已答规则版本");
     }
   }
@@ -133,15 +128,9 @@ function validateDeliveryKey(key: ReadingPublication["scoringKey"], reference: V
 }
 
 function validateQuestionFormats(questions: readonly Question[], issue: Issue) {
-  for (const [index, { version, response, options }] of questions.entries()) {
+  for (const [index, { version, response }] of questions.entries()) {
     if (version === undefined) issue(["practice", "questions", index, "version"], "逐题交付须固定题版");
-    if (!response) {
-      issue(["practice", "questions", index, "response"], "逐题交付须声明题的原值形态");
-      continue;
-    }
-    if (response === "optionIndexArray" && Object.keys(options).some((id, index) => id !== String(index))) {
-      issue(["practice", "questions", index, "options"], "索引题须冻结从零连续编号的选项");
-    }
+    if (!response) issue(["practice", "questions", index, "response"], "逐题交付须声明题的原值形态");
   }
 }
 
@@ -161,28 +150,26 @@ function validateQuestionSlots(slots: Readonly<Record<string, string>>, logicalS
 type Assessment = NonNullable<ReadingPublication["practice"]["grading"]["assessment"]>;
 
 function validateDeliveryAssessment(
-  assessment: Assessment, output: Assessment["from"], formats: ReadonlySet<QuestionDeliveryFormat>, registered: PublicationEvaluators, issue: Issue,
+  assessment: Assessment, output: Assessment["from"], formats: ReadonlySet<string>, registry: Registry, issue: Issue,
 ) {
   if (assessment.from.stepId !== output.stepId || assessment.from.slotId !== output.slotId) {
     issue(["practice", "grading", "assessment", "from"], "须绑定本组逐题交付的逻辑槽");
   }
-  const evaluators = {
-    choice: registered.choice, booleanOrString: registered.scalar, optionIndexArray: registered.indexes,
-    orderedTextBlanks: registered.orderedText, textWithOptionalTitle: registered.titledText,
-  };
+  const covered = new Set(registry.evaluator(assessment.evaluator)?.responseTypes);
   for (const format of formats) {
-    const available: readonly (VersionRef & { evaluate: unknown })[] = evaluators[format] ?? [];
-    if (!findResponseEvaluator(available, assessment.evaluator)) {
+    if (!covered.has(format)) {
       issue(["practice", "grading", "assessment", "evaluator"], `未注册 ${format} 所需的精确评估版本`);
     }
   }
 }
 
-function validateQuestionKeys(questions: readonly Question[], keys: Readonly<Record<string, QuestionDeliveryKey>>, ids: ReadonlySet<string>, issue: Issue) {
+function validateQuestionKeys(
+  questions: readonly Question[], keys: Readonly<Record<string, QuestionDeliveryKey>>, ids: ReadonlySet<string>, registry: Registry, issue: Issue,
+) {
   const pathFor = (id: string) => ["scoringKey", "acceptedByQuestion", id];
   for (const question of questions) {
     const key = Object.hasOwn(keys, question.id) ? keys[question.id] : undefined;
-    if (!key || !keyMatchesQuestion(key, question)) {
+    if (!key || !keyMatchesQuestion(key, question, registry)) {
       issue(pathFor(question.id), "私有键须匹配本题的冻结形态、选项或空位");
     }
   }
@@ -193,14 +180,7 @@ function validateQuestionKeys(questions: readonly Question[], keys: Readonly<Rec
   }
 }
 
-function keyMatchesQuestion(key: QuestionDeliveryKey, question: Question) {
-  if (key.response !== question.response) return false;
-  const { options } = question;
-  switch (key.response) {
-    case "choice": return Object.hasOwn(options, key.acceptedChoice);
-    case "booleanOrString":
-    case "textWithOptionalTitle": return true;
-    case "optionIndexArray": return key.acceptedIndexes.every(index => Object.hasOwn(options, String(index)));
-    case "orderedTextBlanks": return question.response === "orderedTextBlanks" && key.acceptedBlanks.length === question.blankCount;
-  }
+function keyMatchesQuestion({ response, ...key }: QuestionDeliveryKey, question: Question, registry: Registry) {
+  if (response !== question.response) return false;
+  return registry.responseType(response)?.parseKey?.(key, question) !== undefined;
 }

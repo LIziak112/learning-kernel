@@ -1,16 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import type { AuthorizeConfirmationRecovery, ConfirmationKey, VerifyOriginal } from "../contracts/choice-confirmation.ts";
-import { findQuestionAnswerRule } from "../contracts/question-answer-rule.ts";
-import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
 import { questionDeliveryIntent, questionDeliveryView, readQuestionDelivery } from "../contracts/question-delivery.ts";
 import type { QuestionDeliveryInput } from "../contracts/question-delivery.ts";
-import { hasStoredResponse } from "../contracts/response.ts";
-import type { StoredResponseValue } from "../contracts/response.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
-import type { PublicationEvaluators } from "./publication-bindings.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import {
   confirmedDraftChangeCount, confirmedWorkForOperation, mapConfirmationQuestions, requireConfirmationRecovery,
   sameQuestionIntent, writeQuestionConfirmation,
@@ -20,14 +16,16 @@ import {
 } from "./question-delivery-drafts.ts";
 import { recoverQuestionDeliveryAssessment, registerDeliveryAssessment } from "./question-delivery-evaluation.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
-import { requireBeforeDeadline } from "./reading-progress.ts";
+import { frozenResponseType } from "./question-types.ts";
+import { requireAvailableTool, requireBeforeDeadline } from "./reading-progress.ts";
+import type { Registry } from "./registry.ts";
 import { submittedSlots } from "./submission-store.ts";
 
 type RequestQuestion = QuestionDeliveryInput["questions"][number];
 
 export function confirmQuestionDelivery(
-  database: DatabaseSync, studentId: string, activityId: string, input: QuestionDeliveryInput, clock: () => Date,
-  verifyOriginal: VerifyOriginal | undefined, authorize: AuthorizeConfirmationRecovery | undefined, answerRules: BoundQuestionAnswerRules,
+  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, input: QuestionDeliveryInput, clock: () => Date,
+  verifyOriginal: VerifyOriginal | undefined, authorize: AuthorizeConfirmationRecovery | undefined,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
@@ -42,10 +40,11 @@ export function confirmQuestionDelivery(
     }
     if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
     const slot = requireQuestionDeliverySlot(activity, input.slotId);
+    requireAvailableTool(registry, activity.step, slot.type);
     const now = clock();
     requireBeforeDeadline(activity, now);
     const { requestQuestions, selected, ...placement } = deliveryPlacement(database, activity, input, slot);
-    const decisions = selected.map(question => freezeDeliveryDraft(database, activity, input.slotId, slot, question, answerRules));
+    const decisions = selected.map(question => freezeDeliveryDraft(database, registry, activity, input.slotId, slot, question));
     const questions = decisions.map(({ question }) => question);
     const answeredQuestionIds = new Set(decisions.filter(({ answered }) => answered).map(({ question }) => question.questionId));
     const content = { kind: "questionDelivery" as const, slotId: input.slotId, questions };
@@ -74,33 +73,33 @@ function deliveryPlacement(database: DatabaseSync, activity: ReadingActivity, in
 }
 
 function freezeDeliveryDraft(
-  database: DatabaseSync, activity: ReadingActivity, logicalSlotId: string, slot: DeliverySlot,
-  question: RequestQuestion, rules: BoundQuestionAnswerRules,
+  database: DatabaseSync, registry: Registry, activity: ReadingActivity, logicalSlotId: string, slot: DeliverySlot, question: RequestQuestion,
 ) {
   const slotId = questionDeliveryPosition(slot, logicalSlotId, question.questionId);
   const head = deliveryDraftHead(database, activity, slotId, question.questionId);
   const { revision, value } = head ?? { revision: 0, value: null };
   if (revision !== question.revision) throw new QuestionDeliveryConflict({ revision, value }, "ANSWER_REVISION_CONFLICT", question.questionId);
-  const answered = isDeliveryAnswered(activity, question, value, rules);
+  const answered = value !== null && isDeliveryAnswered(registry, activity, question, value);
   if (!answered && !slot.confirmFromDrafts.allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");
   return { question: { ...question, value }, answered };
 }
 
-function isDeliveryAnswered(
-  activity: ReadingActivity, question: RequestQuestion, value: StoredResponseValue | null, rules: BoundQuestionAnswerRules,
-) {
+const answeredSchema = z.boolean();
+
+function isDeliveryAnswered(registry: Registry, activity: ReadingActivity, request: RequestQuestion, value: unknown) {
+  const question = requireFrozenQuestion(activity, request);
+  const type = frozenResponseType(registry, activity.practice, question);
   const bindings = activity.practice.questionAnswerRules;
-  const reference = bindings && Object.hasOwn(bindings, question.questionId) ? bindings[question.questionId] : undefined;
-  if (!reference) return hasStoredResponse(value);
-  const { response } = requireFrozenQuestion(activity, question);
-  const rule = findQuestionAnswerRule(rules, reference, response);
+  const reference = bindings && Object.hasOwn(bindings, request.questionId) ? bindings[request.questionId] : undefined;
+  if (!reference) return type.isAnswered(value, question);
+  const rule = registry.answerRule(reference, type.id);
   if (!rule) throw new LearningError(503, "ANSWER_RULE_UNAVAILABLE");
-  return value !== null && rule.isAnswered(value);
+  return answeredSchema.parse(rule.isAnswered(type.parseValue(value, question)));
 }
 
 export function recoverQuestionDelivery(
-  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey,
-  authorize: AuthorizeConfirmationRecovery | undefined, registered: PublicationEvaluators, mode: "automatic" | "declared",
+  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, key: ConfirmationKey,
+  authorize: AuthorizeConfirmationRecovery | undefined, mode: "automatic" | "declared",
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
@@ -120,6 +119,6 @@ export function recoverQuestionDelivery(
       receipt, practice: { id, version }, confirmation: questionDeliveryView(content), requestQuestions: questionDeliveryIntent(content),
       draftChangeCounts,
     };
-    return { ...confirmation, ...recoverQuestionDeliveryAssessment(database, activity, receipt, content, registered, mode) };
+    return { ...confirmation, ...recoverQuestionDeliveryAssessment(database, registry, activity, receipt, content, mode) };
   });
 }

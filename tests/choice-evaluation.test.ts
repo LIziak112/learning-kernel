@@ -7,9 +7,11 @@ import { evaluatePending } from "../src/kernel/evaluation.ts";
 import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
 import { openLearningRuntime } from "../src/server.ts";
-import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ChoiceEvaluator, PublicationInput } from "../src/server.ts";
+import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, PublicationInput } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { choiceEvaluator } from "./fixtures/evaluators.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const evaluator = { id: "host-choice", version: 1 };
 const student = { role: "student", id: "student" } as const;
@@ -48,14 +50,15 @@ function evaluationFacts(database: DatabaseSync, submissionId: string) {
   return { status: task?.status, verdicts };
 }
 
-test("发布仅接受整卷配置中的精确宿主评估器，保留历史内置能力名称", t => {
+test("发布仅接受已登记且覆盖本槽作答形态的精确评估器，评估器不得与默认扩展重复登记", t => {
   const path = scenarioDatabase(t);
-  const evaluate = () => true;
-  const registration = { ...evaluator, evaluate };
-  for (const invalid of [[registration, registration], [{ ...registration, id: "choice-key", version: 2 }],
-    [{ ...registration, id: "single-choice-group" }]]) {
-    assert.throws(() => openLearningRuntime({ databasePath: path, choiceEvaluators: invalid }), { name: "ZodError" });
+  const registration = choiceEvaluator(evaluator, () => true);
+  for (const invalid of [[registration, registration], [{ ...registration, id: "choice-key", version: 1 }]]) {
+    assert.throws(() => openLearningRuntime({ databasePath: path, evaluators: invalid }), /评估器重复登记/);
   }
+  assert.throws(() => openLearningRuntime({ databasePath: path, evaluators: [{ ...registration, responseTypes: ["unregistered"] }] }),
+    /未登记的作答形态/);
+  assert.throws(() => openLearningRuntime({ databasePath: path, evaluators: [{ ...registration, responseTypes: [] }] }), { name: "ZodError" });
   const missing = openLearningRuntime({ databasePath: path });
   try {
     assert.throws(() => missing.publish(registeredPublication), rejectsPublication);
@@ -63,7 +66,8 @@ test("发布仅接受整卷配置中的精确宿主评估器，保留历史内�
     missing.close();
   }
   assert.doesNotThrow(() => {
-    const runtime = openLearningRuntime({ databasePath: path, choiceEvaluators: [registration, { ...registration, version: 2 }] });
+    const runtime = openLearningRuntime({ databasePath: path, evaluators: [registration, { ...registration, version: 2 },
+      { ...registration, id: "boolean-only", responseTypes: ["booleanOrString"] }] });
     try {
       for (const unavailable of [{ ...evaluator, version: 3 }, { ...evaluator, id: "unknown" }]) {
         assert.throws(() => runtime.publish({
@@ -73,7 +77,8 @@ test("发布仅接受整卷配置中的精确宿主评估器，保留历史内�
         }), rejectsPublication);
       }
       assert.throws(() => runtime.publish({
-        scoringKey, practice: { ...practice, grading: { assessment: { ...practice.grading.assessment, evaluator } } },
+        ...registeredPublication, practice: { ...registeredPublication.practice,
+          grading: { assessment: { ...practice.grading.assessment, evaluator: { id: "boolean-only", version: 1 } } } },
       }), rejectsPublication);
       using database = new DatabaseSync(path);
       for (const table of ["practices", "scoring_keys"]) {
@@ -93,13 +98,12 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
   let fail = true;
   const authorizeConfirmationRecovery: AuthorizeConfirmationRecovery = scope =>
     canRecover && scope.studentId === student.id && scope.operationId === confirmation.operationId;
-  const evaluate: ChoiceEvaluator = input => {
-    callbackCalls++;
-    if (fail && callbackCalls === 2) throw new Error("evaluator interrupted");
-    return input.choice !== null;
-  };
   const runtime = openLearningRuntime({
-    databasePath: path, authorizeConfirmationRecovery, choiceEvaluators: [{ ...evaluator, evaluate }],
+    databasePath: path, authorizeConfirmationRecovery, evaluators: [choiceEvaluator(evaluator, input => {
+      callbackCalls++;
+      if (fail && callbackCalls === 2) throw new Error("evaluator interrupted");
+      return input.choice !== null;
+    })],
   });
   try {
     runtime.publish(registeredPublication);
@@ -127,7 +131,7 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
     assert.equal(callbackCalls, 0);
 
     const legacyReceipt = confirmLegacy(runtime, database);
-    assert.doesNotThrow(() => evaluatePending(database));
+    assert.doesNotThrow(() => evaluatePending(database, defaultRegistry));
     assert.deepEqual(evaluationFacts(database, receipt.id), pending);
     assert.deepEqual(evaluationFacts(database, legacyReceipt.id), {
       status: "done", verdicts: questions.map(question => [question.id, 1]),
@@ -146,7 +150,7 @@ test("已确认评估在当前权限下恢复，坏回调和第二题写入失�
       noEvaluator.close();
     }
     const invalid: ReturnType<typeof openLearningRuntime> = Reflect.apply(openLearningRuntime, undefined, [{
-      ...baseOptions, choiceEvaluators: [{ ...evaluator, evaluate: () => Promise.resolve(true) }],
+      ...baseOptions, evaluators: [{ ...evaluator, responseTypes: ["choice"], evaluate: () => Promise.resolve(true) }],
     }]);
     try {
       assert.throws(() => invalid.recoverChoiceConfirmation(student, activityId, key), { name: "ZodError" });
@@ -197,6 +201,6 @@ function confirmLegacy(runtime: ReturnType<typeof openLearningRuntime>, database
   runtime.publish({ ...frozenChoicePublication, practice: { ...practice, id: legacy } });
   const { activityId, stepAttemptId } = runtime.start(student, { ...open, operationId: legacy, practiceId: legacy });
   const slot = { protocolVersion: 1, slotId: "answers", stepAttemptId } as const;
-  const draft = saveDraft(database, student.id, activityId, { ...slot, choices: scoringKey.acceptedChoices, references: {} });
-  return submitDraft(database, student.id, activityId, { ...slot, operationId: "confirm-legacy", draft: draft.draft }, () => new Date());
+  const draft = saveDraft(database, defaultRegistry, student.id, activityId, { ...slot, choices: scoringKey.acceptedChoices, references: {} });
+  return submitDraft(database, defaultRegistry, student.id, activityId, { ...slot, operationId: "confirm-legacy", draft: draft.draft }, () => new Date());
 }

@@ -5,9 +5,10 @@ import { openLearningRuntime, ResponseConfirmationConflict } from "../src/server
 import { latestDatabaseVersion } from "../src/kernel/database.ts";
 import type {
   AuthorizeResponseConfirmationReview, AuthorizeResponseConfirmationVerdict, PublicationInput, ResponseConfirmationInput,
-  ResponseDraftInput, ResponseEvaluator, ResponseEvaluatorRegistration, VerdictCommand,
+  ResponseDraftInput, VerdictCommand, VerdictResult,
 } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { booleanEvaluator, choiceEvaluator } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "student" } as const;
 const practice = { id: "frozen-judgment", version: 1 };
@@ -76,14 +77,14 @@ function responsePublication(version = 1, fields: ("receipt" | "ownResponses")[]
   } satisfies PublicationInput;
 }
 
-const testEvaluator: ResponseEvaluator = ({ value, acceptedResponse }) => {
+const testEvaluator = ({ value, acceptedResponse }: { value: boolean | string | null; acceptedResponse: boolean }): VerdictResult => {
   if (value === null) return { status: "judged", correct: false };
   if (typeof value === "boolean") return { status: "judged", correct: value === acceptedResponse };
   if (value === "true" || value === "false") return { status: "judged", correct: (value === "true") === acceptedResponse };
   return { status: "needsReview" };
 };
 
-const registered: ResponseEvaluatorRegistration = { ...evaluator, evaluate: testEvaluator };
+const registered = booleanEvaluator(evaluator, testEvaluator);
 const trusted = ({ studentId, operationId: operation }: { studentId: string; operationId: string }) =>
   studentId === student.id && operation === operationId;
 
@@ -122,12 +123,12 @@ test("正式确认逐题原值，重开按原版返回同一回执、原稿和�
   const evaluations: unknown[] = [];
   const options: Settings = {
     databasePath,
-    responseEvaluators: [{ ...registered, evaluate: input => {
+    evaluators: [booleanEvaluator(evaluator, input => {
       evaluations.push(input.value);
       assert.deepEqual(input.practice, practice);
       assert.equal(input.questionVersion, 1);
       return testEvaluator(input);
-    } }],
+    })],
     authorizeConfirmationRecovery: scope => canRecover && trusted(scope),
     verifyOriginal: scope => scope.original.state === "uncollected" ||
       (scope.original.state === "frozen" && scope.original.documentId === original.documentId
@@ -181,10 +182,7 @@ test("正式确认逐题原值，重开按原版返回同一回执、原稿和�
     assert.deepEqual(stored.confirmation.questions.find(({ questionId }) => questionId === "unrecognized")?.original, original);
     assert.deepEqual(stored.responseDraftChangeCounts, ids.map(questionId => ({ questionId, changeCount: values[questionId] === null ? 0 : 1 })));
     assert.deepEqual(stored.evaluation, { evaluator, questionCount: 7, correctCount: 4, needsReviewCount: 2, questions: ids.map(questionId => ({
-      questionId, questionVersion: 1, result: testEvaluator({
-        value: values[questionId], acceptedResponse: keys[questionId], activityId: open.activityId,
-        stepAttemptId: open.stepAttemptId, slotId, practice, questionId, questionVersion: 1,
-      }),
+      questionId, questionVersion: 1, result: testEvaluator({ value: values[questionId], acceptedResponse: keys[questionId] }),
     })) });
     assert.deepEqual(evaluations, ids.map(id => values[id]));
     assert.doesNotMatch(JSON.stringify(stored), /scoringKey|acceptedResponses|acceptedResponse/);
@@ -213,16 +211,16 @@ test("正式确认逐题原值，重开按原版返回同一回执、原稿和�
 
 test("只有显式原值声明与精确注册的评估器才允许发布", t => {
   const databasePath = scenarioDatabase(t);
-  const builtin = { id: "response-group", version: 1 };
-  assert.throws(() => openLearningRuntime({ databasePath, choiceEvaluators: [{ ...builtin, evaluate: () => true }] }), { name: "ZodError" });
-  assert.throws(() => openLearningRuntime({ databasePath, responseEvaluators: [{ ...builtin, evaluate: testEvaluator }] }), { name: "ZodError" });
-  const wrong = openLearningRuntime({ databasePath, choiceEvaluators: [{ ...evaluator, evaluate: () => true }] });
+  const builtin = { id: "choice-key", version: 1 };
+  assert.throws(() => openLearningRuntime({ databasePath, evaluators: [choiceEvaluator(builtin, () => true)] }), /评估器重复登记/);
+  assert.throws(() => openLearningRuntime({ databasePath, evaluators: [booleanEvaluator(builtin, testEvaluator)] }), /评估器重复登记/);
+  const wrong = openLearningRuntime({ databasePath, evaluators: [choiceEvaluator(evaluator, () => true)] });
   try {
     assert.throws(() => wrong.publish(responsePublication()), { name: "ZodError" });
   } finally {
     wrong.close();
   }
-  const runtime = openLearningRuntime({ databasePath, responseEvaluators: [registered] });
+  const runtime = openLearningRuntime({ databasePath, evaluators: [registered] });
   try {
     const publication = responsePublication();
     const step = publication.practice.steps[0];
@@ -251,7 +249,7 @@ test("只有显式原值声明与精确注册的评估器才允许发布", t => 
 });
 
 test("原值草稿保护操作、冻结版本和原稿条件，拒绝旧槽接口交叉读取", t => {
-  const runtime = openLearningRuntime({ databasePath: scenarioDatabase(t), responseEvaluators: [registered],
+  const runtime = openLearningRuntime({ databasePath: scenarioDatabase(t), evaluators: [registered],
     authorizeConfirmationRecovery: trusted, verifyOriginal: scope => scope.original.state === "uncollected" });
   try {
     runtime.publish(responsePublication());
@@ -260,7 +258,7 @@ test("原值草稿保护操作、冻结版本和原稿条件，拒绝旧槽接�
     assert.throws(() => runtime.saveResponseDraft(student, open.activityId, { ...input, questionVersion: 2 }),
       { status: 409, code: "QUESTION_REVISION_STALE" });
     assert.throws(() => Reflect.apply(runtime.saveResponseDraft, runtime, [student, open.activityId, { ...input, value: 0 }]),
-      { name: "ZodError" });
+      { status: 422, code: "INVALID_RESPONSE" });
     const saved = runtime.saveResponseDraft(student, open.activityId, input);
     assert.equal(saved.revision, 1);
     assert.throws(() => runtime.saveResponseDraft(student, open.activityId, { ...input, value: rawText.trim() }),
@@ -300,7 +298,7 @@ test("原值草稿保护操作、冻结版本和原稿条件，拒绝旧槽接�
 
 test("确认事务失败不泄漏完成或必要任务，重试同操作后评估失败也可恢复", t => {
   const databasePath = scenarioDatabase(t);
-  const options: Settings = { databasePath, responseEvaluators: [registered],
+  const options: Settings = { databasePath, evaluators: [registered],
     authorizeConfirmationRecovery: trusted, verifyOriginal: () => true };
   const runtime = openLearningRuntime(options);
   try {
@@ -344,7 +342,7 @@ test("确认事务失败不泄漏完成或必要任务，重试同操作后评�
 test("v15 已声明单选的活动升级后保持成员校验、原回执和布尔判定", t => {
   const databasePath = scenarioDatabase(t);
   const options = { databasePath, authorizeConfirmationRecovery: trusted,
-    choiceEvaluators: [{ ...evaluator, evaluate: () => true }], verifyOriginal: () => true };
+    evaluators: [choiceEvaluator(evaluator, () => true)], verifyOriginal: () => true };
   const old = openLearningRuntime(options);
   let open: Opened;
   let receipt: ReturnType<Runtime["confirmChoices"]>;
@@ -400,7 +398,7 @@ test("标量正式确认的连续改判逐次撤销回落到上一条有效判�
   const targetId = "answer";
   const allowedQuestions = ["booleanFalse", "unrecognized"];
   const { activityId, key, wire, receipt, otherReceipt, originalRecovery, studentView } = (() => {
-    const runtime = openLearningRuntime({ databasePath, responseEvaluators: [registered],
+    const runtime = openLearningRuntime({ databasePath, evaluators: [registered],
       authorizeConfirmationRecovery: trusted, verifyOriginal: () => true,
     });
     try {

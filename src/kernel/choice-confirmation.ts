@@ -2,15 +2,15 @@ import type { DatabaseSync } from "node:sqlite";
 import { readChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import type { AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey,
   VerifyOriginal } from "../contracts/choice-confirmation.ts";
-import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
 import type { SubmissionReceipt } from "../contracts/reading.ts";
 import { loadStudentReadingActivity } from "./activity.ts";
 import type { ReadingActivity } from "./activity.ts";
 import { ChoiceDraftConflict, readChoiceDrafts } from "./choice-drafts.ts";
 import { recoverChoiceEvaluation } from "./choice-evaluation.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
-import { boundOutput, requireBeforeDeadline } from "./reading-progress.ts";
+import type { Registry } from "./registry.ts";
+import { LearningError } from "../contracts/learning-error.ts";
+import { requireBeforeDeadline, writableOutput } from "./reading-progress.ts";
 import {
   confirmedDraftChangeCount, confirmedWorkForOperation, mapConfirmationQuestions, replayQuestionConfirmation, requireConfirmationRecovery,
   writeQuestionConfirmation,
@@ -26,7 +26,7 @@ export class ChoiceConfirmationConflict extends ChoiceDraftConflict {
 }
 
 export function confirmChoices(
-  database: DatabaseSync, studentId: string, activityId: string, input: ChoiceConfirmationInput,
+  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, input: ChoiceConfirmationInput,
   clock: () => Date, verifyOriginal?: VerifyOriginal,
 ) {
   return writeTransaction(database, () => {
@@ -36,17 +36,19 @@ export function confirmChoices(
       const intent = previous.confirmation?.questions.map(({ choice, ...revision }) => revision);
       return replayQuestionConfirmation(previous.receipt, intent, input);
     }
-    const slot = requireConfirmationSlot(activity, input.slotId);
+    const slot = requireConfirmationSlot(registry, activity, input.slotId);
     const now = clock();
     requireBeforeDeadline(activity, now);
     const questions = freezeAnswers(database, activity, input, slot.confirmFromDrafts.allowUnanswered);
-    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, { kind: "choiceConfirmation", questions }, now, verifyOriginal);
+    const answeredQuestionIds = new Set(questions.filter(({ choice }) => choice !== null).map(({ questionId }) => questionId));
+    return writeQuestionConfirmation(database, activity, studentId, input, slot.targetId, { kind: "choiceConfirmation", questions }, now,
+      verifyOriginal, { answeredQuestionIds });
   });
 }
 
 export function recoverChoiceConfirmation(
-  database: DatabaseSync, studentId: string, activityId: string, key: ConfirmationKey,
-  authorize: AuthorizeConfirmationRecovery | undefined, registered: readonly ChoiceEvaluatorRegistration[],
+  database: DatabaseSync, registry: Registry, studentId: string, activityId: string, key: ConfirmationKey,
+  authorize: AuthorizeConfirmationRecovery | undefined,
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, key.stepAttemptId);
@@ -55,7 +57,7 @@ export function recoverChoiceConfirmation(
     if (!recovered?.confirmation) throw new LearningError(404, "CONFIRMATION_NOT_FOUND");
     const { receipt, confirmation } = recovered;
     const { id, version } = activity.practice;
-    const evaluation = recoverChoiceEvaluation(database, activity, receipt, confirmation, registered);
+    const evaluation = recoverChoiceEvaluation(database, registry, activity, receipt, confirmation);
     const drafts = draftsByQuestion(database, activityId, receipt);
     const choiceDraftChangeCounts = confirmation.questions.map(question => ({
       questionId: question.questionId, changeCount: confirmedDraftChangeCount(question, drafts.get(question.questionId), "choice"),
@@ -64,9 +66,9 @@ export function recoverChoiceConfirmation(
   });
 }
 
-function requireConfirmationSlot(activity: ReadingActivity, slotId: string) {
+function requireConfirmationSlot(registry: Registry, activity: ReadingActivity, slotId: string) {
   if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
-  const slot = boundOutput(activity.step, slotId);
+  const slot = writableOutput(registry, activity.step, slotId);
   if (slot.type !== "oneChoicePerQuestion" || !slot.confirmFromDrafts) throw new LearningError(422, "INVALID_SLOT");
   return { targetId: slot.targetId, confirmFromDrafts: slot.confirmFromDrafts };
 }

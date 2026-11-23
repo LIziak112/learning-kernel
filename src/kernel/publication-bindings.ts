@@ -1,28 +1,15 @@
-import { choiceKeyCapability, readingCapability, studentTool } from "../builtins/reading-capabilities.ts";
-import type { ValueType } from "../builtins/reading-capabilities.ts";
-import { findChoiceEvaluator } from "../contracts/choice-evaluation.ts";
-import type { ChoiceEvaluatorRegistration } from "../contracts/choice-evaluation.ts";
-import type { BoundQuestionAnswerRules } from "../contracts/question-answer-rule.ts";
-import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
-import type { IndexResponseEvaluatorRegistration, OrderedTextEvaluatorRegistration, ResponseEvaluatorRegistration, TitledTextEvaluatorRegistration } from "../contracts/response-evaluation.ts";
-import type { ResponseFormat } from "../contracts/response.ts";
+import type { StudentValue } from "../contracts/capabilities.ts";
 import type { VersionRef } from "../contracts/reading.ts";
+import { questionFields } from "../contracts/reading-publication.ts";
 import type { ReadingPublication, ReadingSlot, ReadingStep } from "../contracts/reading-publication.ts";
 import { validateMaterialPositions } from "./material-positions.ts";
 import { validateQuestionDeliveryPublication } from "./question-delivery-publication.ts";
+import { questionResponseType, slotResponseType, wholePaperQuestionKey, wholePaperValues } from "./question-types.ts";
+import type { Registry } from "./registry.ts";
 
 type Issue = (path: (string | number)[], message: string) => void;
-export type PublicationEvaluators = {
-  choice?: readonly ChoiceEvaluatorRegistration[];
-  scalar?: readonly ResponseEvaluatorRegistration[];
-  indexes?: readonly IndexResponseEvaluatorRegistration[];
-  orderedText?: readonly OrderedTextEvaluatorRegistration[];
-  titledText?: readonly TitledTextEvaluatorRegistration[];
-};
 
-export function validateBindings(
-  publication: ReadingPublication, issue: Issue, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules,
-) {
+export function validateBindings(publication: ReadingPublication, issue: Issue, registry: Registry) {
   const { practice } = publication;
   const earlierSteps = new Map<string, ReadingStep>();
   const positions = new Set<string>();
@@ -33,24 +20,22 @@ export function validateBindings(
     const transition = index === practice.steps.length - 1 ? "finish" : "advance";
     if (step.afterConfirmation !== transition) report(["afterConfirmation"], "确认后的动作与步骤顺序不一致");
     const inputs = resolveInputs(step, earlierSteps, positions, report);
-    validateTool(step, inputs, report);
+    validateTool(step, inputs, registry, report);
     validateSlots(step, inputs, practice.goals, report);
     validateDraftConfirmation(step, practice, report);
     earlierSteps.set(step.id, step);
   }
-  validateMaterialPositions(publication, issue);
-  validateGrading(practice.grading, earlierSteps, registered, issue);
-  validateAssessmentPublication(publication, registered, answerRules, issue);
-  validateQuestions(practice, issue);
+  validateMaterialPositions(publication, registry, issue);
+  validateGrading(practice.grading, earlierSteps, registry, issue);
+  validateQuestions(practice, registry, issue);
+  validateAssessmentPublication(publication, registry, issue);
 }
 
-function validateAssessmentPublication(
-  publication: ReadingPublication, registered: PublicationEvaluators, answerRules: BoundQuestionAnswerRules, issue: Issue,
-) {
+function validateAssessmentPublication(publication: ReadingPublication, registry: Registry, issue: Issue) {
   const { practice, scoringKey } = publication;
   const response = practice.steps.flatMap(step => Object.values(step.submit.slots))
     .find(slot => slot.type === "oneResponsePerQuestion")?.input;
-  const questionDelivery = validateQuestionDeliveryPublication(publication, registered, answerRules, issue);
+  const questionDelivery = validateQuestionDeliveryPublication(publication, registry, issue);
   if (questionDelivery) {
     validateResponsePolicy(practice, true, issue);
     return;
@@ -58,7 +43,7 @@ function validateAssessmentPublication(
   if (practice.grading.manualReview) issue(["practice", "grading", "manualReview"], "人工评阅须绑定题组交付槽");
   if (response !== undefined && !practice.grading.assessment) issue(["practice", "grading", "assessment"], "原值确认须声明固定评估");
   validateResponsePolicy(practice, response !== undefined, issue);
-  validateAssessmentPolicy(practice, scoringKey, response, issue);
+  validateAssessmentPolicy(practice, scoringKey, registry, issue);
 }
 
 function validateDraftConfirmation(step: ReadingStep, practice: ReadingPublication["practice"], issue: Issue) {
@@ -81,15 +66,32 @@ function isSingleFinalStep(practice: ReadingPublication["practice"], step: Readi
   return practice.steps.length === 1 && step.submit.purpose === "finalAnswer";
 }
 
-function validateQuestions(practice: ReadingPublication["practice"], issue: Issue) {
+function validateQuestions(practice: ReadingPublication["practice"], registry: Registry, issue: Issue) {
   const ids = new Set<string>();
   for (const [index, question] of practice.questions.entries()) {
-    if (ids.has(question.id)) issue(["practice", "questions", index, "id"], "题指标识重复");
+    const report: Issue = (path, message) => issue(["practice", "questions", index, ...path], message);
+    if (ids.has(question.id)) report(["id"], "题指标识重复");
     ids.add(question.id);
+    validateQuestionShape(question, questionResponseType(registry, practice, question), registry, report);
   }
   if (practice.questions.length === 0 && practice.steps.some(step => Object.values(step.inputs).some(input => input.from === "questions"))) {
     issue(["practice", "questions"], "绑定题目输入时须声明至少一题");
   }
+}
+
+function validateQuestionShape(
+  question: ReadingPublication["practice"]["questions"][number], typeId: string | undefined, registry: Registry, issue: Issue,
+) {
+  const type = typeId === undefined ? undefined : registry.responseType(typeId);
+  if (!type) {
+    issue(["response"], "须声明已登记的作答形态");
+    return;
+  }
+  const declared = new Set<string>([...questionFields, ...type.config]);
+  for (const field of Object.keys(question)) {
+    if (!declared.has(field)) issue([field], "题目字段不属于声明的作答形态");
+  }
+  type.validateQuestion(question, (path, message) => issue([...path], message));
 }
 
 function resolveInputs(
@@ -98,7 +100,7 @@ function resolveInputs(
   positions: Set<string>,
   issue: Issue,
 ) {
-  const inputs = new Map<string, ValueType>();
+  const inputs = new Map<string, StudentValue>();
   for (const [name, input] of Object.entries(step.inputs)) {
     if (input.from === "material") {
       if (positions.has(input.positionId)) issue(["inputs", name, "positionId"], "材料使用位置重复");
@@ -122,8 +124,8 @@ function resolveInputs(
   return inputs;
 }
 
-function validateTool(step: ReadingStep, inputs: ReadonlyMap<string, ValueType>, issue: Issue) {
-  const capability = studentTool(step.tool);
+function validateTool(step: ReadingStep, inputs: ReadonlyMap<string, StudentValue>, registry: Registry, issue: Issue) {
+  const capability = registry.tool(step.tool);
   if (!capability) {
     issue(["tool"], "须绑定已登记且允许学生调用的工具版本");
     return;
@@ -132,7 +134,7 @@ function validateTool(step: ReadingStep, inputs: ReadonlyMap<string, ValueType>,
   if (capability.requiredInputs.some(type => !types.has(type))) {
     issue(["inputs"], "缺少工具要求的输入类型");
   }
-  const acceptedInputs = new Set<ValueType>([...capability.requiredInputs, ...capability.optionalInputs]);
+  const acceptedInputs = new Set<StudentValue>([...capability.requiredInputs, ...capability.optionalInputs]);
   for (const [name, type] of inputs) {
     if (!acceptedInputs.has(type)) {
       issue(["inputs", name], "工具不接受此输入类型");
@@ -141,7 +143,7 @@ function validateTool(step: ReadingStep, inputs: ReadonlyMap<string, ValueType>,
   validateOutputs(step.submit.slots, capability.outputs, issue);
 }
 
-function validateOutputs(slots: Readonly<Record<string, ReadingSlot>>, outputs: readonly ValueType[], issue: Issue) {
+function validateOutputs(slots: Readonly<Record<string, ReadingSlot>>, outputs: readonly StudentValue[], issue: Issue) {
   const entries = Object.entries(slots);
   for (const [name, slot] of entries) {
     if (slot.type !== "reuse" && !outputs.includes(slot.type)) {
@@ -155,7 +157,7 @@ function validateOutputs(slots: Readonly<Record<string, ReadingSlot>>, outputs: 
 
 function validateSlots(
   step: ReadingStep,
-  inputs: ReadonlyMap<string, ValueType>,
+  inputs: ReadonlyMap<string, StudentValue>,
   goals: Readonly<Record<string, string>>,
   issue: Issue,
 ) {
@@ -173,7 +175,7 @@ function validateSlots(
   }
 }
 
-function sourceMatchesSlot(slot: ReadingSlot, input: ValueType | undefined) {
+function sourceMatchesSlot(slot: ReadingSlot, input: StudentValue | undefined) {
   switch (slot.type) {
     case "passageSelection": return input === "material";
     case "oneChoicePerQuestion":
@@ -186,47 +188,25 @@ function sourceMatchesSlot(slot: ReadingSlot, input: ValueType | undefined) {
 function validateGrading(
   grading: ReadingPublication["practice"]["grading"],
   steps: ReadonlyMap<string, ReadingStep>,
-  registered: PublicationEvaluators,
+  registry: Registry,
   issue: Issue,
 ) {
   const { selectionFeedback, assessment } = grading;
   if (selectionFeedback && findSlot(steps, selectionFeedback.from)?.type !== "passageSelection") {
     issue(["practice", "grading", "selectionFeedback", "from"], "评语须绑定选区交付槽位");
   }
-  if (assessment) validateAssessmentBinding(findSlot(steps, assessment.from), assessment.evaluator, registered, issue);
+  if (assessment) validateAssessmentBinding(steps.get(assessment.from.stepId), findSlot(steps, assessment.from), assessment.evaluator, registry, issue);
 }
 
 function validateAssessmentBinding(
-  slot: ReadingSlot | undefined, evaluator: VersionRef, { choice = [], scalar = [], indexes = [] }: PublicationEvaluators, issue: Issue,
+  step: ReadingStep | undefined, slot: ReadingSlot | undefined, evaluator: VersionRef, registry: Registry, issue: Issue,
 ) {
   if (slot?.type === "questionDelivery") return;
-  if (slot?.type === "oneResponsePerQuestion") {
-    const evaluate = slot.input === "optionIndexArray" ? findResponseEvaluator(indexes, evaluator) : findResponseEvaluator(scalar, evaluator);
-    if (!evaluate) {
-      issue(["practice", "grading", "assessment", "evaluator"], "原值确认须绑定精确版本的原值评估器");
-    }
-  } else if (slot?.type === "oneChoicePerQuestion") {
-    validateAssessmentEvaluator(slot, evaluator, choice, issue);
-  } else {
-    issue(["practice", "grading", "assessment", "from"], "逐题评估须绑定单选交付槽位");
-  }
-}
-
-function validateAssessmentEvaluator(
-  slot: Extract<ReadingSlot, { type: "oneChoicePerQuestion" }>,
-  evaluator: VersionRef,
-  registered: readonly ChoiceEvaluatorRegistration[],
-  issue: Issue,
-) {
-  const path = ["practice", "grading", "assessment", "evaluator"];
-  if (slot.confirmFromDrafts) {
-    if (!findChoiceEvaluator(registered, evaluator)) {
-      issue(path, "草稿确认槽须注册精确版本的宿主评估器，内置评分用于旧声明");
-    }
-    return;
-  }
-  if (readingCapability(evaluator) !== choiceKeyCapability) {
-    issue(path, "须绑定获准读取评分键并输出逐题判定的服务端评估器");
+  const responseType = step && slot && slotResponseType(registry, step, slot);
+  if (responseType === undefined) {
+    issue(["practice", "grading", "assessment", "from"], "逐题评估须绑定逐题作答的交付槽位");
+  } else if (!registry.evaluator(evaluator)?.responseTypes.includes(responseType)) {
+    issue(["practice", "grading", "assessment", "evaluator"], "须绑定已登记且覆盖本槽作答形态的精确评估器版本");
   }
 }
 
@@ -251,7 +231,7 @@ function validateResponseStudentPolicy(student: ReadingPublication["practice"]["
 }
 
 function validateAssessmentPolicy(
-  practice: ReadingPublication["practice"], key: ReadingPublication["scoringKey"], response: ResponseFormat | undefined, issue: Issue,
+  practice: ReadingPublication["practice"], key: ReadingPublication["scoringKey"], registry: Registry, issue: Issue,
 ) {
   const { assessment } = practice.grading;
   const { passageScore, review, ownSubmission } = practice.policy.student;
@@ -260,7 +240,7 @@ function validateAssessmentPolicy(
   if (!assessment && (passageScore || ownSubmission.onFinal.length)) {
     issue(["practice", "policy", "student", "passageScore"], "公布成绩须声明评估槽位和规则");
   }
-  if (assessment && key) validateKey(practice, assessment.keyRef, key, response, issue);
+  if (assessment && key) validateKey(practice, assessment.keyRef, key, registry, issue);
 }
 
 function findSlot(steps: ReadonlyMap<string, ReadingStep>, reference: { stepId: string; slotId: string }) {
@@ -270,50 +250,27 @@ function findSlot(steps: ReadonlyMap<string, ReadingStep>, reference: { stepId: 
 
 function validateKey(
   practice: ReadingPublication["practice"],
-  reference: { id: string; version: number },
+  reference: VersionRef,
   key: NonNullable<ReadingPublication["scoringKey"]>,
-  response: ResponseFormat | undefined,
+  registry: Registry,
   issue: Issue,
 ) {
   if (reference.id !== key.id || reference.version !== key.version) {
     issue(["practice", "grading", "assessment", "keyRef"], "评估引用的评分键版本与发布评分键不一致");
   }
-  const field = response === "optionIndexArray" ? "acceptedIndexes" : response === "booleanOrString" ? "acceptedResponses" : "acceptedChoices";
-  if (!(field in key)) {
+  const [first] = practice.questions;
+  const typeId = first && questionResponseType(registry, practice, first);
+  const type = typeId === undefined ? undefined : registry.responseType(typeId);
+  const values = type && wholePaperValues(key, type);
+  const field = type?.wholePaperKey?.field;
+  if (!type || !values || field === undefined) {
     issue(["scoringKey"], "评分键须与提交槽位类型一致");
     return;
   }
-  if ("acceptedIndexes" in key) {
-    validateIndexKey(practice.questions, key.acceptedIndexes, issue);
-  } else if ("acceptedResponses" in key) {
-    validateQuestionKeys(practice.questions, "acceptedResponses", key.acceptedResponses, "每道题须具有对应的布尔评分键", () => true, issue);
-  } else if ("acceptedChoices" in key) {
-    validateQuestionKeys(practice.questions, "acceptedChoices", key.acceptedChoices, "评分键须指向本题存在的选项",
-      (question, choice) => Object.hasOwn(question.options, choice), issue);
-  }
-}
-
-type PublishedQuestion = ReadingPublication["practice"]["questions"][number];
-
-function validateIndexKey(questions: readonly PublishedQuestion[], values: Readonly<Record<string, readonly number[]>>, issue: Issue) {
-  for (const [index, question] of questions.entries()) {
-    if (Object.keys(question.options).some((id, position) => id !== String(position))) {
-      issue(["practice", "questions", index, "options"], "索引题须冻结从零连续编号的选项");
-    }
-  }
-  validateQuestionKeys(questions, "acceptedIndexes", values, "索引评分键须指向本题存在的选项",
-    (question, indexes) => indexes.every(index => Object.hasOwn(question.options, String(index))), issue);
-}
-
-function validateQuestionKeys<T>(
-  questions: readonly PublishedQuestion[], field: string, values: Readonly<Record<string, T>>, missing: string,
-  accepts: (question: PublishedQuestion, value: T) => boolean, issue: Issue,
-) {
-  const ids = new Set(questions.map(question => question.id));
-  for (const question of questions) {
-    const answer = values[question.id];
-    if (!Object.hasOwn(values, question.id) || answer === undefined || !accepts(question, answer)) {
-      issue(["scoringKey", field, question.id], missing);
+  const ids = new Set(practice.questions.map(question => question.id));
+  for (const question of practice.questions) {
+    if (wholePaperQuestionKey(key, type, question) === undefined) {
+      issue(["scoringKey", field, question.id], "评分键须匹配本题的冻结形态与选项");
     }
   }
   for (const question of Object.keys(values)) {

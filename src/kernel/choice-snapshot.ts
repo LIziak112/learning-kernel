@@ -6,7 +6,7 @@ import type { ReadingActivity } from "./activity.ts";
 import { choiceState, readChoiceHead, requireDraftQuestion } from "./choice-drafts.ts";
 import { requireChoiceReviewerActivity } from "./choice-reviewer.ts";
 import { writeTransaction } from "./database.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 import { boundOutput } from "./reading-progress.ts";
 
 export class ChoiceSnapshotRevisionConflict extends LearningError {

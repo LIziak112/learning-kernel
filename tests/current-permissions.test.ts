@@ -5,6 +5,7 @@ import { z } from "zod";
 import reading from "../practices/reading-library.json" with { type: "json" };
 import { startReceipt, submissionReceipt } from "../src/contracts/reading.ts";
 import { evaluatePending } from "../src/kernel/evaluation.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 import {
   countFacts, firstChoices, firstClock, get, post, prepareAnswers, prepareScenario, readingState, rejection, result,
   scenarioDatabase, secondChoices, withScenarioServer,
@@ -88,7 +89,7 @@ test("撤权后重新读取｜未布置评阅者也能读取整篇结果", async
     const turnIn = await prepareAnswers(origin, scenario, firstChoices, "turn-a");
     await result(post(origin, scenario.path + "/submissions", turnIn), submissionReceipt);
     using database = new DatabaseSync(file);
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     const delivered = await result(get(origin, scenario.path), readingState);
     assert.deepEqual(delivered.assessment, { status: "complete", correctCount: 1, questionCount: 3 });
     assert.equal(delivered.review, undefined);
@@ -117,7 +118,7 @@ for (const [label, questionAllowed, quotesAllowed] of [
       assert.deepEqual(waiting.assessment, { status: "pending" });
       assert.equal(waiting.review, undefined);
       using database = new DatabaseSync(file);
-      evaluatePending(database);
+      evaluatePending(database, defaultRegistry);
       if (!questionAllowed && !quotesAllowed) {
         await rejection(get(origin, review), 403, "FORBIDDEN");
       } else {
@@ -133,7 +134,7 @@ async function completedReview(origin: string, database: DatabaseSync) {
   const scenario = await prepareScenario(origin);
   const input = await prepareAnswers(origin, scenario, firstChoices, "turn-a");
   const receipt = await result(post(origin, scenario.path + "/submissions", input), submissionReceipt);
-  evaluatePending(database);
+  evaluatePending(database, defaultRegistry);
   const parent = `/api/reviews/${scenario.start.activityId}`;
   const manage = `/api/manage/${scenario.start.activityId}`;
   const command = {

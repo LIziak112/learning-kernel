@@ -9,9 +9,11 @@ import { manageReading } from "../src/kernel/review-access.ts";
 import { saveDraft, submitDraft } from "../src/kernel/submission.ts";
 import { readPersonalDraft } from "../src/kernel/work-versions.ts";
 import { ChoiceConfirmationConflict, LearningError, openLearningRuntime } from "../src/server.ts";
-import type { AuthorizeChoiceConfirmationReview, AuthorizeChoiceConfirmationVerdict, ChoiceConfirmationInput, ChoiceEvaluationInput, PublicationInput, VerdictCommand, VerifyOriginal } from "../src/server.ts";
+import type { AuthorizeChoiceConfirmationReview, AuthorizeChoiceConfirmationVerdict, ChoiceConfirmationInput, PublicationInput, VerdictCommand, VerifyOriginal } from "../src/server.ts";
 import { frozenChoicePublication, practiceId, questionVersions, questions } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
+import { choiceEvaluator } from "./fixtures/evaluators.ts";
+import { defaultRegistry } from "./fixtures/evaluators.ts";
 
 const student = { role: "student", id: "owner" } as const;
 const other = { role: "student", id: "other" } as const;
@@ -115,21 +117,23 @@ test("确认有答、部分答、全空三卷并保留全题分母、四类原�
       assert.deepEqual(units.map(row => row.unit_id), input.questions.flatMap(({ questionId }, index) =>
         sample.choices[index] === null ? [] : [`question:${questionId}`]).toSorted());
     }
-    evaluatePending(database);
+    evaluatePending(database, defaultRegistry);
     assert.deepEqual(facts(database), [6, 6, 3, 3, 3, 3, 0, 0]);
   } finally {
     runtime.close();
   }
 });
 
-test("版本、题集合或原稿失配时整单回滚，旧整步写和内置评分不能绕过草稿确认", t => {
+test("版本、题集合或原稿失配时整单回滚，旧整步写和未登记评估器不能绕过草稿确认", t => {
   const path = scenarioDatabase(t);
   const runtime = openLearningRuntime({ databasePath: path, verifyOriginal: ({ original }) => original.state === "none" });
   try {
     const enabled = declaration();
-    assert.throws(() => runtime.publish({ practice: { ...enabled.practice, grading: frozenChoicePublication.practice.grading },
-      scoringKey: frozenChoicePublication.scoringKey,
-    }), error => error instanceof ZodError && error.issues.some(issue => issue.message.includes("内置评分")));
+    const { assessment } = frozenChoicePublication.practice.grading;
+    assert.throws(() => runtime.publish({ practice: { ...enabled.practice,
+      grading: { assessment: { ...assessment, evaluator: { id: "unregistered-choice", version: 1 } } } },
+    scoringKey: frozenChoicePublication.scoringKey,
+    }), error => error instanceof ZodError && error.issues.some(issue => issue.path.join(".") === "practice.grading.assessment.evaluator"));
     const [step] = enabled.practice.steps;
     assert.throws(() => runtime.publish({ practice: { ...enabled.practice,
       steps: [{ ...step, submit: { ...step.submit, purpose: "stepEvidence" } }],
@@ -176,10 +180,10 @@ test("版本、题集合或原稿失配时整单回滚，旧整步写和内置�
     assert.deepEqual(facts(database), baseline);
     assert.equal(runtime.read(student, activityId).status, "active");
 
-    const legacy = saveDraft(database, student.id, activityId, {
+    const legacy = saveDraft(database, defaultRegistry, student.id, activityId, {
       protocolVersion: 1, stepAttemptId, slotId: "answers", choices: { [firstId]: "1", [secondId]: "0" }, references: {},
     });
-    assert.throws(() => submitDraft(database, student.id, activityId, {
+    assert.throws(() => submitDraft(database, defaultRegistry, student.id, activityId, {
       protocolVersion: 1, stepAttemptId, slotId: "answers", operationId: "legacy-confirm", draft: legacy.draft,
     }, () => new Date()), denial(422, "INVALID_SLOT"));
     assert.deepEqual(facts(database).slice(3), [0, 0, 0, 0, 0]);
@@ -271,10 +275,10 @@ test("只有显式允许时方可确认空答，默认旧单选槽仍没有逐�
     const old = runtime.start(student, open);
     assert.throws(() => runtime.confirmChoices(student, old.activityId, intent(old.stepAttemptId, [0, 0])), denial(422, "INVALID_SLOT"));
     using database = new DatabaseSync(path);
-    const legacy = saveDraft(database, student.id, old.activityId, {
+    const legacy = saveDraft(database, defaultRegistry, student.id, old.activityId, {
       protocolVersion: 1, stepAttemptId: old.stepAttemptId, slotId: "answers", choices: { [firstId]: "1", [secondId]: "0" }, references: {},
     });
-    const legacyReceipt = submitDraft(database, student.id, old.activityId, {
+    const legacyReceipt = submitDraft(database, defaultRegistry, student.id, old.activityId, {
       protocolVersion: 1, stepAttemptId: old.stepAttemptId, operationId: "confirm", slotId: "answers", draft: legacy.draft,
     }, () => new Date());
     assert.throws(() => runtime.confirmChoices(student, old.activityId, intent(old.stepAttemptId, [0, 0])), denial(409, "OPERATION_CONFLICT"));
@@ -350,10 +354,10 @@ test("原单选交卷在同一确认上独立改判和清除，原稿、评分�
   let evaluated = 0;
   const registered = {
     databasePath: path,
-    choiceEvaluators: [{ ...evaluator, evaluate: ({ choice, acceptedChoice }: ChoiceEvaluationInput) => {
+    evaluators: [choiceEvaluator(evaluator, ({ choice, acceptedChoice }) => {
       evaluated++;
       return choice === acceptedChoice;
-    } }],
+    })],
     verifyOriginal: ({ original }: Parameters<VerifyOriginal>[0]) => original.state === "none"
       || (original.state === "frozen" && original.versionId === originals.verified.versionId),
     authorizeConfirmationRecovery: ({ studentId }: { studentId: string }) => studentId === student.id,

@@ -4,7 +4,7 @@ import { activityBinding, activityBindingClaims } from "../contracts/activity-bi
 import type { ActivityBindingClaims, ActivityOpeningKey } from "../contracts/activity-bindings.ts";
 import { readTransaction } from "./database.ts";
 import { verifyTeacherAmendmentBindings } from "./teacher-amendment-bindings.ts";
-import { LearningError } from "./learning-error.ts";
+import { LearningError } from "../contracts/learning-error.ts";
 
 const snapshotPath = z.string().min(1);
 
