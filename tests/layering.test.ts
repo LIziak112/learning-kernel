@@ -22,16 +22,20 @@ function imports(file: string) {
 function layerOf(file: string, specifier: string) {
   if (!specifier.startsWith(".")) return specifier.startsWith("node:") ? "node" : specifier;
   const target = relative(root, join(root, file, "..", specifier));
-  return target === join("src", "server.ts") ? "server" : target.split("/")[1] ?? target;
+  if (target === join("src", "server.ts")) return "server";
+  const [top, layer] = target.split("/");
+  return top === "src" ? layer ?? target : top ?? target;
 }
 
 const allowed: Record<string, readonly string[]> = {
   contracts: ["contracts", "node", "zod"],
   extensions: ["contracts", "extensions", "node", "zod"],
   kernel: ["contracts", "kernel", "node", "zod"],
+  runtime: ["contracts", "kernel", "runtime", "node", "zod"],
+  host: ["contracts", "server", "host", "practices", "node", "zod"],
 };
 
-test("分层依赖：契约不依赖实现，默认扩展只经契约接入，内核不导入扩展与宿主", () => {
+test("分层依赖：契约不依赖实现，默认扩展只经契约接入，内核不导入扩展与宿主，演示宿主只经公开入口", () => {
   for (const [layer, permitted] of Object.entries(allowed)) {
     const files = sources(join("src", layer));
     assert.ok(files.length > 0);

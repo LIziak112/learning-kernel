@@ -39,6 +39,8 @@ import { registerPublication } from "./kernel/publication.ts";
 import { evaluatePending } from "./kernel/pending-evaluation.ts";
 import type { EvaluationSummary } from "./kernel/pending-evaluation.ts";
 import { createRegistry } from "./kernel/registry.ts";
+import type { RuntimeCheckpoint } from "./kernel/runtime-checkpoint.ts";
+import { readingEntries } from "./runtime/reading.ts";
 import { confirmResponses, recoverResponseConfirmation } from "./kernel/response-confirmation.ts";
 import { saveResponseDraft } from "./kernel/response-drafts.ts";
 import { readActivity } from "./kernel/submission.ts";
@@ -63,6 +65,8 @@ const runtimeOptions = z.strictObject({
   verifyOriginal: z.custom<VerifyOriginal>(value => typeof value === "function").optional(),
   authorizeConfirmationRecovery: z.custom<AuthorizeConfirmationRecovery>(value => typeof value === "function").optional(),
   authorizeReview: z.custom<AuthorizeReview>(value => typeof value === "function").optional(),
+  clock: callable<() => Date>().optional(),
+  checkpoint: callable<RuntimeCheckpoint>().optional(),
 });
 const studentPrincipal = z.strictObject({ role: z.literal("student"), id });
 const reviewerPrincipal = z.strictObject({ role: z.literal("reviewer"), id });
@@ -70,7 +74,6 @@ const publishedStartInput = startInput.extend({ practiceVersion: versionRef.shap
 const uuid = z.uuid();
 const recoveryMode = z.literal("declared").optional();
 const verdictMode = frozenConfirmationVerdictMode.optional();
-const clock = () => new Date();
 
 export { LearningError };
 export { verifyActivityBindings } from "./kernel/activity-bindings.ts";
@@ -94,6 +97,7 @@ export { ChoiceDraftConflict } from "./kernel/choice-drafts.ts";
 export { ResponseConfirmationConflict } from "./kernel/response-confirmation.ts";
 export { ResponseDraftConflict } from "./kernel/response-drafts.ts";
 export type { EvaluationSummary } from "./kernel/pending-evaluation.ts";
+export type { RuntimeCheckpoint } from "./kernel/runtime-checkpoint.ts";
 export type { ResponseConfirmation, ResponseConfirmationInput, ResponseDraftInput, ResponseValue } from "./contracts/response.ts";
 export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmationInput, ConfirmationKey, CurrentChoiceDraftMode, UnversionedChoiceDraftInput, VerifyOriginal };
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
@@ -119,6 +123,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     answerRules: settings.questionAnswerRules,
   });
   const database = openDatabase(settings.databasePath);
+  const clock = settings.clock ?? (() => new Date());
 
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, mode: "declared"): DeclaredQuestionDeliveryRecovery;
   function recoverDelivery(principal: StudentPrincipal, activityId: string, key: ConfirmationKey): AutomaticQuestionDeliveryRecovery;
@@ -147,6 +152,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
   }
 
   return {
+    ...readingEntries({ database, registry, clock, checkpoint: settings.checkpoint }),
     publish(input: PublicationInput) {
       registerPublication(database, input, registry);
     },
@@ -229,7 +235,7 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
         confirmationKey.parse(key), verdictCommand.parse(command), settings.authorizeReview, clock, verdictMode.parse(input));
     },
     evaluatePending(scope?: { submissionId: string }): EvaluationSummary {
-      return evaluatePending(database, registry, undefined, scope && uuid.parse(scope.submissionId));
+      return evaluatePending(database, registry, settings.checkpoint, scope && uuid.parse(scope.submissionId));
     },
     close() {
       database.close();

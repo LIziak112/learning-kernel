@@ -1,25 +1,14 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { startInput, redoInput, saveInput, submitInput } from "../contracts/reading.ts";
-import type { SubmitInput } from "../contracts/reading.ts";
-import { readingAnswerInput, readingSaveInput } from "../contracts/reading-runtime.ts";
-import { verdictCommand } from "../contracts/verdict.ts";
-import { redoActivity, startActivity } from "../kernel/activity.ts";
-import { openDatabase } from "../kernel/database.ts";
-import { evaluatePending } from "../kernel/pending-evaluation.ts";
 import { LearningError } from "../contracts/learning-error.ts";
-import { registerPublication } from "../kernel/publication.ts";
-import { createRegistry } from "../kernel/registry.ts";
-import { defaultEvaluators, defaultResponseTypes, defaultTools } from "../extensions/index.ts";
-import { managementInput, managementView, manageReading } from "../kernel/review-access.ts";
-import { readReview, selectionFeedbackInput, writeSelectionFeedback, writeVerdict } from "../kernel/review.ts";
-import type { RuntimeCheckpoint } from "../kernel/runtime-checkpoint.ts";
-import { readActivity, readStudentFragment, readStudentResults, readSubmission, saveDraft, submitDraft } from "../kernel/submission.ts";
-import { readPersonalDraft } from "../kernel/work-versions.ts";
+import { submitInput } from "../contracts/reading.ts";
+import type { SubmitInput } from "../contracts/reading.ts";
+import { openLearningRuntime } from "../server.ts";
+import type { PublicationInput, RuntimeCheckpoint } from "../server.ts";
 import { authenticate, readJSON, sendJSON, sendError } from "./http.ts";
 
+type Runtime = ReturnType<typeof openLearningRuntime>;
 type PageHandler = (request: IncomingMessage, response: ServerResponse, path: string) => boolean;
 type Identity = { id: string; role: "student" | "reviewer" };
 type HostOptions = {
@@ -37,33 +26,34 @@ type HostOptions = {
   beforeDelivery?: (path: string) => Promise<void>;
 };
 type HostContext = {
-  database: DatabaseSync;
+  runtime: Runtime;
   lookup: (token: string) => Identity | undefined;
   scheduleEvaluation: () => void;
-  clock: () => Date;
   beforeConfirmation: HostOptions["beforeConfirmation"];
   checkpoint: RuntimeCheckpoint | undefined;
   beforeDelivery: HostOptions["beforeDelivery"];
   assignedReviewer?: string | undefined;
   servePage?: PageHandler | undefined;
 };
-const saveRequest = z.union([saveInput, readingSaveInput, readingAnswerInput]);
 
-const registry = createRegistry({ tools: defaultTools, responseTypes: defaultResponseTypes, evaluators: defaultEvaluators, answerRules: [] });
-
-function openHostDatabase(options: HostOptions) {
-  const database = openDatabase(options.databasePath);
+function openHostRuntime(options: HostOptions) {
+  const runtime = openLearningRuntime({
+    databasePath: options.databasePath,
+    ...options.clock && { clock: options.clock },
+    ...options.checkpoint && { checkpoint: options.checkpoint },
+  });
   try {
-    registerPublication(database, options.publication, registry);
-    options.additionalPublications?.forEach(publication => registerPublication(database, publication, registry));
+    for (const publication of [options.publication, ...options.additionalPublications ?? []]) {
+      runtime.publish(z.custom<PublicationInput>(value => typeof value === "object" && value !== null).parse(publication));
+    }
   } catch (error) {
-    database.close();
+    runtime.close();
     throw error;
   }
-  return database;
+  return runtime;
 }
 
-function evaluationSchedule(database: DatabaseSync, enabled = true, checkpoint?: RuntimeCheckpoint) {
+function evaluationSchedule(runtime: Runtime, enabled = true) {
   let scheduled: NodeJS.Immediate | undefined;
   return {
     schedule() {
@@ -71,7 +61,7 @@ function evaluationSchedule(database: DatabaseSync, enabled = true, checkpoint?:
       scheduled = setImmediate(() => {
         scheduled = undefined;
         try {
-          evaluatePending(database, registry, checkpoint);
+          runtime.evaluatePending();
         } catch (error) {
           console.error(error);
         }
@@ -91,12 +81,11 @@ function sessionLookup(options: HostOptions, token: string): Identity | undefine
 }
 
 export function createLearningServer(options: HostOptions) {
-  const database = openHostDatabase(options);
-  const evaluation = evaluationSchedule(database, options.evaluateAutomatically, options.checkpoint);
+  const runtime = openHostRuntime(options);
+  const evaluation = evaluationSchedule(runtime, options.evaluateAutomatically);
   const context: HostContext = {
-    database, lookup: token => sessionLookup(options, token), scheduleEvaluation: evaluation.schedule,
-    clock: options.clock ?? (() => new Date()), beforeConfirmation: options.beforeConfirmation,
-    checkpoint: options.checkpoint, beforeDelivery: options.beforeDelivery,
+    runtime, lookup: token => sessionLookup(options, token), scheduleEvaluation: evaluation.schedule,
+    beforeConfirmation: options.beforeConfirmation, checkpoint: options.checkpoint, beforeDelivery: options.beforeDelivery,
     assignedReviewer: options.assignedReviewer, servePage: options.servePage,
   };
   const server = createServer((request, response) => {
@@ -105,7 +94,7 @@ export function createLearningServer(options: HostOptions) {
   server.once("listening", evaluation.schedule);
   server.once("close", () => {
     evaluation.cancel();
-    database.close();
+    runtime.close();
   });
   return server;
 }
@@ -140,11 +129,11 @@ async function staffRequest(request: IncomingMessage, context: HostContext, iden
   const activityId = z.uuid().parse(identifier);
   if (group === "reviews") return reviewRequest(request, context, identity, activityId, resource, item);
   if (resource) throw new LearningError(404, "NOT_FOUND");
-  if (request.method === "GET") return managementView(context.database, identity.id, activityId);
+  if (request.method === "GET") return context.runtime.readManagement(identity, activityId);
   if (request.method !== "POST") throw new LearningError(404, "NOT_FOUND");
-  const command = managementInput.parse(await readJSON(request));
+  const command = await readJSON(request);
   requireSameIdentity(request, context, identity);
-  return manageReading(context.database, identity.id, activityId, command.action);
+  return context.runtime.manage(identity, activityId, command);
 }
 
 async function studentRequest(
@@ -154,14 +143,13 @@ async function studentRequest(
   path: string,
 ) {
   if (identity.role !== "student") throw new LearningError(403, "FORBIDDEN");
-  const student = identity.id;
   if (request.method === "POST" && path === "/api/activities") {
-    const input = startInput.parse(await readJSON(request));
+    const input = await readJSON(request);
     requireSameIdentity(request, context, identity);
-    return startActivity(context.database, student, input, context.clock, context.assignedReviewer);
+    return context.runtime.startLatest(identity, input, context.assignedReviewer ? { assignedReviewer: context.assignedReviewer } : undefined);
   }
   const personal = path.match(/^\/api\/drafts\/([a-f0-9-]{36})$/);
-  if (request.method === "GET" && personal) return readPersonalDraft(context.database, student, z.uuid().parse(personal[1]));
+  if (request.method === "GET" && personal) return context.runtime.readPersonalDraft(identity, z.uuid().parse(personal[1]));
   const match = path.match(
     /^\/api\/activities\/([a-f0-9-]{36})(?:\/(drafts|submissions|assessment|review|export|fragments|redo)(?:\/([^/]+))?)?$/,
   );
@@ -169,27 +157,25 @@ async function studentRequest(
   const [, identifier, resource, submissionId] = match;
   const activityId = z.uuid().parse(identifier);
   return request.method === "GET"
-    ? get(context.database, student, activityId, resource, submissionId)
-    : await post(request, context, student, activityId, resource, submissionId);
+    ? get(context.runtime, identity, activityId, resource, submissionId)
+    : await post(request, context, identity, activityId, resource, submissionId);
 }
 
 async function reviewRequest(
   request: IncomingMessage, context: HostContext, identity: Identity, activityId: string, resource?: string, item?: string,
 ) {
-  if (request.method === "GET") return reviewerGet(context.database, identity.id, activityId, resource, item);
+  if (request.method === "GET") return reviewerGet(context.runtime, identity, activityId, resource, item);
   if (request.method === "POST" && !item) {
     const command = await readJSON(request);
     requireSameIdentity(request, context, identity);
-    if (resource === "verdicts") {
-      return writeVerdict(context.database, identity.id, activityId, verdictCommand.parse(command), context.clock);
-    }
-    if (!resource) return writeSelectionFeedback(context.database, identity.id, activityId, selectionFeedbackInput.parse(command).text);
+    if (resource === "verdicts") return context.runtime.writeReadingVerdict(identity, activityId, command);
+    if (!resource) return context.runtime.writeSelectionFeedback(identity, activityId, command);
   }
   throw new LearningError(404, "NOT_FOUND");
 }
 
-function reviewerGet(database: DatabaseSync, reviewer: string, activityId: string, resource?: string, item?: string) {
-  const view = readReview(database, reviewer, activityId);
+function reviewerGet(runtime: Runtime, reviewer: Identity, activityId: string, resource?: string, item?: string) {
+  const view = runtime.readReadingReview(reviewer, activityId);
   if (resource === "submissions" || resource === "fragments") {
     return reviewerItem(view.submissions, resource, item);
   }
@@ -200,7 +186,7 @@ function reviewerGet(database: DatabaseSync, reviewer: string, activityId: strin
 }
 
 function reviewerItem(
-  submissions: ReturnType<typeof readReview>["submissions"], resource: "submissions" | "fragments", item?: string,
+  submissions: ReturnType<Runtime["readReadingReview"]>["submissions"], resource: "submissions" | "fragments", item?: string,
 ) {
   if (!item) throw new LearningError(404, "NOT_FOUND");
   const submitted = submissions.find(record => record.receipt.id === item);
@@ -210,51 +196,55 @@ function reviewerItem(
   throw new LearningError(403, "FORBIDDEN");
 }
 
-function get(database: DatabaseSync, student: string, activityId: string, resource?: string, submissionId?: string) {
-  if (!resource) return readActivity(database, student, activityId);
+function get(runtime: Runtime, student: Identity, activityId: string, resource?: string, submissionId?: string) {
+  if (!resource) return runtime.read(identityOf(student), activityId);
   if (resource === "assessment" || resource === "review" || resource === "export") {
     if (submissionId) throw new LearningError(403, "FORBIDDEN");
-    return readStudentResults(database, student, activityId, resource);
+    return runtime.readResults(student, activityId, resource);
   }
   if (!submissionId) throw new LearningError(404, "NOT_FOUND");
-  if (resource === "submissions") return readSubmission(database, student, activityId, z.uuid().parse(submissionId));
-  if (resource === "fragments") return readStudentFragment(database, student, activityId, z.uuid().parse(submissionId));
+  if (resource === "submissions") return runtime.readSubmission(student, activityId, submissionId);
+  if (resource === "fragments") return runtime.readFragment(student, activityId, submissionId);
   throw new LearningError(404, "NOT_FOUND");
 }
 
 async function post(
   request: IncomingMessage,
   context: HostContext,
-  student: string,
+  student: Identity,
   activityId: string,
   resource?: string,
   submissionId?: string,
 ) {
   if (request.method !== "POST" || submissionId) throw new LearningError(404, "NOT_FOUND");
   if (resource === "drafts") {
-    const input = saveRequest.parse(await readJSON(request));
-    requireSameIdentity(request, context, { id: student, role: "student" });
-    return saveDraft(context.database, registry, student, activityId, input);
+    const input = await readJSON(request);
+    requireSameIdentity(request, context, student);
+    return context.runtime.saveDraft(student, activityId, input);
   }
   if (resource === "submissions") {
     const input = submitInput.parse(await readJSON(request));
     return confirmRequest(request, context, student, activityId, input);
   }
   if (resource === "redo") {
-    const input = redoInput.parse(await readJSON(request));
-    requireSameIdentity(request, context, { id: student, role: "student" });
-    return redoActivity(context.database, student, activityId, input.operationId, context.clock);
+    const input = await readJSON(request);
+    requireSameIdentity(request, context, student);
+    return context.runtime.redo(student, activityId, input);
   }
   throw new LearningError(404, "NOT_FOUND");
 }
 
-async function confirmRequest(request: IncomingMessage, context: HostContext, student: string, activityId: string, input: SubmitInput) {
+async function confirmRequest(request: IncomingMessage, context: HostContext, student: Identity, activityId: string, input: SubmitInput) {
   await context.beforeConfirmation?.(input);
-  requireSameIdentity(request, context, { id: student, role: "student" });
-  const receipt = submitDraft(context.database, registry, student, activityId, input, context.clock, context.checkpoint);
+  requireSameIdentity(request, context, student);
+  const receipt = context.runtime.submitDraft(student, activityId, input);
   context.checkpoint?.({ point: "afterConfirmationCommit", operationId: input.operationId });
   context.scheduleEvaluation();
   return receipt;
+}
+
+function identityOf({ id }: Identity) {
+  return { role: "student" as const, id };
 }
 
 function requireSameIdentity(request: IncomingMessage, context: HostContext, expected: Identity) {
