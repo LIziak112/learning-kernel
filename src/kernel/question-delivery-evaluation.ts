@@ -9,7 +9,7 @@ import { findResponseEvaluator } from "../contracts/response-evaluation.ts";
 import { indexResponseValue, orderedTextResponseValue, responseValue, titledTextResponseValue } from "../contracts/response.ts";
 import type { StoredResponseValue } from "../contracts/response.ts";
 import type { ReadingActivity } from "./activity.ts";
-import { loadEvaluationKey, queueEvaluation, registerTeacherReviewTarget } from "./evaluation.ts";
+import { loadEvaluationKey, queueEvaluation } from "./evaluation.ts";
 import { LearningError } from "./learning-error.ts";
 import type { PublicationEvaluators } from "./publication-bindings.ts";
 import { readResponseReviewRequirements, recordResponseReviewRequirements, recoverEvaluatedResponses } from "./response-evaluation.ts";
@@ -31,8 +31,6 @@ export function registerDeliveryAssessment(
   const { automatic, review } = confirmedDeliveryAssessment(activity, content);
   if (automatic.length || activity.practice.grading.manualReview) {
     queueEvaluation(database, activity, receipt, targetId, content.slotId);
-  } else if (review.length) {
-    registerTeacherReviewTarget(database, receipt.id, targetId);
   }
   if (review.length) recordResponseReviewRequirements(database, receipt.id, review.map(({ questionId }) => questionId));
 }

@@ -695,16 +695,81 @@ test("按题教师评阅｜无参考教师只读写声明题位，重开保留�
       status: "judged", effective: { source: "teacherReview", id: marked.id, correct: false } }]);
     allowed = false;
     assert.throws(() => reopened.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, command), { code: "FORBIDDEN" });
-    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 0, evaluation_tasks: 1,
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 0, evaluation_tasks: 0,
       automatic_verdicts: 0, response_review_requirements: 1, performances: 0 });
     using database = new DatabaseSync(databasePath);
-    const target = database.prepare("SELECT key_id, key_version, status FROM evaluation_tasks").get();
-    assert.deepEqual({ ...target }, { key_id: null, key_version: null, status: "done" });
-    assert.throws(() => database.exec("UPDATE evaluation_tasks SET key_id = 'half-key'"), /CHECK constraint failed/);
-    assert.throws(() => database.exec("UPDATE evaluation_tasks SET key_version = 1"), /CHECK constraint failed/);
-    assert.throws(() => database.exec("UPDATE evaluation_tasks SET status = 'pending'"), /CHECK constraint failed/);
-    assert.throws(() => database.exec("UPDATE evaluation_tasks SET key_id = 'missing', key_version = 1"), /FOREIGN KEY constraint failed/);
+    assert.equal(database.prepare("SELECT count(*) AS n FROM evaluation_tasks").get()?.n, 0);
+    const insertTask = database.prepare(`INSERT INTO evaluation_tasks (submission_id, key_id, key_version, target_id, status)
+      VALUES (?, ?, ?, 'observe', 'done')`);
+    assert.throws(() => insertTask.run(marked.submissionId, null, null), /NOT NULL constraint failed/);
+    assert.throws(() => insertTask.run(marked.submissionId, "missing", 1), /FOREIGN KEY constraint failed/);
   } finally { reopened.close(); }
+});
+
+test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升级后改挂原提交且读面不变", t => {
+  const databasePath = scenarioDatabase(t);
+  const base = publication("legacy-review-anchor");
+  const settings = { databasePath, verifyOriginal: () => true, authorizeConfirmationRecovery: () => true,
+    authorizeQuestionDeliveryReview: () => true, authorizeQuestionDeliveryVerdict: () => true };
+  const before = (() => {
+    const runtime = openLearningRuntime(settings);
+    try {
+      runtime.publish({ ...base, practice: { ...base.practice, questions: [ordering], grading: { teacherReview: { questionIds: [ordering.id] } } } });
+      const activity = start(runtime, base.practice.id);
+      const input = confirmation(activity, [revision(ordering, 0)]);
+      const receipt = runtime.confirmQuestionDelivery(student, activity.activityId, input);
+      const key = recoveryKey(input);
+      runtime.writeQuestionDeliveryVerdict(reviewer, activity.activityId, key, { protocolVersion: 1, submissionId: receipt.id,
+        targetId: "observe", questionId: ordering.id, operationId: "legacy-mark", action: "override", correct: true,
+        reason: "旧版人工判定", expectedRevision: 0 });
+      return { activityId: activity.activityId, key, receipt, review: runtime.readQuestionDeliveryReview(reviewer, activity.activityId, key, "verdicts") };
+    } finally { runtime.close(); }
+  })();
+  {
+    using legacy = new DatabaseSync(databasePath, { enableForeignKeyConstraints: false });
+    legacy.exec(`
+      BEGIN;
+      CREATE TABLE legacy_tasks (
+        submission_id TEXT PRIMARY KEY REFERENCES submissions (id), key_id TEXT, key_version INTEGER, target_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'done')), CHECK ((key_id IS NULL) = (key_version IS NULL)),
+        CHECK (key_id IS NOT NULL OR status = 'done'), FOREIGN KEY (key_id, key_version) REFERENCES scoring_keys (id, version)
+      ) STRICT;
+      INSERT INTO legacy_tasks SELECT * FROM evaluation_tasks;
+      DROP TABLE evaluation_tasks;
+      ALTER TABLE legacy_tasks RENAME TO evaluation_tasks;
+      INSERT INTO evaluation_tasks (submission_id, target_id, status) VALUES ('${before.receipt.id}', 'observe', 'done');
+      CREATE TABLE legacy_requirements (
+        submission_id TEXT NOT NULL REFERENCES evaluation_tasks (submission_id), question_id TEXT NOT NULL,
+        PRIMARY KEY (submission_id, question_id)
+      ) STRICT;
+      INSERT INTO legacy_requirements SELECT * FROM response_review_requirements;
+      DROP TABLE response_review_requirements;
+      ALTER TABLE legacy_requirements RENAME TO response_review_requirements;
+      CREATE TABLE legacy_events (
+        id TEXT PRIMARY KEY, activity_id TEXT NOT NULL REFERENCES activities (id),
+        submission_id TEXT NOT NULL REFERENCES evaluation_tasks (submission_id), target_id TEXT NOT NULL, question_id TEXT NOT NULL,
+        revision INTEGER NOT NULL, reviewer_id TEXT NOT NULL, operation_id TEXT NOT NULL, reason TEXT NOT NULL, reviewed_at TEXT NOT NULL,
+        action TEXT NOT NULL, correct INTEGER, withdraw_id TEXT REFERENCES legacy_events (id)
+      ) STRICT;
+      INSERT INTO legacy_events SELECT * FROM verdict_events;
+      DROP TABLE verdict_events;
+      ALTER TABLE legacy_events RENAME TO verdict_events;
+      DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations);
+      COMMIT;
+    `);
+    assert.deepEqual(legacy.prepare("PRAGMA foreign_key_check").all(), []);
+  }
+  const upgraded = openLearningRuntime(settings);
+  try {
+    assert.deepEqual(upgraded.readQuestionDeliveryReview(reviewer, before.activityId, before.key, "verdicts"), before.review);
+  } finally { upgraded.close(); }
+  using database = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal(database.prepare("SELECT count(*) AS n FROM evaluation_tasks").get()?.n, 0);
+  for (const table of ["verdict_events", "response_review_requirements"]) {
+    const parents = database.prepare(`SELECT "table" AS parent FROM pragma_foreign_key_list('${table}') WHERE "from" = 'submission_id'`).all();
+    assert.deepEqual(parents.map(row => row.parent), ["submissions"]);
+  }
+  assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 1);
 });
 
 test("按题教师评阅｜逐题仅为本次确认的声明位置建目标", t => {
@@ -732,7 +797,7 @@ test("按题教师评阅｜逐题仅为本次确认的声明位置建目标", t 
     const review = runtime.readQuestionDeliveryReview(reviewer, activity.activityId, recoveryKey(finish), "verdicts");
     assert.deepEqual(review.receipt, receipt);
     assert.deepEqual(review.questions, [{ questionId: ordering.id, questionVersion: ordering.version, revision: 0, status: "needsReview" }]);
-    assert.deepEqual(facts(databasePath), { submissions: 2, completions: 1, scoring_keys: 0, evaluation_tasks: 1,
+    assert.deepEqual(facts(databasePath), { submissions: 2, completions: 1, scoring_keys: 0, evaluation_tasks: 0,
       automatic_verdicts: 0, response_review_requirements: 1, performances: 0 });
   } finally { runtime.close(); }
 });
@@ -772,8 +837,9 @@ test("按题教师评阅｜混合练法的单题回执按各自任务恢复", t 
     assert.equal(inputs.length, 1);
     assert.equal(result.confirmation.questions.length, 1);
     using database = new DatabaseSync(databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT 1 FROM evaluation_tasks WHERE submission_id = ?").get(receipt.id), undefined);
+    assert.ok(database.prepare("SELECT 1 FROM response_review_requirements WHERE submission_id = ?").get(receipt.id));
     const task = database.prepare("SELECT key_id, key_version, status FROM evaluation_tasks WHERE submission_id = ?");
-    assert.deepEqual({ ...task.get(receipt.id) }, { key_id: null, key_version: null, status: "done" });
     assert.deepEqual({ ...task.get(finishReceipt.id) }, { key_id: keyRef.id, key_version: keyRef.version, status: "done" });
   } finally { runtime.close(); }
 });
@@ -873,11 +939,10 @@ test("零位置有序答案｜同一确认保留显式空答与缺稿，重开�
     allowed = false;
     assert.throws(() => write(mark), { code: "FORBIDDEN" });
     assert.throws(() => write(withdraw), { code: "FORBIDDEN" });
-    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 0, evaluation_tasks: 1,
+    assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 0, evaluation_tasks: 0,
       automatic_verdicts: 0, response_review_requirements: 2, performances: 0 });
     using database = new DatabaseSync(databasePath, { readOnly: true });
-    const task = database.prepare("SELECT key_id, key_version, status FROM evaluation_tasks").get();
-    assert.deepEqual({ ...task }, { key_id: null, key_version: null, status: "done" });
+    assert.equal(database.prepare("SELECT count(*) AS n FROM evaluation_tasks").get()?.n, 0);
   } finally { runtime.close(); }
 });
 

@@ -6,13 +6,13 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import { openDatabase } from "../src/kernel/database.ts";
+import { latestDatabaseVersion, openDatabase } from "../src/kernel/database.ts";
 import { readingMigration } from "../src/kernel/reading-migration.ts";
 import { registerPublication } from "../src/kernel/publication.ts";
 import { openLearningRuntime } from "../src/server.ts";
 import single from "../practices/single-quote.json" with { type: "json" };
 
-const appliedVersions = Array.from({ length: 18 }, (_, index) => index + 1);
+const appliedVersions = Array.from({ length: latestDatabaseVersion }, (_, index) => index + 1);
 
 test("同一文件库重复初始化只应用一次首迁移，关闭重开仍可读到版本", t => {
   const path = temporaryDatabasePath(t);

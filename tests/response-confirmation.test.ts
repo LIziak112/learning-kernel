@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { openLearningRuntime, ResponseConfirmationConflict } from "../src/server.ts";
+import { latestDatabaseVersion } from "../src/kernel/database.ts";
 import type {
   AuthorizeResponseConfirmationReview, AuthorizeResponseConfirmationVerdict, PublicationInput, ResponseConfirmationInput,
   ResponseDraftInput, ResponseEvaluator, ResponseEvaluatorRegistration, VerdictCommand,
@@ -381,7 +382,7 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
     assert.equal(restored.evaluation?.questions[0]?.correct, true);
     assert.throws(() => upgraded.recoverResponseConfirmation(student, open.activityId, key), { status: 404, code: "CONFIRMATION_NOT_FOUND" });
     using database = new DatabaseSync(databasePath);
-    assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version, 18);
+    assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version, latestDatabaseVersion);
     assert.equal(database.prepare("PRAGMA foreign_key_check").get(), undefined);
   } finally {
     upgraded.close();

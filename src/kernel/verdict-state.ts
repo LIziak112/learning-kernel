@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { ReadingActivity } from "./activity.ts";
 import { activeTeacherVerdict, verdictHistory } from "./verdict-history.ts";
 
-const assessment = z.strictObject({ submissionId: z.uuid(), targetId: z.string(), status: z.enum(["pending", "done"]) });
+const storedAssessment = z.strictObject({ submissionId: z.uuid(), targetId: z.string(), status: z.enum(["pending", "done"]) });
+type Assessment = { submissionId: string; targetId: string; status: z.infer<typeof storedAssessment>["status"] | "unassessed" };
 const storedAutomatic = z.strictObject({
   questionId: z.string(), correct: z.literal([0, 1]).transform(Boolean), valid: z.literal([0, 1]).transform(Boolean),
 });
@@ -21,7 +22,14 @@ function findAssessmentTarget(database: DatabaseSync, condition: string, id: str
     SELECT submission_id AS submissionId, target_id AS targetId, status
     FROM evaluation_tasks WHERE ${condition}
   `).get(id);
-  return target ? assessment.parse(target) : undefined;
+  return target ? storedAssessment.parse(target) : undefined;
+}
+
+export function submissionReviewTarget(database: DatabaseSync, submissionId: string, targetId: string): Assessment | undefined {
+  const task = submissionAssessmentTarget(database, submissionId);
+  if (task) return task;
+  const required = database.prepare("SELECT 1 FROM response_review_requirements WHERE submission_id = ? LIMIT 1").get(submissionId);
+  return required ? { submissionId, targetId, status: "unassessed" } : undefined;
 }
 
 export function readAutomaticVerdicts(database: DatabaseSync, { submissionId, targetId }: { submissionId: string; targetId: string }) {
@@ -30,13 +38,13 @@ export function readAutomaticVerdicts(database: DatabaseSync, { submissionId, ta
   `).all(submissionId, targetId).map(row => storedAutomatic.parse(row));
 }
 
-export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: z.infer<typeof assessment>) {
+export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: Assessment) {
   const questions = activity.practice.questions.map(({ id: questionId, prompt }) => ({ questionId, prompt }));
   return questionVerdictStates(database, target, questions);
 }
 
 export function questionVerdictStates<Question extends { questionId: string }>(
-  database: DatabaseSync, target: z.infer<typeof assessment>, questions: readonly Question[],
+  database: DatabaseSync, target: Assessment, questions: readonly Question[],
 ) {
   const automatic = readAutomaticVerdicts(database, target);
   const history = verdictHistory(database, target);

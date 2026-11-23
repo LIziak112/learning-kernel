@@ -15,7 +15,7 @@ import { requireQuestionDeliverySlot } from "./question-delivery-drafts.ts";
 import { confirmedDeliveryAssessment, readManualReviewBasis, readManualReviewQuestions } from "./question-delivery-evaluation.ts";
 import { boundOutput } from "./reading-progress.ts";
 import { appendReview, repeatedReview } from "./verdict-history.ts";
-import { questionVerdictStates, submissionAssessmentTarget } from "./verdict-state.ts";
+import { questionVerdictStates, submissionReviewTarget } from "./verdict-state.ts";
 
 export function readQuestionDeliveryReview(
   database: DatabaseSync, reviewerId: string, activityId: string, key: ConfirmationKey, authorize: AuthorizeConfirmedReview | undefined,
@@ -35,7 +35,7 @@ export function readQuestionDeliveryVerdicts(
 ) {
   return readTransaction(database, () => {
     const { activity, receipt, content } = authorizedReview(database, reviewerId, activityId, key, authorize);
-    const target = requireAssessment(database, receipt.id);
+    const target = requireAssessment(database, receipt.id, requireQuestionDeliverySlot(activity, content.slotId).targetId);
     const manualReview = activity.practice.grading.manualReview;
     const { automatic, review } = confirmedDeliveryAssessment(activity, content);
     const assessmentIds = new Set([...automatic, ...review].map(({ questionId }) => questionId));
@@ -68,7 +68,7 @@ function readFrozenConfirmationVerdicts<Confirmation extends Pick<ChoiceConfirma
     const { activity, receipt, content } = authorizedConfirmation(database, reviewerId, activityId, key, authorize);
     const confirmation = read(content);
     if (!confirmation) throw new LearningError(404, "REVIEW_NOT_FOUND");
-    const target = requireAssessment(database, receipt.id);
+    const target = requireAssessment(database, receipt.id, boundOutput(activity.step, receipt.slotId).targetId);
     const questions = reviewedVerdicts(database, target, confirmation.questions, confirmation.questions);
     const { id, version } = activity.practice;
     return { receipt, practice: { id, version }, confirmation, targetId: target.targetId, assessment: "automatic" as const, questions };
@@ -99,7 +99,7 @@ export function writeQuestionDeliveryVerdict(
     if (authorize?.({ ...scope, targetId, questionId, questionVersion, action }) !== true) {
       throw new LearningError(403, "FORBIDDEN");
     }
-    const target = requireAssessment(database, receipt.id);
+    const target = requireAssessment(database, receipt.id, targetId);
     if (target.targetId !== targetId) throw new Error("评估目标与冻结提交不一致");
     if (delivery) {
       const { automatic, review } = confirmedDeliveryAssessment(activity, delivery);
@@ -144,8 +144,8 @@ function reviewedDelivery({ practice: { id, version } }: ReadingActivity, receip
   return { receipt, practice: { id, version }, confirmation: questionDeliveryView(content) };
 }
 
-function requireAssessment(database: DatabaseSync, submissionId: string) {
-  const target = submissionAssessmentTarget(database, submissionId);
+function requireAssessment(database: DatabaseSync, submissionId: string, targetId: string) {
+  const target = submissionReviewTarget(database, submissionId, targetId);
   if (!target) throw new LearningError(404, "REVIEW_NOT_FOUND");
   return target;
 }
