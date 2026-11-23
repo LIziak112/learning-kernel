@@ -12,39 +12,41 @@ import { scenarioDatabase } from "../fixtures/online-reading.ts";
 const teacherOnly: GradingPolicy = { version: 1, withReference: "teacherReview" };
 const everyField: GradingPolicyField[] = ["version", "withReference"];
 
-type FallbackCase = Readonly<{ name: string; declared: unknown; policy: GradingPolicy; fallbacks: readonly GradingPolicyField[] }>;
+type FallbackCase = Readonly<{ name: string; declared: unknown; policy: GradingPolicy; fallbacks: readonly GradingPolicyField[]; ignored?: readonly string[] }>;
 const cases: readonly FallbackCase[] = [
   { name: "空策略：未声明", declared: undefined, policy: defaultGradingPolicy, fallbacks: everyField },
   { name: "空策略：null", declared: null, policy: defaultGradingPolicy, fallbacks: everyField },
   { name: "全缺：空对象", declared: {}, policy: defaultGradingPolicy, fallbacks: everyField },
-  { name: "全缺：只有未知字段", declared: { gradingPolicy: "auto" }, policy: defaultGradingPolicy, fallbacks: everyField },
+  { name: "全缺：只有未知字段", declared: { gradingPolicy: "auto" }, policy: defaultGradingPolicy, fallbacks: everyField, ignored: ["gradingPolicy"] },
   { name: "只缺 version", declared: { withReference: "teacherReview" }, policy: teacherOnly, fallbacks: ["version"] },
   { name: "只缺 withReference", declared: { version: 1 }, policy: defaultGradingPolicy, fallbacks: ["withReference"] },
   { name: "非法：整份策略是字符串", declared: "reference_self", policy: defaultGradingPolicy, fallbacks: everyField },
   { name: "非法：整份策略是数组", declared: [teacherOnly], policy: defaultGradingPolicy, fallbacks: everyField },
-  { name: "非法：version 类型错", declared: { ...teacherOnly, version: "1" }, policy: teacherOnly, fallbacks: ["version"] },
-  { name: "非法：version 未知取值", declared: { ...teacherOnly, version: 2 }, policy: teacherOnly, fallbacks: ["version"] },
+  { name: "非法：version 类型错，整份回落", declared: { ...teacherOnly, version: "1" }, policy: defaultGradingPolicy, fallbacks: everyField },
+  { name: "非法：version 未知取值，整份回落", declared: { ...teacherOnly, version: 2 }, policy: defaultGradingPolicy, fallbacks: everyField },
   { name: "非法：withReference 类型错", declared: { version: 1, withReference: true }, policy: defaultGradingPolicy, fallbacks: ["withReference"] },
-  { name: "非法：withReference 用旧产品档名", declared: { version: 1, withReference: "manual_only" }, policy: defaultGradingPolicy,
+  { name: "非法：withReference 未知取值（旧产品档名）", declared: { version: 1, withReference: "manual_only" }, policy: defaultGradingPolicy,
     fallbacks: ["withReference"] },
+  { name: "合法字段夹带未知字段：照用合法字段，未知字段记入 ignored", declared: { ...teacherOnly, gradingPolicy: "reference_self" },
+    policy: teacherOnly, fallbacks: [], ignored: ["gradingPolicy"] },
   { name: "合法：教师关闭自评", declared: teacherOnly, policy: teacherOnly, fallbacks: [] },
   { name: "合法：默认策略", declared: { ...defaultGradingPolicy }, policy: defaultGradingPolicy, fallbacks: [] },
 ];
 
 test("兜底矩阵覆盖空策略、每次只缺一个字段、全缺、每个字段的类型错与未知取值", () => {
   for (const field of everyField) {
-    const alone = cases.filter(({ fallbacks }) => fallbacks.length === 1 && fallbacks[0] === field);
-    assert.ok(alone.some(({ name }) => name.startsWith("只缺")), `缺少只缺 ${field} 的用例`);
-    assert.ok(alone.some(({ name }) => name.includes("类型错")), `缺少 ${field} 类型错的用例`);
-    assert.ok(alone.filter(({ name }) => name.startsWith("非法")).length >= 2, `缺少 ${field} 未知取值的用例`);
+    const about = cases.filter(({ name }) => name.includes(field));
+    assert.ok(about.some(({ name, fallbacks }) => name.startsWith("只缺") && fallbacks.includes(field)), `缺少只缺 ${field} 的用例`);
+    assert.ok(about.some(({ name, fallbacks }) => name.includes("类型错") && fallbacks.includes(field)), `缺少 ${field} 类型错的用例`);
+    assert.ok(about.some(({ name, fallbacks }) => name.includes("未知取值") && fallbacks.includes(field)), `缺少 ${field} 未知取值的用例`);
   }
   assert.ok(cases.some(({ declared }) => declared === undefined) && cases.some(({ declared }) => declared === null));
 });
 
 test("兜得住①②：任何声明都回落成完整策略且不抛错，回落字段逐一记账，合法字段原样保留", () => {
-  for (const { name, declared, policy, fallbacks } of cases) {
+  for (const { name, declared, policy, fallbacks, ignored = [] } of cases) {
     const resolved = resolveGradingPolicy(declared);
-    assert.deepEqual(resolved, { policy, fallbacks }, name);
+    assert.deepEqual(resolved, { policy, fallbacks, ignored }, name);
     assert.deepEqual(gradingPolicy.parse(resolved.policy), resolved.policy, name);
   }
 });
@@ -68,7 +70,7 @@ const paper = [
   { question: essay, facts: { automatic: false, reference: false }, value: { body: "先找同号。" } },
 ] satisfies readonly { question: ContractQuestion; facts: { automatic: boolean; reference: boolean }; value: unknown; key?: object }[];
 
-test("兜得住③：每种声明下，混合卷经真实确认与评估后每道题要么判出对错要么进待批，只有带私有键的可判题调用评估器", t => {
+test("兜得住③：每种声明的分流结果编译成发布声明后，混合卷经真实确认与评估，每道题要么判出对错要么进待批，只有带私有键的可判题调用评估器", t => {
   const seen: string[] = [];
   const spy = combinedEvaluator(ownClassJudgeEvaluator(evaluatorRef), titledTextEvaluator(evaluatorRef, () => ({ status: "judged", correct: true })));
   const runtime = openRuntime(scenarioDatabase(t), { authorizeReview: () => true,

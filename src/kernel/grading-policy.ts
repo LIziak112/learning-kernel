@@ -1,19 +1,30 @@
 import { defaultGradingPolicy, gradingPolicy } from "../contracts/grading-policy.ts";
 import type { GradingPolicy, GradingPolicyField, QuestionGrading, QuestionGradingFacts } from "../contracts/grading-policy.ts";
 
-export type ResolvedGradingPolicy = Readonly<{ policy: GradingPolicy; fallbacks: readonly GradingPolicyField[] }>;
+export type ResolvedGradingPolicy = Readonly<{ policy: GradingPolicy; fallbacks: readonly GradingPolicyField[]; ignored: readonly string[] }>;
 
 const fields = gradingPolicy.keyof().options;
+const fieldNames: ReadonlySet<string> = new Set(fields);
 
-function declaredField(declared: unknown, field: GradingPolicyField) {
-  if (typeof declared !== "object" || declared === null || Array.isArray(declared) || !Object.hasOwn(declared, field)) return undefined;
-  return gradingPolicy.shape[field].safeParse(Reflect.get(declared, field)).data;
+function declaredObject(declared: unknown) {
+  return typeof declared === "object" && declared !== null && !Array.isArray(declared) ? declared : undefined;
 }
 
-export function resolveGradingPolicy(declared: unknown): ResolvedGradingPolicy {
+function declaredField(declared: object, field: GradingPolicyField) {
+  return Object.hasOwn(declared, field) ? gradingPolicy.shape[field].safeParse(Reflect.get(declared, field)).data : undefined;
+}
+
+function unknownVersion(declared: object) {
+  return Object.hasOwn(declared, "version") && declaredField(declared, "version") === undefined;
+}
+
+export function resolveGradingPolicy(input: unknown): ResolvedGradingPolicy {
+  const declared = declaredObject(input);
+  const ignored = declared ? Object.keys(declared).filter(field => !fieldNames.has(field)) : [];
+  if (!declared || unknownVersion(declared)) return { policy: { ...defaultGradingPolicy }, fallbacks: fields, ignored };
   const fallbacks = fields.filter(field => declaredField(declared, field) === undefined);
   const policy = gradingPolicy.parse(Object.fromEntries(fields.map(field => [field, declaredField(declared, field) ?? defaultGradingPolicy[field]])));
-  return { policy, fallbacks };
+  return { policy, fallbacks, ignored };
 }
 
 export function questionGrading(policy: GradingPolicy, { automatic, reference }: QuestionGradingFacts): QuestionGrading {

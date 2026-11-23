@@ -59,8 +59,8 @@ const evaluators = [combinedEvaluator(ownClassJudgeEvaluator(evaluatorRef),
 function replay(t: TestContext, practiceId: string, paper: readonly LegacyQuestion[]) {
   const runtime = openRuntime(scenarioDatabase(t), { evaluators, authorizeReview: () => true });
   t.after(() => runtime.close());
-  const { policy, fallbacks } = resolveGradingPolicy(null);
-  assert.deepEqual(fallbacks, ["version", "withReference"]);
+  const { policy, fallbacks, ignored } = resolveGradingPolicy(null);
+  assert.deepEqual([fallbacks, ignored], [["version", "withReference"], []]);
   const routed = routeQuestions(policy, paper.map(({ question, facts }) => ({ id: question.id, facts })));
   const keys = Object.fromEntries(paper.flatMap(({ question, key }) => key ? [[question.id, key]] : []));
   runtime.publish(deliveryPublication({ id: practiceId, questions: paper.map(({ question }) => question), mode: "whole", allowUnanswered: true,
@@ -79,6 +79,7 @@ function replay(t: TestContext, practiceId: string, paper: readonly LegacyQuesti
       assert.ok(question.status === "judged" && question.effective);
       return [question.questionId, auto(question.effective.correct)];
     }
+    assert.ok(handler, `${question.questionId} 未被分流`);
     assert.equal(question.status, "needsReview");
     return [question.questionId, { handler: handler === "selfReview" ? "selfReviewPending" : "teacherPending" }];
   });
