@@ -37,12 +37,12 @@ function validateAssessmentPublication(publication: ReadingPublication, registry
     .find(slot => slot.type === "oneResponsePerQuestion")?.input;
   const questionDelivery = validateQuestionDeliveryPublication(publication, registry, issue);
   if (questionDelivery) {
-    validateResponsePolicy(practice, true, issue);
+    validateResponsePolicy(practice, "questionDelivery", issue);
     return;
   }
   if (practice.grading.manualReview) issue(["practice", "grading", "manualReview"], "人工评阅须绑定题组交付槽");
   if (response !== undefined && !practice.grading.assessment) issue(["practice", "grading", "assessment"], "原值确认须声明固定评估");
-  validateResponsePolicy(practice, response !== undefined, issue);
+  validateResponsePolicy(practice, response === undefined ? "none" : "response", issue);
   validateAssessmentPolicy(practice, scoringKey, registry, issue);
 }
 
@@ -210,14 +210,14 @@ function validateAssessmentBinding(
   }
 }
 
-function validateResponsePolicy(practice: ReadingPublication["practice"], response: boolean, issue: Issue) {
+function validateResponsePolicy(practice: ReadingPublication["practice"], delivery: "none" | "response" | "questionDelivery", issue: Issue) {
   const { student, reviewer, manager } = practice.policy;
   const { fields } = student.ownSubmission;
-  if (!response) {
+  if (delivery === "none") {
     if (fields.includes("ownResponses")) issue(["practice", "policy", "student", "ownSubmission", "fields"], "原值回看须使用原值提交槽");
     return;
   }
-  validateResponseStudentPolicy(student, issue);
+  validateResponseStudentPolicy(student, delivery === "questionDelivery", issue);
   if (reviewer.fields.some(field => !responseReviewerFields.has(field)) || reviewer.actions.some(action => action !== "reviseQuestionVerdict")
     || manager.actions.length) {
     issue(["practice", "policy"], "原值确认的评阅只声明学生原答、判定历史、评阅依据与逐题改判");
@@ -226,9 +226,10 @@ function validateResponsePolicy(practice: ReadingPublication["practice"], respon
 
 const responseReviewerFields = new Set<string>(["studentChoices", "verdictHistory", "gradingBasis"]);
 
-function validateResponseStudentPolicy(student: ReadingPublication["practice"]["policy"]["student"], issue: Issue) {
+function validateResponseStudentPolicy(student: ReadingPublication["practice"]["policy"]["student"], publishesScore: boolean, issue: Issue) {
   const { fields, onFinal } = student.ownSubmission;
-  if (onFinal.length || student.passageScore || student.review || fields.some(field => field !== "receipt" && field !== "ownResponses")) {
+  const score = !publishesScore && (onFinal.length > 0 || student.passageScore !== undefined);
+  if (score || student.review || fields.some(field => field !== "receipt" && field !== "ownResponses")) {
     issue(["practice", "policy"], "原值确认只支持回执与本人获准作答");
   }
 }

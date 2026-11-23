@@ -1,10 +1,19 @@
 import type { DatabaseSync } from "node:sqlite";
+import { readQuestionDelivery } from "../contracts/question-delivery.ts";
 import type { ReadingActivity } from "./activity.ts";
+import { confirmedDeliveryAssessment } from "./question-delivery-evaluation.ts";
+import { questionDeliverySlot } from "./question-delivery-publication.ts";
 import { reviewDisclosure } from "./review-access.ts";
-import { assessmentTarget, questionVerdicts } from "./verdict-state.ts";
+import { activitySubmissions } from "./submission-store.ts";
+import { assessmentTarget, questionVerdicts, questionVerdictStates, submissionReviewTarget } from "./verdict-state.ts";
+
+type StudentPolicy = ReadingActivity["practice"]["policy"]["student"];
+type Graded = { questionId: string; correct: boolean };
 
 export function studentResults(database: DatabaseSync, activity: ReadingActivity) {
   const policy = activity.practice.policy.student;
+  const delivery = questionDeliverySlot(activity.step);
+  if (delivery) return deliveryResults(database, activity, policy, delivery[1].targetId);
   const target = assessmentTarget(database, activity.activityId);
   if (!target || !policy.passageScore) return {};
   const pending = policy.ownSubmission.onFinal.includes("passageGradingStatus") ? { status: "pending" as const } : undefined;
@@ -12,17 +21,38 @@ export function studentResults(database: DatabaseSync, activity: ReadingActivity
   const graded = questionVerdicts(database, activity, target).flatMap(({ questionId, effective }) =>
     effective ? [{ questionId, correct: effective.correct }] : []);
   if (graded.length !== activity.practice.questions.length) return { assessment: pending };
-  const result = { questionCount: graded.length, correctCount: graded.filter(item => item.correct).length };
-  const fields = Object.fromEntries(policy.passageScore.fields.map(field => [field, result[field]]));
   return {
-    assessment: { status: "complete" as const, ...fields },
+    assessment: passageAssessment(policy.passageScore, graded),
     review: policy.review && studentReview(database, activity.activityId, policy.review, graded),
   };
 }
 
+function passageAssessment(score: NonNullable<StudentPolicy["passageScore"]>, graded: readonly Graded[]) {
+  const result = { questionCount: graded.length, correctCount: graded.filter(item => item.correct).length };
+  return { status: "complete" as const, ...Object.fromEntries(score.fields.map(field => [field, result[field]])) };
+}
+
+type DeliveryResults = { assessment?: ReturnType<typeof passageAssessment> | { status: "pending" }; review?: undefined };
+
+function deliveryResults(database: DatabaseSync, activity: ReadingActivity, policy: StudentPolicy, targetId: string): DeliveryResults {
+  if (!activity.completed || !policy.passageScore) return {};
+  const graded = activitySubmissions(database, activity.activityId).flatMap(({ receipt, content }) => {
+    const delivered = readQuestionDelivery(content);
+    const target = delivered && submissionReviewTarget(database, receipt.id, targetId);
+    if (!delivered || !target) return [];
+    const { automatic, review } = confirmedDeliveryAssessment(activity, delivered);
+    return questionVerdictStates(database, target, [...automatic, ...review])
+      .flatMap(({ questionId, effective }) => effective ? [{ questionId, correct: effective.correct }] : []);
+  });
+  if (graded.length !== activity.practice.questions.length) {
+    return policy.ownSubmission.onFinal.includes("passageGradingStatus") ? { assessment: { status: "pending" } } : {};
+  }
+  return { assessment: passageAssessment(policy.passageScore, graded) };
+}
+
 type PublishedReview = NonNullable<ReadingActivity["practice"]["policy"]["student"]["review"]>;
 
-function studentReview(database: DatabaseSync, activityId: string, policy: PublishedReview, graded: { questionId: string; correct: boolean }[]) {
+function studentReview(database: DatabaseSync, activityId: string, policy: PublishedReview, graded: Graded[]) {
   const disclosure = reviewDisclosure(database, activityId);
   if (!disclosure?.reviewOpen) return undefined;
   const byQuestion = policy.byQuestion.includes("effectiveVerdict") ? graded : undefined;
