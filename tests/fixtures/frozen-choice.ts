@@ -1,4 +1,4 @@
-import frozen from "../../docs/迁移/M04/P0-冻结单选.json" with { type: "json" };
+import frozen from "./frozen-choice.json" with { type: "json" };
 import type { PublicationInput } from "../../src/server.ts";
 
 export const practiceId = "two-frozen-questions";

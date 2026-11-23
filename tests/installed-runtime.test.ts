@@ -131,7 +131,7 @@ test("独立宿主共用安装包，按主体开卷并在新进程恢复同一�
         execFileSync(process.execPath, [unversioned, "recover", modern], { cwd: directory, stdio: "inherit" });
         const scoring = "choice-evaluator-consumer.mts";
         cpSync(new URL("./fixtures/choice-evaluator-consumer.mts", import.meta.url), join(directory, scoring));
-        cpSync(new URL("../docs/迁移/M04/P0-冻结单选.json", import.meta.url), join(directory, "frozen-choice.json"));
+        cpSync(new URL("./fixtures/frozen-choice.json", import.meta.url), join(directory, "frozen-choice.json"));
         inputs.push(scoring);
         execFileSync(process.execPath, [scoring, "init"], { cwd: directory, stdio: "inherit" });
         assert.throws(() => execFileSync(process.execPath, [scoring, "crash"], { cwd: directory }), { status: 47 });
