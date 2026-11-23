@@ -1463,3 +1463,45 @@ test("无自动评分的题组可切换，人工评阅依据只接受同内容�
     runtime.close();
   }
 });
+
+test("换版遇到题面勘误等关联记录整单拒绝；换版事务结束后外键延迟已复位，换版意图只由应用层契约限定", t => {
+  const databasePath = scenarioDatabase(t);
+  const runtime = openLearningRuntime(settings(databasePath));
+  try {
+    runtime.publish(switchableDelivery("whole", 1));
+    runtime.publish(switchableDelivery("perQuestion", 2));
+    const open = (operationId: string) => runtime.prepare(student,
+      { protocolVersion: 1, practiceId: "switchable-delivery", practiceVersion: 1, operationId });
+    const amended = open("amended-open");
+    runtime.saveQuestionDeliveryDraft(student, amended.activityId, { ...target(amended, strictChoice), value: "0" });
+    using database = new DatabaseSync(databasePath);
+    database.prepare(`INSERT INTO choice_snapshot_revisions (step_attempt_id, slot_id, question_id, revision, previous_question_version,
+      question_version, content, reviewer_id, operation_id, reason, revised_at) VALUES (?, 'answers', ?, 1, ?, ?, ?, 'teacher', 'erratum',
+      '勘误', '2026-11-20T00:00:00.000Z')`).run(amended.stepAttemptId, strictChoice.id, strictChoice.version, strictChoice.version + 1,
+      JSON.stringify({ prompt: "勘误后的题面", options: strictChoice.options }));
+    const before = deliveredView(runtime, amended);
+    const works = () => database.prepare("SELECT id, step_attempt_id AS attempt, slot_id AS slot FROM works WHERE activity_id = ? ORDER BY id")
+      .all(amended.activityId);
+    const placed = works();
+    assert.throws(() => runtime.replacePreparedActivityVersion(student, amended.activityId, switchDelivery(amended, 1, 2)),
+      { status: 409, code: "ACTIVITY_ALREADY_STARTED" });
+    assert.deepEqual(works(), placed);
+    assert.deepEqual(deliveredView(runtime, amended), before);
+    assert.equal(database.prepare("SELECT count(*) AS n FROM prepared_activity_version_changes").get()?.n, 0);
+
+    const moved = open("moved-open");
+    runtime.saveQuestionDeliveryDraft(student, moved.activityId, { ...target(moved, strictChoice), value: "1" });
+    const changed = runtime.replacePreparedActivityVersion(student, moved.activityId, switchDelivery(moved, 1, 2));
+    assert.equal(database.prepare("PRAGMA defer_foreign_keys").get()?.defer_foreign_keys, 0);
+    assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+    const operations = database.prepare(`SELECT count(*) AS n FROM choice_draft_operations o JOIN works w ON w.id = o.work_id
+      WHERE w.activity_id = ? AND w.step_attempt_id = ?`);
+    assert.equal(operations.get(moved.activityId, changed.stepAttemptId)?.n, 1);
+    assert.equal(operations.get(moved.activityId, moved.stepAttemptId)?.n, 0);
+    const insert = database.prepare(`INSERT INTO prepared_activity_version_changes (activity_id, operation_id, from_step_attempt_id,
+      from_practice_version, step_attempt_id, practice_version, intent) VALUES (?, ?, ?, 1, ?, 2, ?)`);
+    assert.throws(() => insert.run(moved.activityId, "empty-intent", moved.stepAttemptId, changed.stepAttemptId, ""), /CHECK constraint failed/);
+    assert.throws(() => Reflect.apply(runtime.replacePreparedActivityVersion, runtime, [student, moved.activityId,
+      { ...switchDelivery(changed, 2, 1, "unknown-intent"), intent: "anotherScenario" }]), ZodError);
+  } finally { runtime.close(); }
+});

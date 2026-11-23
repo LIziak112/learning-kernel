@@ -28,7 +28,7 @@ export function effectiveChoiceQuestions(database: DatabaseSync, stepAttemptId: 
     const latest = byQuestion.get(question.id);
     if (!latest) return question;
     const patch = editedQuestion.strip().parse(JSON.parse(latest.content));
-    return { id: question.id, version: latest.questionVersion, ...patch };
+    return { ...question, version: latest.questionVersion, ...patch };
   });
   return { questions, choiceSnapshotRevisions: snapshots.map(row => {
     const { content, ...revision } = row;

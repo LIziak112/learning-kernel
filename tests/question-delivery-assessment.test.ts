@@ -2,12 +2,12 @@ import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ZodError } from "zod";
-import { latestDatabaseVersion } from "../src/kernel/database.ts";
 import { openLearningRuntime } from "../src/server.ts";
 import type { PublicationInput, QuestionDeliveryDraftInput, QuestionDeliveryInput, ReviewScope } from "../src/server.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 import { answerRule as answerRuleOf, reviewAccess, booleanEvaluator, combinedEvaluator, orderedTextEvaluator, titledTextEvaluator, titledValue } from "./fixtures/evaluators.ts";
 
+const reviewAnchorVersion = 19;
 const student = { role: "student", id: "delivery-assessment-student" } as const;
 const outsider = { ...student, id: "delivery-assessment-outsider" };
 const reviewer = { role: "reviewer", id: "reflection-reviewer" } as const;
@@ -774,7 +774,7 @@ test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升�
       INSERT INTO legacy_events SELECT * FROM verdict_events;
       DROP TABLE verdict_events;
       ALTER TABLE legacy_events RENAME TO verdict_events;
-      DELETE FROM schema_migrations WHERE version > ${latestDatabaseVersion - 2};
+      DELETE FROM schema_migrations WHERE version >= ${reviewAnchorVersion};
       COMMIT;
     `);
     assert.deepEqual(legacy.prepare("PRAGMA foreign_key_check").all(), []);

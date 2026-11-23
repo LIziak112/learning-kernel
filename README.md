@@ -59,6 +59,8 @@ const activity = runtime.read(principal, receipt.activityId);
 
 可信宿主可用 `prepare(principal, input)` 显式预备阅读活动，沿用 `start` 的输入及原始回执。在首个作品、确认或步骤推进前，`replacePreparedActivityVersion(principal, activityId, input)` 可切换到同一练法已发布的另一版本，首个逻辑步骤须一致。传入 `protocolVersion`、`operationId`、当前 `stepAttemptId`、`expectedPracticeVersion` 和目标 `practiceVersion`。换版保留活动标识及原起算时刻，发行新的步骤尝试凭据，旧凭据无法保存或确认。指定当前版本时沿用当前步骤凭据。`read` 在同一快照返回当前 `practiceVersion`、步骤凭据和题面。重发按当前授权交付对应的原回执。普通 `start` 创建的活动固定原教学版本。
 
+预备实例的换版条件是「尚无已确认提交」：未带 `intent` 的换版仍要求还没有任何作品；带 `intent: "questionDeliveryMode"` 时，未确认的题组草稿随交付范围一起迁移。已有提交、完成、后续步骤或题面勘误记录（`choice_snapshot_revisions`）时一律拒绝（`ACTIVITY_ALREADY_STARTED`），不留部分写入。换版在同一写事务内轮换步骤主键并改挂草稿，外键检查延迟到提交时执行，事务结束即复位。换版意图的取值由公共契约限定，库表只做非空校验。
+
 已保存草稿且还未确认任何题的预备题组可在同一练法的 `whole` 和 `perQuestion` 发布版本之间换版。调用 `replacePreparedActivityVersion` 时加上 `intent: "questionDeliveryMode"`。目标版本须保留冻结题目、材料引用、评分内容及其他练法声明，私有评分键可引用内容等值的另一版本。切换保留活动标识、原作答开始时刻、草稿原值、修订和改答计数，并轮换步骤凭据。若调用方需要恢复最新的草稿保存操作，使用当前步骤凭据和原操作 ID 重发原请求。已交付的题组拒绝新切换，成功切换可按原操作重放取回回执。
 
 可信宿主在配套备份或恢复时可直接从服务端包调用 `verifyActivityBindings(databasePath, claims)`。传入 `protocolVersion: 1`、已绑定活动 `bindings: [{ activityId, studentId, operationId }]` 和持久开卷意图 `openingIntents: [{ studentId, operationId }]`。每个已绑定活动须精确存在，内核的每个活动须由一条绑定或已持久化的开卷意图覆盖。尚未开卷的意图可以暂时没有内核活动。绑定、意图及两者之间的重复开卷键，任何遗漏或身份不符，均返回 `ACTIVITY_BINDINGS_MISMATCH`。通过时无返回数据。核验直接只读打开指定快照，缺失或不可读的文件报错。宿主从同一份配套快照提取绑定和意图，核验通过后再使用该配套备份。
