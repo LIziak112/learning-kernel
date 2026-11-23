@@ -30,7 +30,15 @@ export function validateQuestionDeliveryPublication(publication: ReadingPublicat
   validateQuestionFormats(practice.questions, issue);
   validateAnswerRuleBindings(practice, registry, issue);
   validateDeliveryGrading(publication, { stepId: step.id, slotId }, ids, registry, issue);
+  validateDeliveryScore(practice, issue);
   return true;
+}
+
+function validateDeliveryScore({ questions, grading, policy: { student } }: ReadingPublication["practice"], issue: Issue) {
+  if (!student.passageScore && !student.ownSubmission.onFinal.length) return;
+  const teacherIds = new Set(grading.teacherReview?.questionIds);
+  const judged = (question: Question) => grading.manualReview !== undefined || grading.assessment !== undefined || teacherIds.has(question.id);
+  if (!questions.every(judged)) issue(["practice", "policy", "student", "passageScore"], "公布待批状态或成绩须每道题都声明评估或教师评阅");
 }
 
 function validateDeliveryGrading(
