@@ -1,2 +1,2 @@
 #!/bin/sh
-exec node scripts/check-size.mjs --staged
+node scripts/lint.mjs --staged && exec node scripts/check-size.mjs --staged

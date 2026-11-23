@@ -1,16 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { sourceFiles } from "./source-files.mjs";
 
 const softLimit = 400;
 const hardLimit = 1000;
 const excludedDirectory = /(?:^|\/)(?:e2e|tests?|test-support|__tests__|fixtures|__fixtures__|__mocks__|__snapshots__|migrations|generated)\//;
 const excludedFile = /\.(?:test|spec|gen|generated)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/;
-const generatedHeader = /^\s*(?:\/\/|\/\*+|\*)\s*(?:@generated\b|AUTO-GENERATED\b|自动生成)/m;
-
-function git(args, cwd) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-}
 
 function isSource(file) {
   return /\.[cm]?[jt]sx?$/.test(file)
@@ -19,26 +12,11 @@ function isSource(file) {
     && !/^\.(?:codex|zcode)\/skills\//.test(file);
 }
 
-function workingCopy(root, file) {
-  const path = join(root, file);
-  // Git 也会列出尚未暂存的删除；符号链接本身没有源码行。
-  if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) return null;
-  return readFileSync(path, "utf8");
-}
-
 function check(staged) {
-  const root = git(["rev-parse", "--show-toplevel"], process.cwd()).trimEnd();
-  const list = staged
-    ? ["diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z"]
-    : ["ls-files", "--cached", "--others", "--exclude-standard", "-z"];
-  const files = new Set(git(list, root).split("\0").filter(isSource));
   let checked = 0;
   let oversized = 0;
-  for (const file of files) {
-    const source = staged ? git(["show", `:${file}`], root) : workingCopy(root, file);
-    if (source === null) continue;
+  for (const [file, source] of sourceFiles(staged, isSource)) {
     const lines = source.split("\n");
-    if (generatedHeader.test(lines.slice(0, 5).join("\n"))) continue;
     checked++;
     const count = lines.length - (lines.at(-1) === "" ? 1 : 0);
     if (count > hardLimit) {

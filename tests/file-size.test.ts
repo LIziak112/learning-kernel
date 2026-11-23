@@ -33,7 +33,6 @@ test("工作区按实际行数检查未跟踪源码，显示超过软线的路�
   for (const [size, exitCode, warning] of [
     [400, 0, false], [401, 0, true], [1000, 0, true], [1001, 1, false],
   ] as const) {
-    // 同时覆盖 CRLF 与最后一行没有换行符。
     repo.write(file, Array<string>(size).fill("// 数据").join("\r\n"));
     const result = repo.check();
     assert.equal(result.status, exitCode, result.output);
