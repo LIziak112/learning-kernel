@@ -20,7 +20,6 @@ const eventFields = `
 `;
 
 type Event = z.infer<typeof storedEvent>;
-export type TeacherVerdictMode = "undo" | "replace";
 
 export function verdictHistory(database: DatabaseSync, assessment: Pick<VerdictLocation, "submissionId" | "targetId">) {
   return database.prepare(`
@@ -29,8 +28,8 @@ export function verdictHistory(database: DatabaseSync, assessment: Pick<VerdictL
   `).all(assessment.submissionId, assessment.targetId).map(row => storedEvent.parse(row));
 }
 
-export function activeTeacherVerdict(history: Event[], mode: TeacherVerdictMode) {
-  const active = mode === "replace" ? history.at(-1) : lastUnwithdrawnVerdict(history);
+export function activeTeacherVerdict(history: Event[]) {
+  const active = lastUnwithdrawnVerdict(history);
   if (!active || active.correct === null) return undefined;
   return { source: "teacherReview" as const, id: active.id, correct: Boolean(active.correct) };
 }
@@ -72,12 +71,12 @@ export function repeatedReview(database: DatabaseSync, activityId: string, revie
 }
 
 export function appendReview(
-  database: DatabaseSync, activityId: string, reviewer: string, command: VerdictCommand, clock: () => Date, mode: TeacherVerdictMode = "undo",
+  database: DatabaseSync, activityId: string, reviewer: string, command: VerdictCommand, clock: () => Date,
 ): VerdictReceipt {
   const history = verdictHistory(database, command).filter(event => event.questionId === command.questionId);
   const revision = history.at(-1)?.revision ?? 0;
   if (revision !== command.expectedRevision) throw new LearningError(409, "VERDICT_CONFLICT");
-  if (command.action === "withdraw" && activeTeacherVerdict(history, mode)?.id !== command.withdrawId) {
+  if (command.action === "withdraw" && activeTeacherVerdict(history)?.id !== command.withdrawId) {
     throw new LearningError(409, "VERDICT_CONFLICT");
   }
   const { correct, withdrawId } = commandVerdict(command);

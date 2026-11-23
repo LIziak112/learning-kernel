@@ -40,9 +40,9 @@ const first: VerdictCommand = {
   operationId, expectedRevision: 0, action: "override", correct: false, reason: "第一轮复核备注",
 };
 const second: VerdictCommand = { ...first, operationId: "next", expectedRevision: 1, correct: true };
-const clear = (withdrawId: string): VerdictCommand => ({
+const clear = (withdrawId: string, expectedRevision = 2, clearId = "clear"): VerdictCommand => ({
   protocolVersion: 1, submissionId: receipt.id, targetId: "observe", questionId,
-  operationId: "clear", expectedRevision: 2, action: "withdraw", withdrawId, reason: "清除当前教师改判",
+  operationId: clearId, expectedRevision, action: "withdraw", withdrawId, reason: "清除当前教师改判",
 });
 
 function write(command: VerdictCommand): VerdictReceipt {
@@ -68,7 +68,7 @@ function verifyCleared() {
   const reviewed = runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts");
   assert.ok(reviewed.assessment === "manual");
   assert.deepEqual(reviewed.basis, oldRead.basis);
-  assert.deepEqual(reviewed.questions, [{ questionId, questionVersion, revision: 3, status: "needsReview" }]);
+  assert.deepEqual(reviewed.questions, [{ questionId, questionVersion, revision: 4, status: "needsReview" }]);
   const recovered = runtime.recoverQuestionDelivery(student, activityId, key, "declared");
   assert.deepEqual(recovered.receipt, receipt);
   assert.deepEqual(recovered.confirmation, reviewed.confirmation);
@@ -77,28 +77,33 @@ function verifyCleared() {
   assert.doesNotMatch(JSON.stringify({ recovered, view }), /teacherReview|第一轮复核备注|清除当前教师改判|核实观察/);
   using database = new DatabaseSync(databasePath, { readOnly: true });
   assert.equal(database.prepare("SELECT count(*) AS n FROM submissions").get()?.n, 2);
-  assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events WHERE submission_id = ?").get(receipt.id)?.n, 3);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events WHERE submission_id = ?").get(receipt.id)?.n, 4);
 }
 
 try {
   if (phase === "race") {
     race();
   } else {
+    const marked = write(first);
+    const fallback = [{ questionId, questionVersion, revision: 1,
+      status: "judged", effective: { source: "teacherReview", id: marked.id, correct: false } }];
     if (phase === "clear") {
-      const marked = write(first);
-      const before = runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts");
-      assert.deepEqual(before.questions, [{ questionId, questionVersion, revision: 1,
-        status: "judged", effective: { source: "teacherReview", id: marked.id, correct: false } }]);
+      assert.deepEqual(runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts").questions, fallback);
     }
     const later = write(second);
     assert.equal(later.revision, 2);
     const cleared = write(clear(later.id));
     assert.equal(cleared.revision, 3);
     assert.deepEqual(write(clear(later.id)), cleared);
+    if (phase === "clear") {
+      assert.deepEqual(runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts").questions, [{ ...fallback[0], revision: 3 }]);
+    }
+    const reverted = write(clear(marked.id, 3, "clear-first"));
+    assert.equal(reverted.revision, 4);
     verifyCleared();
     writeAllowed = false;
     assert.throws(() => write(clear(later.id)), { code: "FORBIDDEN" });
-    assert.equal(runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts").questions[0]?.revision, 3);
+    assert.equal(runtime.readQuestionDeliveryReview(reviewer, activityId, key, "verdicts").questions[0]?.revision, 4);
     console.log(`独立题组判定宿主 ${phase} 通过`);
   }
 } finally { runtime.close(); }

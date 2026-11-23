@@ -2,7 +2,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ReadingActivity } from "./activity.ts";
 import { activeTeacherVerdict, verdictHistory } from "./verdict-history.ts";
-import type { TeacherVerdictMode } from "./verdict-history.ts";
 
 const assessment = z.strictObject({ submissionId: z.uuid(), targetId: z.string(), status: z.enum(["pending", "done"]) });
 const storedAutomatic = z.strictObject({
@@ -31,19 +30,13 @@ export function readAutomaticVerdicts(database: DatabaseSync, { submissionId, ta
   `).all(submissionId, targetId).map(row => storedAutomatic.parse(row));
 }
 
-export function assessmentVerdictMode(activity: ReadingActivity): TeacherVerdictMode {
-  const from = activity.practice.grading.assessment?.from;
-  const slot = from?.stepId === activity.step.id ? activity.step.submit.slots[from.slotId] : undefined;
-  return slot?.type === "oneChoicePerQuestion" && slot.confirmFromDrafts ? "replace" : "undo";
-}
-
 export function questionVerdicts(database: DatabaseSync, activity: ReadingActivity, target: z.infer<typeof assessment>) {
   const questions = activity.practice.questions.map(({ id: questionId, prompt }) => ({ questionId, prompt }));
-  return questionVerdictStates(database, target, questions, assessmentVerdictMode(activity));
+  return questionVerdictStates(database, target, questions);
 }
 
 export function questionVerdictStates<Question extends { questionId: string }>(
-  database: DatabaseSync, target: z.infer<typeof assessment>, questions: readonly Question[], mode: TeacherVerdictMode,
+  database: DatabaseSync, target: z.infer<typeof assessment>, questions: readonly Question[],
 ) {
   const automatic = readAutomaticVerdicts(database, target);
   const history = verdictHistory(database, target);
@@ -52,7 +45,7 @@ export function questionVerdictStates<Question extends { questionId: string }>(
     const questionHistory = history.filter(event => event.questionId === questionId);
     const original = automatic.find(item => item.questionId === questionId);
     const automaticBasis = original && { correct: original.correct, valid: original.valid };
-    const effective = activeTeacherVerdict(questionHistory, mode) ?? effectiveAutomatic(automaticBasis);
+    const effective = activeTeacherVerdict(questionHistory) ?? effectiveAutomatic(automaticBasis);
     return {
       ...question, submissionId: target.submissionId, targetId: target.targetId,
       revision: questionHistory.at(-1)?.revision ?? 0, effective, automatic: automaticBasis, history: questionHistory,

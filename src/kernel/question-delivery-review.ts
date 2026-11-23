@@ -79,7 +79,7 @@ function reviewedVerdicts(
   database: DatabaseSync, target: ReturnType<typeof requireAssessment>,
   positions: readonly { questionId: string; questionVersion: number }[], automatic: readonly { questionId: string }[],
 ) {
-  const states = questionVerdictStates(database, target, positions, "replace");
+  const states = questionVerdictStates(database, target, positions);
   const pending = new Set(target.status === "pending" ? automatic.map(({ questionId }) => questionId) : []);
   return states.map(({ questionId, questionVersion, revision, automatic, effective }) => {
     const state = { questionId, questionVersion, revision, ...automatic && { automatic } };
@@ -106,7 +106,7 @@ export function writeQuestionDeliveryVerdict(
       if (![...automatic, ...review].some(question => question.questionId === questionId)) throw new LearningError(403, "FORBIDDEN");
     }
     return repeatedReview(database, activityId, reviewerId, command)
-      ?? appendReview(database, activityId, reviewerId, command, clock, "replace");
+      ?? appendReview(database, activityId, reviewerId, command, clock);
   });
 }
 

@@ -229,7 +229,7 @@ async function score(origin: string, path: string, expected: number) {
   assert.deepEqual(state.assessment, { status: "complete", correctCount: expected, questionCount: 3 });
 }
 
-test("原单选连续改判后清除与内置师生读面及撤销规则一致", async t => {
+test("原单选连续改判后逐次撤销回落到上一条有效教师改判，内置与公开读面一致", async t => {
   const file = scenarioDatabase(t);
   const student = { role: "student", id: "student-1" } as const;
   const reviewer = { role: "reviewer", id: "teacher-1" } as const;
@@ -301,16 +301,23 @@ test("原单选连续改判后清除与内置师生读面及撤销规则一致",
       const cleared = await result(teacherWrite(clear), reviewReceipt);
       assert.equal(cleared.revision, 3);
       assert.deepEqual(await result(teacherWrite(clear), reviewReceipt), cleared);
-      await readScore(1);
-      const teacherView = await result(get(origin, teacherPath, "teacher"), verdicts);
-      const expected = { source: "automatic", correct: false };
-      assert.deepEqual(teacherView.verdicts.find(item => item.questionId === second.id)?.effective, expected);
-      const publicView = runtime.readQuestionDeliveryReview(reviewer, activityId, key, "choiceConfirmation");
-      const verdict = publicView.questions.find(item => item.questionId === second.id);
-      assert.ok(verdict?.status === "judged");
-      assert.deepEqual(verdict.effective, expected);
-      await rejection(teacherWrite({ ...clear, operationId: "clear-superseded", expectedRevision: 3, withdrawId: early.id }),
+      await readScore(2);
+      const effectiveOf = async () => {
+        const teacherView = await result(get(origin, teacherPath, "teacher"), verdicts);
+        const publicView = runtime.readQuestionDeliveryReview(reviewer, activityId, key, "choiceConfirmation");
+        const verdict = publicView.questions.find(item => item.questionId === second.id);
+        assert.ok(verdict?.status === "judged");
+        assert.deepEqual(teacherView.verdicts.find(item => item.questionId === second.id)?.effective, verdict.effective);
+        return verdict.effective;
+      };
+      assert.deepEqual(await effectiveOf(), { source: "teacherReview", id: early.id, correct: true });
+      await rejection(teacherWrite({ ...clear, operationId: "clear-stale", expectedRevision: 3, withdrawId: late.id }),
         409, "VERDICT_CONFLICT");
+      const reverted = await result(teacherWrite({ ...clear, operationId: "clear-early", expectedRevision: 3, withdrawId: early.id }),
+        reviewReceipt);
+      assert.equal(reverted.revision, 4);
+      await readScore(1);
+      assert.deepEqual(await effectiveOf(), { source: "automatic", correct: false });
       assert.deepEqual(runtime.recoverChoiceConfirmation(student, activityId, key), original);
     });
   } finally {

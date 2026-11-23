@@ -320,7 +320,7 @@ test("发布拒绝多重评估、无实际量表的人工评阅、无评估的�
   } finally { runtime.close(); }
 });
 
-test("题组教师改判｜自动原判和真正待评各自回落，连续改判的早先值不复活", t => {
+test("题组教师改判｜连续改判逐次撤销回落到上一条有效教师改判，再回落到自动原判或待评", t => {
   const databasePath = scenarioDatabase(t);
   const base = publication("mixed-verdict");
   let allowed = true;
@@ -394,9 +394,15 @@ test("题组教师改判｜自动原判和真正待评各自回落，连续改�
         { code: "VERDICT_CONFLICT" });
       const cleared = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, withdraw);
       assert.equal(cleared.revision, 3);
+      assert.deepEqual(read().questions, [{
+        ...readBefore.questions[0], revision: 3, effective: { source: "teacherReview", id: first.id, correct: false },
+      }, readBefore.questions[1]]);
       assert.throws(() => runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key,
-        { ...withdraw, operationId: "clear-superseded", expectedRevision: 3, withdrawId: first.id }), { code: "VERDICT_CONFLICT" });
-      assert.deepEqual(read().questions, [{ ...readBefore.questions[0], revision: 3 }, readBefore.questions[1]]);
+        { ...withdraw, operationId: "clear-stale", expectedRevision: 3 }), { code: "VERDICT_CONFLICT" });
+      const reverted = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key,
+        { ...withdraw, operationId: "clear-first", expectedRevision: 3, withdrawId: first.id });
+      assert.equal(reverted.revision, 4);
+      assert.deepEqual(read().questions, [{ ...readBefore.questions[0], revision: 4 }, readBefore.questions[1]]);
       const send = { ...command, operationId: "mark-waiting", questionId: question.id };
       const waiting = runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key, send);
       assert.equal(waiting.revision, 1);
@@ -404,10 +410,10 @@ test("题组教师改判｜自动原判和真正待评各自回落，连续改�
       assert.deepEqual(whileMarked.questions[1], {
         ...readBefore.questions[1], revision: 1, status: "judged", effective: { source: "teacherReview", id: waiting.id, correct: false },
       });
-      assert.deepEqual(whileMarked.questions[0], { ...readBefore.questions[0], revision: 3 });
+      assert.deepEqual(whileMarked.questions[0], { ...readBefore.questions[0], revision: 4 });
       runtime.writeQuestionDeliveryVerdict(reviewer, activityId, key,
         { ...withdraw, operationId: "clear-waiting", questionId: question.id, expectedRevision: 1, withdrawId: waiting.id });
-      assert.deepEqual(read().questions, [{ ...readBefore.questions[0], revision: 3 }, { ...readBefore.questions[1], revision: 2 }]);
+      assert.deepEqual(read().questions, [{ ...readBefore.questions[0], revision: 4 }, { ...readBefore.questions[1], revision: 2 }]);
       assert.deepEqual(runtime.recoverQuestionDelivery(student, activityId, key), automaticBefore);
       assert.deepEqual(runtime.read(student, activityId), studentBefore);
       assert.doesNotMatch(JSON.stringify(studentBefore), /独立复核依据|teacherReview|acceptedByQuestion/);
@@ -437,7 +443,7 @@ test("题组教师改判｜自动原判和真正待评各自回落，连续改�
     assert.deepEqual(facts(databasePath), { submissions: 1, completions: 1, scoring_keys: 1, evaluation_tasks: 1,
       automatic_verdicts: 1, response_review_requirements: 1, performances: 2 });
     using database = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 5);
+    assert.equal(database.prepare("SELECT count(*) AS n FROM verdict_events").get()?.n, 6);
     assert.equal(evaluated, 2);
   } finally { reopened.close(); }
 });

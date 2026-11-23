@@ -388,7 +388,7 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
   }
 });
 
-test("标量正式确认的教师覆盖与清除保留原判、待评和回执，并按当前权限重发", t => {
+test("标量正式确认的连续改判逐次撤销回落到上一条有效判定，保留原判、待评和回执并按当前权限重发", t => {
   const databasePath = scenarioDatabase(t);
   const reviewer = { role: "reviewer", id: "judge-teacher" } as const;
   const mode = "responseConfirmation";
@@ -491,10 +491,16 @@ test("标量正式确认的教师覆盖与清除保留原判、待评和回执�
         assert.throws(() => write({ ...clear, withdrawId: firstReceipt.id }), conflict);
         const cleared = write(clear);
         assert.deepEqual(write(clear), cleared);
-        return [[firstMark, firstReceipt], [nextMark, nextReceipt], [clear, cleared]] as const;
+        const fallback = read().questions.find(item => item.questionId === questionId);
+        assert.ok(fallback?.status === "judged");
+        assert.deepEqual(fallback.effective, { source: "teacherReview", id: firstReceipt.id, correct: true });
+        const revert: VerdictCommand = { ...clear, withdrawId: firstReceipt.id, expectedRevision: 3, operationId: `revert-${questionId}` };
+        const reverted = write(revert);
+        assert.equal(reverted.revision, 4);
+        return [[firstMark, firstReceipt], [nextMark, nextReceipt], [clear, cleared], [revert, reverted]] as const;
       });
       const final = read();
-      assert.deepEqual(final.questions, first.questions.map(item => allowedQuestions.includes(item.questionId) ? { ...item, revision: 3 } : item));
+      assert.deepEqual(final.questions, first.questions.map(item => allowedQuestions.includes(item.questionId) ? { ...item, revision: 4 } : item));
       assert.deepEqual(runtime.read(student, activityId), studentView);
       assert.deepEqual(runtime.recoverResponseConfirmation(student, activityId, key), originalRecovery);
       return { final, replay };
@@ -518,7 +524,7 @@ test("标量正式确认的教师覆盖与清除保留原判、待评和回执�
     assert.deepEqual(reopened.recoverResponseConfirmation(student, activityId, key), originalRecovery);
     assert.deepEqual(facts(databasePath), stableFacts);
     using db = new DatabaseSync(databasePath, { readOnly: true });
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM verdict_events WHERE submission_id = ?").get(receipt.id)?.count, 6);
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM verdict_events").get()?.count, 6);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM verdict_events WHERE submission_id = ?").get(receipt.id)?.count, 8);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM verdict_events").get()?.count, 8);
   } finally { reopened.close(); }
 });
