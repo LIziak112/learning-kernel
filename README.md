@@ -55,6 +55,8 @@ const activity = runtime.read(principal, receipt.activityId);
 
 宿主在服务端确定发布内容，并在每次开卷和读取前验证当前身份及作业访问资格。`principal` 由通过验证的学生身份映射，开卷命令须指定已发布的练法版本。相同学生和操作标识重发同一开卷命令时取回原回执。以同一操作标识改用另一练法或版本会得到 `OPERATION_CONFLICT`。内核按活动归属及当前内核访问规则读取学生视图。宿主进程退出时调用 `runtime.close()`，重启后以同一文件库打开并通过原活动 ID 读取。
 
+两步阅读与教师管理同样只经公开运行时：`startLatest`、`redo`、`saveDraft`、`submitDraft`、`readSubmission`、`readFragment`、`readResults`、`readPersonalDraft`，以及教师侧 `readReadingReview`、`writeReadingVerdict`、`writeSelectionFeedback`、`readManagement`、`manage`。演示宿主 [src/host/server.ts](src/host/server.ts) 只导入公开入口与公共契约，分层由 `tests/layering.test.ts` 守护。
+
 `formatVersion: 1` 的练法可以只绑定题目，此时发布可同时省略 `material` 和 `practice.material`。步骤绑定材料时须同时提供材料定义和匹配的版本引用。学生读取当前步骤获准的题目或材料。
 
 可信宿主可用 `prepare(principal, input)` 显式预备阅读活动，沿用 `start` 的输入及原始回执。在首个作品、确认或步骤推进前，`replacePreparedActivityVersion(principal, activityId, input)` 可切换到同一练法已发布的另一版本，首个逻辑步骤须一致。传入 `protocolVersion`、`operationId`、当前 `stepAttemptId`、`expectedPracticeVersion` 和目标 `practiceVersion`。换版保留活动标识及原起算时刻，发行新的步骤尝试凭据，旧凭据无法保存或确认。指定当前版本时沿用当前步骤凭据。`read` 在同一快照返回当前 `practiceVersion`、步骤凭据和题面。重发按当前授权交付对应的原回执。普通 `start` 创建的活动固定原教学版本。
@@ -83,39 +85,39 @@ const activity = runtime.read(principal, receipt.activityId);
 
 整卷确认使用单步 `finalAnswer` 的单选槽，显式声明 `confirmFromDrafts: { allowUnanswered: true }` 可保留空答。`confirmChoices` 接受冻结全题的题版本、当前草稿修订和原稿状态，服务端从已存草稿取选项。`uncollected` 用于旧协议未采集。可信宿主同步 `verifyOriginal` 核实各状态，包括旧协议是否允许未采集。未配置回调时只接受 `uncollected`。`frozen` 保存文档 ID、版本 ID 和可选 SHA-256。宿主先持久保留选定版本，再把核实结果交给内核。确认成功返回唯一回执。草稿修订冲突通过 `ChoiceConfirmationConflict` 返回冲突的题和本人当前草稿。授权仍有效时可用同一操作和意图重取回执。常规学生 `read` 遵守已发布的回看字段。可信宿主另可凭活动、步骤尝试和操作标识调用 `recoverChoiceConfirmation`，每次须经当前活动授权和配置的 `authorizeConfirmationRecovery` 核对，返回引用的发布版本、完整确认事实及逐题 `choiceDraftChangeCounts`。
 
-宿主可在 `openLearningRuntime({ databasePath, choiceEvaluators: [{ id, version, evaluate }], authorizeConfirmationRecovery })` 注册同步纯函数评估器。在草稿确认槽的 `grading.assessment` 指定同一评估器版本和本次发布的评分键。确认时持久化评估任务。可信宿主使用原确认操作标识调用 `recoverChoiceConfirmation`，经现行授权后完成待评任务，并在 `evaluation` 取回评估器版本、冻结题数、正确题数及逐题布尔判定。回调逐题收到活动、步骤尝试、槽、练法和题目版本，以及本人的选项和私有正确选项。空答为 `null`，也参与评估。等待评估时缺少精确版本返回 `EVALUATOR_UNAVAILABLE`，修复配置后可用同一操作恢复。评估异常会回滚整份判定并保留待评任务。任务完成后直接读取已存判定。学生结果仍遵守发布时的公布条件，历史 `choice-key` 声明仍使用原评估规则。
+评估器经[扩展 SPI](#扩展-spi作答形态评估器与工具) 登记，在草稿确认槽的 `grading.assessment` 指定同一评估器版本和本次发布的评分键。确认时持久化评估任务，由宿主随后调用 `evaluatePending()` 执行（见[显式评估](#显式评估与失败终态)）。`recoverChoiceConfirmation` 只读，`evaluation.status` 为 `pending`、`failed` 或 `evaluated`；完成时另返回评估器版本、冻结题数、正确题数及逐题布尔判定。评估器逐题收到活动、步骤尝试、槽、练法、题目版本、`responseType: "choice"`、本人选项（空答为 `null`）和私有键 `{ acceptedChoice }`。学生结果仍遵守发布时的公布条件。默认扩展包里的 `choice-key@1` 与宿主评估器走同一条 SPI。
 
-正式单选卷的教师判定按原活动和原确认键进行。宿主分别配置 `authorizeChoiceConfirmationReview` 和 `authorizeChoiceConfirmationVerdict`，按当前教师、学生、活动、步骤、确认操作、提交和槽位裁决。写入及重放的授权还包含评估目标、题号、冻结题版本和动作。用 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "choiceConfirmation")` 取原 `choiceConfirmation`、回执、评估目标和逐题修订。未配置相应授权时拒绝。
+正式单选卷的教师判定按原活动和原确认键进行，授权与字段范围见[评阅授权与教学策略](#评阅授权与教学策略)。用 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "choiceConfirmation")` 取原 `choiceConfirmation`、回执、评估目标和逐题修订。
 
-用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command, "choiceConfirmation")` 改判或清除，命令沿用[题组判定](#混合整卷与逐题交付)的提交、目标、题号、预期修订和幂等语义。改判优先于自动评估，清除仅接受当前生效的教师事件，随后恢复有效自动判定。学生原答、原稿引用、自动评估及原确认回执保留。教师判定的有效来源和事件标识仅向获准的教师交付。可信宿主按当前公布和访问权限投影生效结果。现有三参评阅读取与 `"verdicts"` 模式用于题组交付。此能力复用版本 18 的存储。
+用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command, "choiceConfirmation")` 改判或清除，命令沿用[题组判定](#混合整卷与逐题交付)的提交、目标、题号、预期修订和幂等语义。改判优先于自动评估，清除仅接受当前生效的教师事件，随后回落到上一条仍有效的教师改判，再回落到有效自动判定。学生原答、原稿引用、自动评估及原确认回执保留。教师判定的有效来源和事件标识仅向获准的教师交付。可信宿主按当前公布和访问权限投影生效结果。现有三参评阅读取与 `"verdicts"` 模式用于题组交付。此能力复用版本 18 的存储。
 
 `node --test tests/installed-runtime.test.ts` 在两个独立临时项目安装同一个固定包，通过包名开卷和读取，在新进程打开原库，并验证严格类型检查、冻结版本和学生隔离。
 
 ### 逐题原值与待人工判定
 
-练法以单步 `finalAnswer`、`response-group@1` 和 `oneResponsePerQuestion` 声明逐题确认。槽位声明 `input: "booleanOrString"`、`confirmFromDrafts.allowUnanswered` 和每道题的固定版本。`grading.assessment` 固定独立的 `responseEvaluators` 注册项及私有评分键 `acceptedResponses`。本版评分键逐题为布尔，评估器解释学生原值。可参看[独立宿主示例](tests/fixtures/response-confirmation-consumer.mts)。
+练法以单步 `finalAnswer`、`response-group@1` 和 `oneResponsePerQuestion` 声明逐题确认。槽位用 `input` 指明已登记的作答形态（默认扩展包提供 `booleanOrString` 与 `optionIndexArray`），并声明 `confirmFromDrafts.allowUnanswered` 和每道题的固定版本。`grading.assessment` 固定覆盖该形态的评估器版本及按该形态布局的私有评分键（`booleanOrString` 为 `acceptedResponses`，`optionIndexArray` 为 `acceptedIndexes`）。可参看[独立宿主示例](tests/fixtures/response-confirmation-consumer.mts)。
 
 `saveResponseDraft` 接收同一题内的操作标识、基础修订、题版本和 `value`。布尔和原始字符串均按原类型保存，字符串经过保存和确认仍保留空格。未保存草稿的题在确认中是 `null`，显式保存的空字符串仍为字符串。`confirmResponses` 接收固定题集合、各题当前草稿修订和原稿声明，内核在同一事务记录作品、回执、完成与评估任务。原稿存在性仍由可信宿主使用 `verifyOriginal` 核实。同一意图重试取回原回执，改答冲突通过 `ResponseDraftConflict` 或 `ResponseConfirmationConflict` 交付本人当前稿。
 
-可信宿主用原确认操作调用 `recoverResponseConfirmation`，每次经当前活动及 `authorizeConfirmationRecovery` 核准。同步评估器收到冻结版本、原值和私有布尔评分键，返回 `{ status: "judged", correct }` 或 `{ status: "needsReview" }`。内核独立保存待人工判定事实和布尔判定。回调未配置时返回 `EVALUATOR_UNAVAILABLE`，回调异常回滚本次评估。已存结果可在重开后读取，授权恢复不暴露私有评分键。`ownResponses` 仅开放本人确认作品，学生常规读面没有本模式的判定或待批详情。恢复结果始终交付原评估与待批登记。
+可信宿主用原确认操作调用只读的 `recoverResponseConfirmation`，每次经当前活动及 `authorizeConfirmationRecovery` 核准。评估由 `evaluatePending()` 执行：评估器收到冻结版本、原值和本题私有键（如 `{ acceptedResponse }`），返回 `{ status: "judged", correct }` 或 `{ status: "needsReview" }`。内核独立保存待人工判定事实和布尔判定。已存结果可在重开后读取，授权恢复不暴露私有评分键。`ownResponses` 仅开放本人确认作品，学生常规读面没有本模式的判定或待批详情。恢复结果始终交付原评估与待批登记。
 
-已确认的 `booleanOrString` 整卷可凭原活动和确认键读取或改判。可信宿主分别配置 `authorizeResponseConfirmationReview` 和 `authorizeResponseConfirmationVerdict`。`readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "responseConfirmation")` 返回原确认、发布版本、回执、评估目标及逐题冻结版本、判定修订和当前生效结果。尚未执行自动评估时显示 `pendingEvaluation`，已登记待批时显示 `needsReview`。
+已确认的原值整卷可凭原活动和确认键读取或改判，授权与字段范围见[评阅授权与教学策略](#评阅授权与教学策略)。`readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "responseConfirmation")` 返回原确认、发布版本、回执、评估目标及逐题冻结版本、判定修订和当前生效结果。尚未执行自动评估时显示 `pendingEvaluation`，已登记待批时显示 `needsReview`。
 
-`writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command, "responseConfirmation")` 使用[题组判定](#混合整卷与逐题交付)的改判、清除、修订及幂等契约。每次写入及重发都须经当前授权，核对原提交、目标、题位和冻结版本。清除当前教师判定后回到有效自动原判、原待批或尚未执行评估的状态。作品、原稿引用、原自动及待批登记、提交回执和完成均保留。教师判定使用版本 18 的判定记录，学生常规读面继续按原发布策略交付。
+`writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command, "responseConfirmation")` 使用[题组判定](#混合整卷与逐题交付)的改判、清除、修订及幂等契约。每次写入及重发都须经当前授权，核对原提交、目标、题位和冻结版本。清除当前教师判定后回落到上一条仍有效的教师改判；没有时回到有效自动原判、原待批或尚未执行评估的状态。作品、原稿引用、原自动及待批登记、提交回执和完成均保留。教师判定使用版本 18 的判定记录，学生常规读面继续按原发布策略交付。
 
 版本 16 为该模式增加独立待评记录。旧版 15 升级保留既有作品、回执和布尔判定，升级后的数据库需由支持版本 16 的运行时打开。
 
 ### 整卷索引数组
 
-普通整卷可在相同 `response-group@1` 单步交付中明确声明 `input: "optionIndexArray"`。每道题的选项键使用从零开始的连续十进制编号。私有评分键的 `acceptedIndexes` 为每道题提供非空正确索引集合。`grading.assessment` 固定 `indexResponseEvaluators` 中的版本，评估器逐题接收原数组或 `null`、实际冻结的正确集合和题版本，由宿主决定判定。发布、保存均以冻结选项范围校验下标。普通标量原值和单选使用各自既有入口。
+普通整卷可在相同 `response-group@1` 单步交付中明确声明 `input: "optionIndexArray"`。每道题的选项键使用从零开始的连续十进制编号。私有评分键的 `acceptedIndexes` 为每道题提供非空正确索引集合。评估器逐题接收原数组或 `null` 与本题私有键 `{ acceptedIndexes }`，由宿主决定判定。发布、保存均以冻结选项范围校验下标，越界返回 `INVALID_OPTION_INDEX`。
 
-`saveIndexResponseDraft` 保存索引原序与重复项。显式 `[]` 有草稿修订，无草稿为 `null`，两者均不计已答表现，并受 `allowUnanswered` 约束。`confirmIndexResponses` 保留一次正式回执，可信宿主经当前授权用 `recoverIndexResponseConfirmation` 执行或复读评估。学生本人草稿在 `indexResponseDrafts`，声明 `ownResponses` 后可在确认记录中读到自己的 `indexResponseConfirmation`。私有评分集合仅交给评估器。复用版本 16 的持久结构。可参看[独立宿主示例](tests/fixtures/index-response-confirmation-consumer.mts)。
+保存、确认与恢复与标量原值共用 `saveResponseDraft`、`confirmResponses` 与 `recoverResponseConfirmation`。保存保留索引原序与重复项。显式 `[]` 有草稿修订，无草稿为 `null`，两者均不计已答表现，并受 `allowUnanswered` 约束。学生本人草稿在 `responseDrafts`，声明 `ownResponses` 后可在确认记录中读到自己的 `responseConfirmation`（旧库中按 `indexResponseConfirmation` 存的确认原样读出并归一）。私有评分集合仅交给评估器。复用版本 16 的持久结构。可参看[独立宿主示例](tests/fixtures/index-response-confirmation-consumer.mts)。
 
 ### 混合整卷与逐题交付
 
-单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。仅收作品时声明 `grading: {}`，省略 `scoringKey`。确认照常写入回执和完成记录，评估任务为零。自动评分使用 `grading.assessment`，私有 `scoringKey.acceptedByQuestion` 为参与自动评分的题固定形态和评分数据。评估器标识和版本必须在自动评分实际使用的每种题型注册中存在。评估器逐题收到该次确认中的原值和对应评分键。
+单步活动可显式使用 `question-delivery@1` 和 `questionDelivery` 槽，在各冻结题上声明 `response` 为 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks` 或 `textWithOptionalTitle`。仅收作品时声明 `grading: {}`，省略 `scoringKey`。确认照常写入回执和完成记录，评估任务为零。自动评分使用 `grading.assessment`，私有 `scoringKey.acceptedByQuestion` 为参与自动评分的题固定形态和评分数据。评估器登记的 `responseTypes` 必须覆盖自动评分实际使用的每种形态。评估器逐题收到该次确认中的原值、`responseType` 和对应评分键（去掉 `response` 判别字段后由该形态的 `parseKey` 解析）。
 
-有序填空题用非负整数 `blankCount` 声明冻结位置数，可省略 `options`。没有参考答案且无排序位置的题可声明 `blankCount: 0`，并通过 `grading.teacherReview.questionIds` 登记教师待评。自动评估需要正数位置和匹配的私有条目 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，其中每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。宿主通过 `openLearningRuntime({ orderedTextEvaluators: [{ id, version, evaluate }], ... })` 注册本形态评估器。评估器收到 `value` 与 `acceptedBlanks`，沿同一任务返回 `judged` 或 `needsReview`。
+有序填空题用非负整数 `blankCount` 声明冻结位置数，可省略 `options`。没有参考答案且无排序位置的题可声明 `blankCount: 0`，并通过 `grading.teacherReview.questionIds` 登记教师待评。自动评估需要正数位置和匹配的私有条目 `{ response: "orderedTextBlanks", acceptedBlanks: string[][] }`，其中每一项对应一个冻结空位，由该空的非空参考字符串组成，候选列表可为空。覆盖本形态的评估器收到 `value` 与 `{ acceptedBlanks }`，沿同一任务返回 `judged` 或 `needsReview`。
 
 `saveQuestionDeliveryDraft` 使用原题版本、当前修订和操作标识保护草稿，保留字符串原样、布尔值及数组原序与重复项。传给 `confirmQuestionDelivery` 的请求附同一逻辑槽、操作标识、题版本、所见修订和原稿声明：
 
@@ -123,31 +125,79 @@ const activity = runtime.read(principal, receipt.activityId);
 - `delivery.mode: "perQuestion"` 的 `questionSlots` 为每题固定互异的交付位置。`source: "question"` 只确认一题，其他题可继续保存，最后一题确认后完成活动。显式空交也有本题确认位置。
 - 逐题活动可用 `source: "finish"` 发出全题版本与修订清单。内核核对全部题版本，仅以未交题当前稿或空值组成收尾提交。先交题保留原作品、回执与判定。确认来源区分主动单题空交和收尾时的被动空值。保存的空数组保有草稿修订；无稿值为 `null`，空值不登记表现。
 
-活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery(principal, activityId, key)` 按原活动、步骤尝试和操作标识交付同一回执、确认题范围、原完整请求和 `evaluation`，适用于自动评分题组。待自动评分的任务可在首次获准恢复时执行，已记录的判定和待评状态可直接复读。
+活动确认、必要评估任务和完成记录同事务提交。经当前权限同意后，同一意图重发取回原回执。`recoverQuestionDelivery(principal, activityId, key)` 按原活动、步骤尝试和操作标识只读交付同一回执、确认题范围、原完整请求和 `evaluation`，适用于自动评分题组。自动评分由 `evaluatePending()` 执行，恢复只复读已记录的判定和待评状态。
 
 可信宿主可传第四参数 `"declared"`，按该回执的 `assessment` 字段识别 `"none"`、`"manual"`、`"teacherReview"` 和 `"automatic"`。各模式都带原回执与确认事实，并按现行授权交付。有预先声明的待评题时，`review.questions` 交付确认时登记的题与冻结版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
 
-需要人工评阅时，在 `grading.manualReview.keyRef` 引用本次私有 `scoringKey: { id, version, reviewCriteria }`。填写实际的量表或评阅准则文本。每个确认覆盖的位置都登记待评，含已确认的空答。表现记录继续遵守已答规则。宿主配置同步 `authorizeQuestionDeliveryReview`，凭已验证的 `{ role: "reviewer", id }`、活动 ID 和原确认键调用 `readQuestionDeliveryReview`。授权收到真实评阅者、学生、活动、步骤尝试、操作标识、提交 ID 和回执槽位。已有内核评阅指派也须有效。该读口交付冻结原值、待评题和精确版本的 `basis`，私有量表仅随获准的评阅读取交付。
+需要人工评阅时，在 `grading.manualReview.keyRef` 引用本次私有 `scoringKey: { id, version, reviewCriteria }`。填写实际的量表或评阅准则文本。每个确认覆盖的位置都登记待评，含已确认的空答。表现记录继续遵守已答规则。宿主凭已验证的 `{ role: "reviewer", id }`、活动 ID 和原确认键调用 `readQuestionDeliveryReview`，授权与字段范围见[评阅授权与教学策略](#评阅授权与教学策略)。该读口交付冻结原值、待评题和精确版本的 `basis`；原值须练法声明 `studentChoices`，量表须声明 `gradingBasis`。
 
-无参考答案的题可在 `grading.teacherReview.questionIds` 列出互异的冻结题标识。确认时立即登记该回执中的这些题，含显式空交和未存稿。若同时声明 `grading.assessment`，其余题使用真实的自动评分键，混合回执的 `evaluation` 只包含自动子集及其计数，`"declared"` 恢复同时交付 `review.questions`。仅教师评阅的回执返回 `assessment: "teacherReview"`，其目标无评分键。练法只声明 `teacherReview` 时，其余题仅收作品。`teacherReview` 与引用实际量表的 `manualReview` 互斥。默认确认恢复仅用于带自动评估的回执。
+无参考答案的题可在 `grading.teacherReview.questionIds` 列出互异的冻结题标识。确认时立即登记该回执中的这些题，含显式空交和未存稿。若同时声明 `grading.assessment`，其余题使用真实的自动评分键，混合回执的 `evaluation` 只包含自动子集及其计数，`"declared"` 恢复同时交付 `review.questions`。仅教师评阅的回执返回 `assessment: "teacherReview"`，不建评估任务，判定直接挂在原提交上。练法只声明 `teacherReview` 时，其余题仅收作品。`teacherReview` 与引用实际量表的 `manualReview` 互斥。默认确认恢复仅用于带自动评估的回执。
 
-读题组当前判定时传入 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "verdicts")`。它按原确认交付回执、获准评阅的题位原值与任务目标，逐题返回判定修订和状态。自动评估尚未执行显示 `pendingEvaluation`，需要人工判定显示 `needsReview`，已有有效判定显示 `judged`。自动原判通过 `automatic` 返回，`effective.source` 区分生效的 `teacherReview` 与 `automatic`。`basis` 仅随 `manualReview` 的实际量表交付。原三参评阅读口及声明式确认恢复交付原始待评登记，当前状态通过 `"verdicts"` 读取。
+读题组当前判定时传入 `readQuestionDeliveryReview(reviewer, activityId, confirmationKey, "verdicts")`。它按原确认交付回执、获准评阅的题位原值与任务目标，逐题返回判定修订和状态。自动评估尚未执行显示 `pendingEvaluation`，评估已转失败终态显示 `evaluationFailed`，需要人工判定显示 `needsReview`，已有有效判定显示 `judged`。声明 `gradingBasis` 时，自动原判通过 `automatic` 返回，`effective.source` 区分生效的 `teacherReview` 与 `automatic`；声明 `verdictHistory` 时另返回 `history`。`basis` 仅随 `manualReview` 的实际量表交付。原三参评阅读口及声明式确认恢复交付原始待评登记，当前状态通过 `"verdicts"` 读取。
 
-改判使用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command)`。宿主须另配同步 `authorizeQuestionDeliveryVerdict`，使用真实提交、槽位、冻结题及版本、评价目标和动作裁决每次写入与重放。命令使用 `protocolVersion: 1`、`operationId`、`submissionId`、`targetId`、`questionId`、`expectedRevision` 和 `reason`，按 `action: "override"` 传 `correct` 或按 `action: "withdraw"` 传当前生效判定的 `withdrawId`。先用 `"verdicts"` 读到当前修订，初次为 0。成功得到含判定事件 ID 和新修订的回执。相同命令重发取回原回执，内容变更返回 `OPERATION_CONFLICT`，过旧修订或撤销非当前判定返回 `VERDICT_CONFLICT`。
+改判使用 `writeQuestionDeliveryVerdict(reviewer, activityId, confirmationKey, command)`。练法须声明 `reviseQuestionVerdict`，每次写入与重放都经 `authorizeReview` 以 `purpose: "reviseVerdict"` 和真实提交、槽位、冻结题及版本、评价目标、动作裁决。命令使用 `protocolVersion: 1`、`operationId`、`submissionId`、`targetId`、`questionId`、`expectedRevision` 和 `reason`，按 `action: "override"` 传 `correct` 或按 `action: "withdraw"` 传当前生效判定的 `withdrawId`。先用 `"verdicts"` 读到当前修订，初次为 0。成功得到含判定事件 ID 和新修订的回执。相同命令重发取回原回执，内容变更返回 `OPERATION_CONFLICT`，过旧修订或撤销非当前判定返回 `VERDICT_CONFLICT`。
 
-题组对同一冻结作答的新改判替换以前的教师结果。清除回到仍有效的自动原判、待人工判定或尚未执行的自动评估。逐题确认只能评本次实际交付的题。学生原答和提交回执按原策略交付。自动评分恢复继续交付原评估事实。[题组判定独立宿主示例](tests/fixtures/question-delivery-verdict-consumer.mts)
+题组与其他交付共用同一裁决规则：新改判追加历史并成为当前教师结果；清除当前改判后回落到上一条仍有效的教师改判，再回落到有效的自动原判、待人工判定或尚未执行的自动评估。逐题确认只能评本次实际交付的题。学生原答和提交回执按原策略交付。自动评分恢复继续交付原评估事实。[题组判定独立宿主示例](tests/fixtures/question-delivery-verdict-consumer.mts)
 
 填空按原序保留 `string[]`、空白和数组长度，允许少于或多于题面的空位数。数组为空或所有项去除首尾空白后均为空时不计作答，必答槽拒绝确认。显式全空和空数组仍存有草稿修订，未存稿为 `null`。宿主根据自己的冻结策略处理待人工判定。
 
-带可选标题的文字题使用 `response: "textWithOptionalTitle"`，可省略 `options`，私有条目只需 `{ response: "textWithOptionalTitle" }`。草稿值为 `{ body: string, title?: string }`，确认后原样保留正文及标题，区分缺省标题、空标题和未存稿。纯空白或空正文不登记表现。允许未作答的槽仍可确认仅有标题的作品，必答槽须等正文含有非空白字符后才能确认。宿主在 `titledTextEvaluators` 注册精确版本，收到冻结正文与标题或 `null`，沿同一任务返回 `judged` 或 `needsReview`。
+带可选标题的文字题使用 `response: "textWithOptionalTitle"`，可省略 `options`，私有条目只需 `{ response: "textWithOptionalTitle" }`。草稿值为 `{ body: string, title?: string }`，确认后原样保留正文及标题，区分缺省标题、空标题和未存稿。纯空白或空正文不登记表现。允许未作答的槽仍可确认仅有标题的作品，必答槽须等正文含有非空白字符后才能确认。覆盖本形态的评估器收到冻结正文与标题或 `null`（私有键为 `{}`），沿同一任务返回 `judged` 或 `needsReview`。
 
-宿主可在冻结练法上通过私有 `questionAnswerRules: { [questionId]: { id, version } }` 为单题声明已答规则。注册项通过 `openLearningRuntime({ questionAnswerRules: [{ id, version, response, isAnswered }], ... })` 配置。发布时必须匹配题的原值形态和规则的精确版本。确认时，函数同步读取该题已存的原值并返回布尔值。缺稿按未答处理。必答校验与表现写入共用这一次结果。新确认缺少精确注册时返回 `ANSWER_RULE_UNAVAILABLE`，可在补齐配置后重试。已确认回执按当前授权取回，沿用原结果。省略绑定沿用该值形态的原确认行为，规则配置留在可信服务端。
+宿主可在冻结练法上通过私有 `questionAnswerRules: { [questionId]: { id, version } }` 为单题声明已答规则。注册项通过 `openLearningRuntime({ questionAnswerRules: [{ id, version, responseType, isAnswered }], ... })` 配置。发布时必须匹配题的作答形态和规则的精确版本。确认时，内核先用该形态解析已存原值，再同步调用规则取得布尔值。缺稿按未答处理。必答校验与表现写入共用这一次结果。新确认缺少精确注册时返回 `ANSWER_RULE_UNAVAILABLE`，可在补齐配置后重试。已确认回执按当前授权取回，沿用原结果。省略绑定时使用该作答形态自身的 `isAnswered`，规则配置留在可信服务端。
 
-SQLite v17 允许用无键的评阅目标保存教师评阅，迁移保留已存自动任务、判定历史及待评题。升级后的数据库须由支持 v17 的运行时打开。[混合题独立宿主示例](tests/fixtures/question-delivery-consumer.mts) · [文字题独立宿主示例](tests/fixtures/titled-text-consumer.mts)
+SQLite v19 把判定记录与待人工登记的外键改指学生提交，删除旧版为纯人工题建立的无键空任务；v20 为评估任务增加尝试次数、末次错误码与失败终态；v21 把换版意图的库表约束改为通用非空校验。升级后的数据库须由支持 v21 的运行时打开。[混合题独立宿主示例](tests/fixtures/question-delivery-consumer.mts) · [文字题独立宿主示例](tests/fixtures/titled-text-consumer.mts)
+
+### 扩展 SPI：作答形态、评估器与工具
+
+内核核心不认识具体题型和工具名。作答形态（`ResponseType`）、评估器和工具能力都经公开 SPI 登记；默认扩展包 `src/extensions/` 提供 `choice`、`booleanOrString`、`optionIndexArray`、`orderedTextBlanks`、`textWithOptionalTitle` 五种形态、五个默认工具和 `choice-key@1` 评估器，由 `openLearningRuntime` 自动登记，宿主再追加自己的扩展：
+
+```ts
+import { defineResponseType, LearningError, openLearningRuntime } from "learning-kernel";
+
+const measured = defineResponseType({
+  id: "measuredAmount", version: 1, config: ["unit"],
+  validateQuestion(question, issue) { if (typeof question.unit !== "string") issue(["unit"], "须冻结计量单位"); },
+  parseValue(value, question) { return parseMeasurement(value, question.unit); },
+  isAnswered: value => Number.isFinite(value.amount),
+  parseKey: key => parseAmountKey(key),
+});
+
+const runtime = openLearningRuntime({
+  databasePath,
+  responseTypes: [measured],
+  evaluators: [{ id: "measure-check", version: 1, responseTypes: ["measuredAmount"], evaluate: ({ value, key }) => judge(value, key) }],
+  questionAnswerRules: [],
+  tools: [],
+});
+```
+
+- `validateQuestion` 在发布时校验题目的形态配置；题目上不属于基础字段或 `config` 的字段一律拒绝。
+- `parseValue` 校验并规范化草稿原值，不合法时抛 `LearningError(422, …)`；保存与评估都经它解析。
+- `isAnswered` 决定表现登记与必答校验；练法可再用 `questionAnswerRules` 为单题指定宿主规则。
+- `parseKey` 校验逐题私有键；整卷旧布局另以 `wholePaperKey` 声明字段名。
+- 评估器以 `responseTypes` 声明覆盖的形态，收到 `{ activityId, stepAttemptId, slotId, practice, questionId, questionVersion, responseType, value, key }`，返回 `{ status: "judged", correct }` 或 `{ status: "needsReview" }`。
+- 工具能力声明输入输出类型；`supportsMaterialPositions` 表示可绑定显式材料位置，`responseType` 给出未声明形态的题默认使用的形态。
+- 同名同版本的工具、评估器、已答规则或同名形态重复登记时，`openLearningRuntime` 直接报错。
+
+### 显式评估与失败终态
+
+确认事务只登记待评任务。宿主在确认成功后调用 `runtime.evaluatePending()`（或 `evaluatePending({ submissionId })` 只评一份提交）同步取得结果；进程重启、超时或失败后同样调用它补偿。内核先在只读快照中调用评估器，再用短写事务在任务仍为待评时整体落库，判定、待人工登记和完成状态全有或全无。返回 `{ evaluated, retrying, failed, deferred }`：
+
+- 评估器未登记（503）计入 `deferred`，任务保持待评、不计次。
+- 评估器抛错或返回无效结果计入一次尝试，记录稳定错误码；满 3 次转 `failed` 终态，学生读面仍显示待评，教师读面显示 `evaluationFailed`，可人工改判兜底。
+- 落库失败整体回滚并原样抛出，任务保持待评。
+
+`recover*` 系列只读，`evaluation.status` 为 `pending`、`failed` 或 `evaluated`。多个进程同时调用时允许重复计算，判定只落一次。数据库以 WAL 模式打开。
+
+### 评阅授权与教学策略
+
+题组、原单选整卷和原值整卷的评阅读写统一经一个宿主钩子 `authorizeReview(access)` 裁决。`access` 带评阅者、学生、活动、步骤尝试、确认操作、提交与槽位，`delivery`（`questionDelivery`、`choiceConfirmation` 或 `responseConfirmation`），以及 `purpose`：`readReview`，或 `reviseVerdict` 并附评估目标、题号、冻结题版本和动作。未配置钩子时一律拒绝。
+
+内核有评阅指派（`reading_reviews`）时，评阅者须是在任的被指派者；没有内核指派时，「谁是这个学生的老师」这类宿主业务归属完全交给钩子裁决。两层规则同时生效：钩子回答「这个人能不能评这份提交」，练法的 `policy.reviewer` 回答「这份练法允许看什么、能不能改判」。未声明任何评阅字段或动作的练法拒绝评阅；`studentChoices` 开放学生原答，`gradingBasis` 开放自动判定、有效判定和人工量表，`verdictHistory` 开放判定历史，改判须声明 `reviseQuestionVerdict`。原值确认卷在发布时可声明这四项，不能声明两步阅读专属的引文与复盘管理动作。
 
 ### 材料版本与使用位置
 
-单步最终作答可用 `single-choice-group@1` 或 `question-delivery@1` 在发布时提供顶层 `materials`，题组交付支持整卷与逐题模式。每项 `from:"material"` 输入各自声明唯一的 `positionId` 和精确的 `material:{id,version}`。同一份材料可在多个位置使用。每个引用须对应同一次发布中提供的不可变定义，所有定义都须在当前练法使用。此项声明与旧版顶层及练法的单数 `material` 互斥。
+单步最终作答的工具在能力声明中带 `supportsMaterialPositions: true` 时（默认扩展包中的 `single-choice-group@1` 与 `question-delivery@1`），可在发布时提供顶层 `materials`，题组交付支持整卷与逐题模式。每项 `from:"material"` 输入各自声明唯一的 `positionId` 和精确的 `material:{id,version}`。同一份材料可在多个位置使用。每个引用须对应同一次发布中提供的不可变定义，所有定义都须在当前练法使用。此项声明与旧版顶层及练法的单数 `material` 互斥。
 
 活动固定公开版本和该版本的材料引用。只换一份材料时，发布该材料的新版本并更新对应位置，再发布练法的新版本。恢复旧活动仍使用原位置和原材料版本。 `read` 在当前步骤 `inputs` 的相应材料输入下返回 `positionId` 和 `material`。旧单材料练法继续在活动顶层返回 `material`，无材料练法照常工作。资料展示布局与附加附件留宿主处理。可参看[独立宿主示例](tests/fixtures/material-positions-consumer.mts)。
 
