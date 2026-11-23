@@ -88,7 +88,7 @@ export type ScenarioContract = Readonly<{
   items: Readonly<Record<ScenarioItem, ScenarioCase | Readonly<{ notApplicable: string }>>>;
 }>;
 
-const ledger = new URL("../../../docs/迁移契约台账/台账.md", import.meta.url);
+const ledger = new URL("./g35-scope.md", import.meta.url);
 
 function ledgerCell(group: string) {
   const lines = readFileSync(ledger, "utf8").split("\n");
