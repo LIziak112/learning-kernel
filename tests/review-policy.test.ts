@@ -105,6 +105,10 @@ test("原值确认卷可在发布时声明评阅字段与改判，不得声明�
     evaluators: [booleanEvaluator(evaluator, () => ({ status: "needsReview" }))] });
   try {
     runtime.publish(publication("declared", reviewer(["studentChoices", "verdictHistory", "gradingBasis"], ["reviseQuestionVerdict"])));
+    const manual = publication("manual-without-revision", reviewer(["studentChoices"]));
+    assert.throws(() => runtime.publish({ ...manual, practice: { ...manual.practice, grading: { teacherReview: { questionIds: [judge.id] } } },
+      scoringKey: undefined }), error => error instanceof ZodError
+      && error.issues.some(issue => issue.message === "声明人工评阅的题组须允许逐题改判"));
     for (const [id, policy, manager] of [
       ["quotes", reviewer(["submittedQuotes"]), []], ["comments", reviewer([], ["commentOnQuotes"]), []],
       ["manager", reviewer(["gradingBasis"]), ["openReview"]],

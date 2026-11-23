@@ -50,8 +50,13 @@ const evaluatorShape = versionRef.extend({ responseTypes: z.array(id).min(1), ev
 const evaluatorRegistration = z.custom<EvaluatorRegistration>(value => evaluatorShape.safeParse(value).success);
 const answerRuleShape = versionRef.extend({ responseType: id, isAnswered: callable<QuestionAnswerRule["isAnswered"]>() });
 const answerRuleRegistration = z.custom<QuestionAnswerRule>(value => answerRuleShape.safeParse(value).success);
-const responseTypeRegistration = z.custom<RegisteredResponseType>(value => typeof value === "object" && value !== null
-  && typeof Reflect.get(value, "parseValue") === "function" && typeof Reflect.get(value, "isAnswered") === "function");
+const optionalCallable = z.custom<unknown>(value => value === undefined || typeof value === "function");
+const responseTypeShape = versionRef.extend({
+  config: z.array(id), validateQuestion: callable<unknown>(), parseValue: callable<unknown>(), isAnswered: callable<unknown>(),
+  parseKey: optionalCallable, wholePaperKey: z.strictObject({ field: id, toKey: callable<unknown>() }).optional(),
+});
+const responseTypeRegistration = z.custom<RegisteredResponseType>(value => responseTypeShape.safeParse(value).success,
+  "作答形态须经 defineResponseType 定义");
 const toolRegistration = z.custom<ToolCapability>(value => typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "outputs")));
 const runtimeOptions = z.strictObject({
   databasePath: z.string().min(1),

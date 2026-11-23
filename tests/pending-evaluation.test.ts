@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { openLearningRuntime } from "../src/server.ts";
+import { LearningError, openLearningRuntime } from "../src/server.ts";
 import type { PublicationInput } from "../src/server.ts";
 import { booleanEvaluator } from "./fixtures/evaluators.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
@@ -42,7 +42,7 @@ test("恢复只读；评估器连续失败三次转失败终态，学生见失�
     authorizeReview: () => true,
     evaluators: [booleanEvaluator(evaluator, ({ value, acceptedResponse }) => {
       calls++;
-      if (broken) throw new Error("upstream grader down");
+      if (broken) throw calls === 1 ? new LearningError(503, "UPSTREAM_UNAVAILABLE") : new Error("upstream grader down");
       return { status: "judged", correct: value === acceptedResponse };
     })],
   });

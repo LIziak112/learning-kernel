@@ -8,6 +8,27 @@ import type { Registry } from "./registry.ts";
 
 type Question = ReadingActivity["practice"]["questions"][number];
 export type FrozenAnswer = { questionId: string; questionVersion: number; value: unknown };
+
+export class EvaluatorFailure extends Error {
+  readonly code: "EVALUATOR_FAILED" | "INVALID_EVALUATOR_RESULT";
+
+  constructor(code: EvaluatorFailure["code"]) {
+    super(code);
+    this.code = code;
+  }
+}
+
+function invokeEvaluator(evaluate: () => unknown) {
+  let raw: unknown;
+  try {
+    raw = evaluate();
+  } catch {
+    throw new EvaluatorFailure("EVALUATOR_FAILED");
+  }
+  const parsed = verdictResult.safeParse(raw);
+  if (!parsed.success) throw new EvaluatorFailure("INVALID_EVALUATOR_RESULT");
+  return parsed.data;
+}
 export type QuestionKey = (question: Question) => unknown;
 
 export function evaluationContext(activity: ReadingActivity, receipt: { stepAttemptId: string; slotId: string }): EvaluationContext {
@@ -29,7 +50,7 @@ export function evaluateFrozenAnswers(
     const key = keyOf(question);
     if (key === undefined) throw new Error("冻结的评分键缺少题目");
     const frozen = value === null ? null : type.parseValue(value, question);
-    const result = verdictResult.parse(evaluator.evaluate({
+    const result = invokeEvaluator(() => evaluator.evaluate({
       ...context, practice: { ...context.practice }, questionId, questionVersion, responseType: type.id, value: frozen, key,
     }));
     return { questionId, result };
@@ -38,7 +59,7 @@ export function evaluateFrozenAnswers(
 
 export function judgedOnly(outcomes: readonly { questionId: string; result: VerdictResult }[]) {
   return outcomes.map(({ questionId, result }) => {
-    if (result.status !== "judged") throw new Error("选择题评估须给出确定判定");
+    if (result.status !== "judged") throw new EvaluatorFailure("INVALID_EVALUATOR_RESULT");
     return { questionId, correct: result.correct };
   });
 }

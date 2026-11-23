@@ -11,7 +11,7 @@ import { revisedChoiceKey } from "./choice-snapshot-store.ts";
 import { readTransaction, writeTransaction } from "./database.ts";
 import { recordEvaluation } from "./evaluation.ts";
 import { confirmedDeliveryAssessment } from "./question-delivery-evaluation.ts";
-import { evaluateFrozenAnswers, judgedOnly } from "./question-evaluation.ts";
+import { evaluateFrozenAnswers, EvaluatorFailure, judgedOnly } from "./question-evaluation.ts";
 import type { FrozenAnswer, QuestionKey } from "./question-evaluation.ts";
 import { frozenResponseType, wholePaperQuestionKey } from "./question-types.ts";
 import type { Registry } from "./registry.ts";
@@ -57,11 +57,12 @@ export function evaluatePending(
     } catch (error) {
       if (error instanceof LearningError && error.status === 503) {
         summary.deferred++;
-      } else {
-        const status = recordFailure(database, task, failureCode(error));
-        if (status === "failed") summary.failed++;
-        else if (status === "pending") summary.retrying++;
+        continue;
       }
+      if (!(error instanceof EvaluatorFailure)) throw error;
+      const status = recordFailure(database, task, error.code);
+      if (status === "failed") summary.failed++;
+      else if (status === "pending") summary.retrying++;
       continue;
     }
     if (outcomes && writeTransaction(database, () => completeTask(database, task, outcomes, checkpoint))) summary.evaluated++;
@@ -134,12 +135,6 @@ function completeTask(database: DatabaseSync, task: PendingTask, outcomes: reado
   recordResponseReviewRequirements(database, task.submissionId, pending);
   recordEvaluation(database, task, judged, checkpoint);
   return true;
-}
-
-function failureCode(error: unknown) {
-  if (error instanceof LearningError) return error.code;
-  if (error instanceof z.ZodError) return "INVALID_EVALUATOR_RESULT";
-  return "EVALUATOR_FAILED";
 }
 
 function recordFailure(database: DatabaseSync, task: PendingTask, code: string) {

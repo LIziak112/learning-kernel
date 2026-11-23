@@ -40,6 +40,9 @@ function validateDeliveryGrading(
   const { assessment, manualReview, teacherReview } = practice.grading;
   const teacherIds = new Set(teacherReview?.questionIds);
   validateTeacherReviewQuestions(teacherIds, ids, issue);
+  if ((manualReview || teacherReview) && !practice.policy.reviewer.actions.includes("reviseQuestionVerdict")) {
+    issue(["practice", "policy", "reviewer", "actions"], "声明人工评阅的题组须允许逐题改判");
+  }
   if (manualReview) {
     if (assessment) issue(["practice", "grading", "manualReview"], "同一次题组交付只声明一种评估方式");
     if (teacherReview) issue(["practice", "grading", "teacherReview"], "教师评阅与整组人工评阅不能同时声明");

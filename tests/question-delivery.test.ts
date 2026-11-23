@@ -1428,8 +1428,11 @@ test("无自动评分的题组可切换，人工评阅依据只接受同内容�
   const databasePath = scenarioDatabase(t);
   const runtime = openLearningRuntime({ databasePath, authorizeConfirmationRecovery: () => true });
   try {
-    const { practice: first, materials } = switchableDelivery("whole", 1);
-    const { practice: next } = switchableDelivery("perQuestion", 2);
+    const reviewable = <T extends { policy: object }>(practice: T) => ({ ...practice, policy: { ...practice.policy,
+      reviewer: { scope: "assignedReviewer" as const, fields: ["studentChoices" as const], actions: ["reviseQuestionVerdict" as const] } } });
+    const first = reviewable(switchableDelivery("whole", 1).practice);
+    const { materials } = switchableDelivery("whole", 1);
+    const next = reviewable(switchableDelivery("perQuestion", 2).practice);
     const teacherReview = { questionIds: [strictChoice.id, judgeQuestion.id] };
     runtime.publish({ materials, practice: { ...first, id: "teacher-review-switch", grading: { teacherReview } } });
     runtime.publish({ materials, practice: { ...next, id: "teacher-review-switch", grading: { teacherReview } } });

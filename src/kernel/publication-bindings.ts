@@ -270,6 +270,8 @@ function validateKey(
     issue(["scoringKey"], "评分键须与提交槽位类型一致");
     return;
   }
+  const declaredFields = new Set(["id", "version", field]);
+  for (const extra of Object.keys(key).filter(name => !declaredFields.has(name))) issue(["scoringKey", extra], "评分键含未声明的字段");
   const ids = new Set(practice.questions.map(question => question.id));
   for (const question of practice.questions) {
     if (wholePaperQuestionKey(key, type, question) === undefined) {

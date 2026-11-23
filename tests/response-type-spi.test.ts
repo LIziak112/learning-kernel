@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { z, ZodError } from "zod";
 import { defineResponseType, LearningError, openLearningRuntime } from "../src/server.ts";
 import type { EvaluationInput, PublicationInput, ToolCapability } from "../src/server.ts";
+import { frozenChoicePublication } from "./fixtures/frozen-choice.ts";
 import { scenarioDatabase } from "./fixtures/online-reading.ts";
 
 const student = { role: "student", id: "measuring-student" } as const;
@@ -129,4 +130,20 @@ test("材料位置只认工具能力声明的标记，不认具体工具名", t 
     runtime.publish(withMaterial(board));
   } finally { runtime.close(); }
   assert.throws(() => openLearningRuntime({ databasePath, tools: [{ ...board, id: "question-delivery" }] }), /工具重复登记/);
+});
+
+test("整卷评分键拒绝未声明的字段；宿主作答形态须完整定义，缺方法时开库即拒绝", t => {
+  const databasePath = scenarioDatabase(t);
+  const { validateQuestion: _missing, ...incomplete } = measured;
+  assert.throws(() => openLearningRuntime({ databasePath, responseTypes: [incomplete as typeof measured] }), ZodError);
+  const runtime = openLearningRuntime({ databasePath, evaluators: [{ id: "frozen-choice-check", version: 1, responseTypes: ["choice"],
+    evaluate: () => ({ status: "judged", correct: true }) }] });
+  try {
+    const { practice, scoringKey } = frozenChoicePublication;
+    const grading = { assessment: { ...practice.grading.assessment, evaluator: { id: "frozen-choice-check", version: 1 } } };
+    const extra = { ...scoringKey, hint: { [practice.questions[0]?.id ?? "q"]: "提示" } };
+    assert.throws(() => runtime.publish({ practice: { ...practice, grading }, scoringKey: extra }),
+      error => error instanceof ZodError && error.issues.some(issue => issue.path.join(".") === "scoringKey.hint"));
+    runtime.publish({ practice: { ...practice, grading }, scoringKey });
+  } finally { runtime.close(); }
 });
