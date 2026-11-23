@@ -1,0 +1,102 @@
+{
+  "产品": "74a1471bfad391735eea4ebf3dfe250267c6ad95",
+  "内核包": "1968b032742f9626b5d8270984965b39c27ea67541c36ec51a8e12ed9c40d5d5",
+  "方法": "同一合成卷在真实教师 SDK 更正前后各取双库的一致性 SQLite 快照。每个组合使用独立目录，经原管理员下载备份，再通过原学生入口读取同一题并核对相应教师审计条数。",
+  "原始报告SHA256": "1c290836722e2a264f8fe3fe5024dc50a9dc8d0742353adf136ba4902f801791",
+  "K13只读核验": {
+    "源码": "3e48ce73cd322323cecbc7242cba8090d9aa2fb5",
+    "产物摘要": "baaea5f3ed29fd75f1bc06c3727a2ac311c0bebe6b6188619678cca994a5af07",
+    "结果": [
+      {
+        "productAudits": 0,
+        "kernelAudits": 1,
+        "bindings": 2,
+        "auditCheck": "TEACHER_AMENDMENTS_MISMATCH",
+        "unchanged": true
+      },
+      {
+        "productAudits": 1,
+        "kernelAudits": 0,
+        "bindings": 2,
+        "auditCheck": "TEACHER_AMENDMENTS_MISMATCH",
+        "unchanged": true
+      },
+      {
+        "productAudits": 1,
+        "kernelAudits": 1,
+        "bindings": 2,
+        "auditCheck": "accepted",
+        "unchanged": true
+      }
+    ],
+    "原始报告SHA256": "f1704c64a59f77f7e543e5d5b2c955b35c89b5a8d508ea1841e685089a4251b3"
+  },
+  "结果": {
+    "side": "candidate",
+    "before": {
+      "s": 200,
+      "choice": null,
+      "keys": [],
+      "stem": "2 + 3 等于多少？",
+      "rev": 0
+    },
+    "receipt": {
+      "error": false,
+      "success": true,
+      "rev": 1
+    },
+    "student": {
+      "s": 200,
+      "choice": 1,
+      "keys": [
+        "kind",
+        "index"
+      ],
+      "stem": "2 + 3 等于多少？",
+      "rev": 1
+    },
+    "hostRow": {
+      "revision": 0,
+      "changes": 0,
+      "answer": null
+    },
+    "teacherRecord": {
+      "rev": 1,
+      "choice": 1
+    },
+    "archive": {
+      "status": 200,
+      "bytes": 93472,
+      "sha256": "5729bbd966c6761fffc645c443d9782527203bf0e170841f519f4b232abea9bc"
+    },
+    "cuts": [
+      {
+        "label": "P早K晚",
+        "backup": 200,
+        "zip": true,
+        "studentStatus": 200,
+        "revision": 1,
+        "choice": 1,
+        "teacherAudits": 0
+      },
+      {
+        "label": "P晚K早",
+        "backup": 200,
+        "zip": true,
+        "studentStatus": 200,
+        "revision": 0,
+        "choice": null,
+        "teacherAudits": 1
+      },
+      {
+        "label": "两者同步",
+        "backup": 200,
+        "zip": true,
+        "studentStatus": 200,
+        "revision": 1,
+        "choice": 1,
+        "teacherAudits": 1
+      }
+    ]
+  }
+}
