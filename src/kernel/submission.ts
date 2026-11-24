@@ -12,7 +12,7 @@ import { readResponseDrafts } from "./response-drafts.ts";
 import { writeTransaction } from "./database.ts";
 import { LearningError } from "../contracts/learning-error.ts";
 import {
-  confirmReadingDraft, readingActivityView, requireAvailableTool, saveReadingAnswer, saveReadingSelection, studentSubmissionView,
+  confirmReadingDraft, readingActivityView, readingStatus, requireAvailableTool, saveReadingAnswer, saveReadingSelection, studentSubmissionView,
 } from "./reading-progress.ts";
 import type { Registry } from "./registry.ts";
 import type { RuntimeCheckpoint } from "./runtime-checkpoint.ts";
@@ -136,7 +136,7 @@ export function readStudentResults(
     return results.review;
   }
   return {
-    activityId, status: activity.completed ? "completed" : "active", redoOf: activity.redoOf,
+    activityId, status: readingStatus(activity), redoOf: activity.redoOf,
     submissions: activitySubmissions(database, activityId).map(submitted => studentSubmissionView(activity, submitted)),
     ...results,
   };

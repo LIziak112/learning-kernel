@@ -21,6 +21,7 @@ export function replacePreparedActivityVersion(database: DatabaseSync, student: 
     if (activity.kind !== "reading" || activity.practiceVersion === undefined) throw new LearningError(409, "ACTIVITY_NOT_PREPARED");
     const previous = recoverVersionChange(database, activityId, input);
     if (previous) return { activityId, startedAt: activity.startedAt, ...previous };
+    if (activity.abandoned) throw new LearningError(409, "ACTIVITY_ABANDONED");
     if (activity.stepAttemptId !== input.stepAttemptId || activity.practiceVersion !== input.expectedPracticeVersion) {
       throw new LearningError(409, "ACTIVITY_VERSION_CONFLICT");
     }

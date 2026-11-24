@@ -36,6 +36,7 @@ export const publicationSchema = z.strictObject({
 
 export const startInput = z.strictObject({ protocolVersion, operationId: id, practiceId: id });
 export const redoInput = startInput.omit({ practiceId: true });
+export const restartInput = redoInput.extend({ practiceVersion: version.optional() });
 export const startReceipt = z.strictObject({
   activityId: z.uuid(),
   stepAttemptId: z.uuid(),
@@ -87,6 +88,7 @@ export const activityDetail = startReceipt.extend({
 export type Material = z.infer<typeof materialSchema>;
 export type Step = z.infer<typeof stepSchema>;
 export type StartInput = z.infer<typeof startInput>;
+export type RestartInput = z.infer<typeof restartInput>;
 export type SaveInput = z.infer<typeof saveInput>;
 export type SubmitInput = z.infer<typeof submitInput>;
 export type SubmissionReceipt = z.infer<typeof submissionReceipt>;

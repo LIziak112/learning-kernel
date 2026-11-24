@@ -213,6 +213,7 @@ function validateAssessmentBinding(
 function validateResponsePolicy(practice: ReadingPublication["practice"], delivery: "none" | "response" | "questionDelivery", issue: Issue) {
   const { student, reviewer, manager } = practice.policy;
   const { fields } = student.ownSubmission;
+  if (student.restart && delivery !== "questionDelivery") issue(["practice", "policy", "student", "restart"], "学生重开只支持题组交付");
   if (delivery === "none") {
     if (fields.includes("ownResponses")) issue(["practice", "policy", "student", "ownSubmission", "fields"], "原值回看须使用原值提交槽");
     return;

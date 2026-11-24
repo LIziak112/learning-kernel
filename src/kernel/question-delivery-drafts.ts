@@ -31,7 +31,7 @@ export function saveQuestionDeliveryDraft(
 ) {
   return writeTransaction(database, () => {
     const activity = loadStudentReadingActivity(database, studentId, activityId, input.stepAttemptId);
-    if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
+    requireOpenRound(activity);
     const slot = requireQuestionDeliverySlot(activity, input.slotId);
     requireAvailableTool(registry, activity.step, slot.type);
     const question = requireFrozenQuestion(activity, input);
@@ -41,6 +41,11 @@ export function saveQuestionDeliveryDraft(
     const draft = saveCurrentResponse(database, activityId, { ...input, value, slotId }, mode, clock, QuestionDeliveryConflict);
     return { ...draft, slotId: input.slotId };
   });
+}
+
+export function requireOpenRound(activity: ReadingActivity) {
+  if (activity.abandoned) throw new LearningError(409, "ACTIVITY_ABANDONED");
+  if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
 }
 
 export function readOpenDeliveryDrafts(
