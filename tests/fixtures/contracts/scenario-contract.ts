@@ -88,7 +88,7 @@ export type ScenarioContract = Readonly<{
   items: Readonly<Record<ScenarioItem, ScenarioCase | Readonly<{ notApplicable: string }>>>;
 }>;
 
-const ledger = new URL("./g35-scope.md", import.meta.url);
+const ledger = new URL("./scope.md", import.meta.url);
 
 function ledgerCell(group: string) {
   const lines = readFileSync(ledger, "utf8").split("\n");
@@ -100,7 +100,8 @@ function ledgerCell(group: string) {
 }
 
 function ledgerApplicability(group: string) {
-  const [declared = "", reasons = ""] = ledgerCell(group).split("；");
+  const [declared = "", ...rest] = ledgerCell(group).split("；");
+  const reasons = rest.join("；");
   const items = declared.replace(/（[^）]*）/g, "").split(/[/／]/).map(part => part.trim());
   return { applicable: scenarioItems.filter(item => items.includes(itemNames[item])), reasons };
 }
