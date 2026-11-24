@@ -774,6 +774,7 @@ test("按题教师评阅｜旧库借空评估任务锚定的人工判定，升�
       INSERT INTO legacy_events SELECT * FROM verdict_events;
       DROP TABLE verdict_events;
       ALTER TABLE legacy_events RENAME TO verdict_events;
+      DROP TABLE self_assessment_events;
       DROP TABLE activity_restarts;
       DELETE FROM schema_migrations WHERE version >= ${reviewAnchorVersion};
       COMMIT;

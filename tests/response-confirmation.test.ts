@@ -378,6 +378,7 @@ test("v15 已声明单选的活动升级后保持成员校验、原回执和布�
     database.exec(`
       ALTER TABLE prepared_activity_version_changes DROP COLUMN intent;
       DROP TABLE response_review_requirements;
+      DROP TABLE self_assessment_events;
       DROP TABLE activity_restarts;
       DELETE FROM schema_migrations WHERE version > 15;
     `);

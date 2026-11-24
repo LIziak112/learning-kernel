@@ -63,6 +63,7 @@ test("升级旧草稿保留未知首次时刻，旧写同文和接管不会补�
       DROP TABLE choice_snapshot_revisions;
       DROP TABLE choice_draft_amendments;
       DROP TABLE response_review_requirements;
+      DROP TABLE self_assessment_events;
       DROP TABLE activity_restarts;
       DELETE FROM schema_migrations WHERE version >= 11;
     `);

@@ -4,6 +4,8 @@ import type { ReadingActivity } from "./activity.ts";
 import { confirmedDeliveryAssessment } from "./question-delivery-evaluation.ts";
 import { questionDeliverySlot } from "./question-delivery-publication.ts";
 import { reviewDisclosure } from "./review-access.ts";
+import type { SelfAssessmentScoring } from "../contracts/self-assessment.ts";
+import { currentSelfAssessments, selfAssessmentCounts, selfAssessmentScoring, selfReviewQuestionIds } from "./self-assessment.ts";
 import { activitySubmissions } from "./submission-store.ts";
 import { assessmentTarget, questionVerdicts, questionVerdictStates, submissionReviewTarget } from "./verdict-state.ts";
 
@@ -28,26 +30,47 @@ export function studentResults(database: DatabaseSync, activity: ReadingActivity
 }
 
 function passageAssessment(score: NonNullable<StudentPolicy["passageScore"]>, graded: readonly Graded[]) {
-  const result = { questionCount: graded.length, correctCount: graded.filter(item => item.correct).length };
+  return scoreFields(score, { questionCount: graded.length, correctCount: graded.filter(item => item.correct).length });
+}
+
+function scoreFields(score: NonNullable<StudentPolicy["passageScore"]>, result: { questionCount: number; correctCount: number }) {
   return { status: "complete" as const, ...Object.fromEntries(score.fields.map(field => [field, result[field]])) };
 }
 
-type DeliveryResults = { assessment?: ReturnType<typeof passageAssessment> | { status: "pending" }; review?: undefined };
+type SelfSummary = { scoring: SelfAssessmentScoring; judgedCorrect: number; selfAssessedCorrect: number; selfAssessedWrong: number };
+type DeliveryResults = {
+  assessment?: (ReturnType<typeof scoreFields> & { selfAssessment?: SelfSummary }) | { status: "pending" };
+  review?: undefined;
+};
 
 function deliveryResults(database: DatabaseSync, activity: ReadingActivity, policy: StudentPolicy, targetId: string): DeliveryResults {
   if (!activity.completed || !policy.passageScore) return {};
-  const graded = activitySubmissions(database, activity.activityId).flatMap(({ receipt, content }) => {
+  const routed = selfReviewQuestionIds(activity);
+  const entries = activitySubmissions(database, activity.activityId).flatMap(({ receipt, content }) => {
     const delivered = readQuestionDelivery(content);
     const target = delivered && submissionReviewTarget(database, receipt.id, targetId);
     if (!delivered || !target) return [];
     const { automatic, review } = confirmedDeliveryAssessment(activity, delivered);
-    return questionVerdictStates(database, target, [...automatic, ...review])
-      .flatMap(({ questionId, effective }) => effective ? [{ questionId, correct: effective.correct }] : []);
+    const current = currentSelfAssessments(database, receipt.id);
+    return questionVerdictStates(database, target, [...automatic, ...review]).map(({ questionId, effective }) => ({
+      ...effective && { effective }, self: routed.has(questionId) ? current.get(questionId)?.verdict ?? null : null,
+    }));
   });
-  if (graded.length !== activity.practice.questions.length) {
+  if (entries.filter(({ effective, self }) => effective || self).length !== activity.practice.questions.length) {
     return policy.ownSubmission.onFinal.includes("passageGradingStatus") ? { assessment: { status: "pending" } } : {};
   }
-  return { assessment: passageAssessment(policy.passageScore, graded) };
+  const scoring = selfAssessmentScoring(activity);
+  if (!scoring) {
+    const correctCount = entries.filter(({ effective }) => effective?.correct).length;
+    return { assessment: scoreFields(policy.passageScore, { questionCount: entries.length, correctCount }) };
+  }
+  const { questionCount, correctCount, judgedCorrect, selfAssessedCorrect, selfAssessedWrong } = selfAssessmentCounts(scoring, entries);
+  return {
+    assessment: {
+      ...scoreFields(policy.passageScore, { questionCount, correctCount }),
+      selfAssessment: { scoring, judgedCorrect, selfAssessedCorrect, selfAssessedWrong },
+    },
+  };
 }
 
 type PublishedReview = NonNullable<ReadingActivity["practice"]["policy"]["student"]["review"]>;

@@ -15,6 +15,7 @@ export type ContractQuestion = Readonly<{
 export type ContractGrading = Readonly<{
   keys: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   teacherReview: readonly string[];
+  selfReview?: readonly string[];
 }>;
 
 export type DeliveryDeclaration = Readonly<{
@@ -83,6 +84,7 @@ export function deliveryPublication(declaration: DeliveryDeclaration): Publicati
       grading: {
         ...automatic ? { assessment } : {},
         ...grading.teacherReview.length > 0 ? { teacherReview: { questionIds: [...grading.teacherReview] } } : {},
+        ...grading.selfReview?.length ? { selfReview: { questionIds: [...grading.selfReview] } } : {},
       },
       policy,
     },

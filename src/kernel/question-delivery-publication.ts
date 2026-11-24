@@ -21,6 +21,9 @@ export function validateQuestionDeliveryPublication(publication: ReadingPublicat
     if (practice.grading.teacherReview) {
       issue(["practice", "grading", "teacherReview"], "教师评阅须绑定题组交付槽");
     }
+    if (practice.grading.selfReview || practice.policy.student.selfAssessment) {
+      issue(["practice", "grading", "selfReview"], "学生自评须绑定题组交付槽");
+    }
     rejectUnboundQuestionFormats(practice.questions, issue);
     return false;
   }
@@ -31,7 +34,21 @@ export function validateQuestionDeliveryPublication(publication: ReadingPublicat
   validateAnswerRuleBindings(practice, registry, issue);
   validateDeliveryGrading(publication, { stepId: step.id, slotId }, ids, registry, issue);
   validateDeliveryScore(practice, issue);
+  validateSelfReview(practice, ids, issue);
   return true;
+}
+
+function validateSelfReview({ grading, policy: { student } }: ReadingPublication["practice"], ids: ReadonlySet<string>, issue: Issue) {
+  const selfIds = grading.selfReview?.questionIds ?? [];
+  if (!student.selfAssessment !== !grading.selfReview) {
+    issue(["practice", "policy", "student", "selfAssessment"], "自评题与自评计分策略须同时声明");
+  }
+  const teacherIds = new Set(grading.teacherReview?.questionIds);
+  const assessed = (questionId: string) => grading.manualReview !== undefined || grading.assessment !== undefined || teacherIds.has(questionId);
+  for (const questionId of selfIds) {
+    if (!ids.has(questionId)) issue(["practice", "grading", "selfReview", "questionIds"], "自评须绑定已发布的题");
+    else if (!assessed(questionId)) issue(["practice", "grading", "selfReview", "questionIds"], "自评题须同时声明评估或教师评阅");
+  }
 }
 
 function validateDeliveryScore({ questions, grading, policy: { student } }: ReadingPublication["practice"], issue: Issue) {
