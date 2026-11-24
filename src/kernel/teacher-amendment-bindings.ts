@@ -114,6 +114,6 @@ function isQuestionInStep(row: unknown, { slotId, questionId }: TeacherAmendment
   if (!practice.success) return false;
   const step = practice.data.steps.find(candidate => candidate.id === stored.data.stepId);
   const slot = step?.submit.slots[slotId];
-  return slot?.type === "oneChoicePerQuestion" && step?.inputs[slot.source]?.from === "questions"
+  return (slot?.type === "oneChoicePerQuestion" || slot?.type === "questionDelivery") && step?.inputs[slot.source]?.from === "questions"
     && practice.data.questions.some(question => question.id === questionId);
 }

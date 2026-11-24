@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { isDeepStrictEqual } from "node:util";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import { ChoiceSnapshotRevisionConflict, QuestionDeliveryConflict } from "../src/server.ts";
+import { ChoiceSnapshotRevisionConflict, QuestionDeliveryConflict, verifyActivityBindings } from "../src/server.ts";
 import type {
   EvaluatorRegistration, QuestionDeliveryDraftInput, QuestionDeliverySnapshotRevisionInput, ReviewerPrincipal,
 } from "../src/server.ts";
@@ -33,8 +33,8 @@ const grader: EvaluatorRegistration = {
 type Json = QuestionDeliveryDraftInput["value"];
 type Hooks = { allow: boolean; evidence: boolean; actions: string[] };
 
-function open(t: TestContext, hooks: Hooks = { allow: true, evidence: false, actions: [] }) {
-  const runtime = openRuntime(scenarioDatabase(t), {
+function open(t: TestContext, hooks: Hooks = { allow: true, evidence: false, actions: [] }, path = scenarioDatabase(t)) {
+  const runtime = openRuntime(path, {
     evaluators: [grader],
     authorizeChoiceDraftAmendment: scope => { hooks.actions.push(scope.action); return hooks.allow; },
     authorizeChoiceSnapshotRevision: () => hooks.allow,
@@ -183,4 +183,23 @@ test("题面勘误｜已有草稿或作答证据、陈旧修订、改形态、�
     { status: 403, code: "FORBIDDEN" });
   const view = fresh.runtime.read(student, fresh.activity.activityId);
   assert.equal("choiceSnapshotRevisions" in view, false);
+});
+
+test("备份勘误对账｜整卷题组的教师修正与勘误按原操作配对，待处理意图可指向尚未写入的题组题", t => {
+  const path = scenarioDatabase(t);
+  const { runtime, activity } = open(t, undefined, path);
+  runtime.publish(deliveryPublication({ ...lesson, id: "whole", mode: "whole" }));
+  const whole = startFor(runtime, "whole");
+  amend(runtime, whole, fill, ["一", "二"], 0);
+  revise(runtime, whole, essay, { question: { prompt: "整卷勘误。" } });
+  const claim = (question: ContractQuestion, kind: "answer" | "snapshot", operationId: string) => ({
+    kind, activityId: whole.activityId, studentId: student.id, stepAttemptId: whole.stepAttemptId, slotId, questionId: question.id,
+    reviewerId: reviewer.id, operationId, revision: 1 });
+  const bindings = [whole, activity].map((opened, index) => ({ activityId: opened.activityId, studentId: student.id,
+    operationId: index === 0 ? "start-whole" : `start-${lesson.id}` }));
+  const claims = (pending: ReturnType<typeof claim>[]) => ({ protocolVersion: 1 as const, bindings, openingIntents: [],
+    teacherAmendments: { completed: [claim(fill, "answer", "amend-fill"), claim(essay, "snapshot", "revise-essay")], pending } });
+  assert.equal(verifyActivityBindings(path, claims([claim(pick, "answer", "pending-pick")])), undefined);
+  assert.throws(() => verifyActivityBindings(path, claims([claim({ ...pick, id: "missing" }, "answer", "ghost")])),
+    { status: 409, code: "TEACHER_AMENDMENTS_MISMATCH" });
 });
