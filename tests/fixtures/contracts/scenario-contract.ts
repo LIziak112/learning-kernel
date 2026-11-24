@@ -101,7 +101,7 @@ function ledgerCell(group: string) {
 
 function ledgerApplicability(group: string) {
   const [declared = "", ...rest] = ledgerCell(group).split("；");
-  const reasons = rest.join("；");
+  const reasons = rest.map(segment => segment.trim());
   const items = declared.replace(/（[^）]*）/g, "").split(/[/／]/).map(part => part.trim());
   return { applicable: scenarioItems.filter(item => items.includes(itemNames[item])), reasons };
 }
@@ -116,7 +116,7 @@ export function scenarioContract({ group, items }: ScenarioContract) {
       const entry = items[item];
       if (!("notApplicable" in entry)) continue;
       assert.ok(entry.notApplicable.trim().length > 0, `${group} ${itemNames[item]} 缺少不适用原因`);
-      assert.ok(declared.reasons.includes(itemNames[item]) && declared.reasons.includes("不适用"), `台账未写明 ${group} ${itemNames[item]} 不适用`);
+      assert.ok(declared.reasons.some(reason => reason.startsWith(`${itemNames[item]}不适用`)), `台账未写明 ${group} ${itemNames[item]} 不适用`);
     }
   });
 

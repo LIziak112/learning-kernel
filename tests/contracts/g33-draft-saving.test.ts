@@ -27,7 +27,7 @@ scenarioContract({
   group: "G33",
   items: {
     submit: {
-      title: "草稿按修订递增、同操作重发取回原修订；冲突、陈旧修订、非法值与陈旧题版本都拒绝，跨开库读回最新草稿，交付后不可再改且草稿不评估",
+      title: "草稿按修订递增、同操作重发取回原修订；冲突、陈旧修订、非法值与陈旧题版本都拒绝，跨开库读回最新草稿，草稿跑评估队列也不评估，交付后不可再改",
       run(world) {
         const { runtime, activity } = begin(world);
         const draft = saveDraft(runtime, activity, first, "草稿一");
@@ -49,11 +49,12 @@ scenarioContract({
         const view = reopened.read(student, activity.activityId);
         assert.ok("questionDeliveryDrafts" in view);
         assert.deepEqual(view.questionDeliveryDrafts, [revised]);
+        assert.deepEqual(reopened.evaluatePending(), { evaluated: 0, retrying: 0, failed: 0, deferred: 0 });
+        assert.deepEqual(world.evaluated, []);
         reopened.confirmQuestionDelivery(student, activity.activityId,
           deliveryInput(activity, "whole", [{ question: first, revision: 2 }, { question: second, revision: 0 }], "whole"));
         assert.throws(() => saveDraft(reopened, activity, first, "交后", { baseRevision: 2, operationId: "after-confirm" }),
           { status: 409, code: "ALREADY_SUBMITTED" });
-        assert.deepEqual(world.evaluated, []);
       },
     },
     authorize: {
