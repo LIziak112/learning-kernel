@@ -79,7 +79,7 @@ function validateQuestions(practice: ReadingPublication["practice"], registry: R
   }
 }
 
-function validateQuestionShape(
+export function validateQuestionShape(
   question: ReadingPublication["practice"]["questions"][number], typeId: string | undefined, registry: Registry, issue: Issue,
 ) {
   const type = typeId === undefined ? undefined : registry.responseType(typeId);
