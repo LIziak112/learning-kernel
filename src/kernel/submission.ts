@@ -97,7 +97,8 @@ function questionDeliveryActivityView(
   const questionDeliveries = submitted.map(item => studentSubmissionView(activity, item)).filter(item => item.receipt || item.questionDelivery);
   const questionDeliveryDrafts = activity.completed ? [] :
     readOpenDeliveryDrafts(database, activity, slotId, new Set(submitted.map(item => item.receipt.slotId)));
-  return { ...view, questionDeliveries, questionDeliveryDrafts };
+  const revisions = activity.choiceSnapshotRevisions.map(revision => ({ ...revision, slotId }));
+  return { ...view, questionDeliveries, questionDeliveryDrafts, ...revisions.length > 0 && { choiceSnapshotRevisions: revisions } };
 }
 
 type SingleActivity = Exclude<ReturnType<typeof loadStudentActivity>, ReadingActivity>;

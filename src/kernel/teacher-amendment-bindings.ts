@@ -18,8 +18,9 @@ function amendmentMismatch() {
 export function verifyTeacherAmendmentBindings(database: DatabaseSync, claims: TeacherAmendmentBindingClaims) {
   const expected = claimAmendments(claims);
   const { answers, snapshots } = amendmentTables(database);
-  if (answers) matchAmendments(expected, answerAmendments(database, snapshots));
-  if (snapshots) matchAmendments(expected, snapshotAmendments(database));
+  const logicalSlot = logicalSlotResolver(database);
+  if (answers) matchAmendments(expected, answerAmendments(database, snapshots), logicalSlot);
+  if (snapshots) matchAmendments(expected, snapshotAmendments(database), logicalSlot);
   verifyPendingAmendments(database, expected.values());
 }
 
@@ -82,11 +83,39 @@ function snapshotAmendments(database: DatabaseSync) {
   `).iterate();
 }
 
-function matchAmendments(expected: Map<string, ExpectedAmendment>, rows: Iterable<unknown>) {
+function logicalSlotResolver(database: DatabaseSync) {
+  const stepOf = database.prepare(`
+    SELECT p.definition, s.step_id AS stepId FROM step_attempts s
+    JOIN activities a ON a.id = s.activity_id
+    JOIN practices p ON p.id = a.practice_id AND p.version = a.practice_version
+    WHERE s.id = ?
+  `);
+  const positions = new Map<string, ReadonlyMap<string, string>>();
+  const positionsOf = (stepAttemptId: string) => {
+    const cached = positions.get(stepAttemptId);
+    if (cached) return cached;
+    const logical = new Map<string, string>();
+    const stored = publishedStep.safeParse(stepOf.get(stepAttemptId));
+    const practice = stored.success ? readingPracticeSchema.safeParse(JSON.parse(stored.data.definition)) : undefined;
+    const step = stored.success && practice?.success ? practice.data.steps.find(candidate => candidate.id === stored.data.stepId) : undefined;
+    for (const [slotId, slot] of Object.entries(step?.submit.slots ?? {})) {
+      if (slot.type !== "questionDelivery" || slot.delivery.mode !== "perQuestion") continue;
+      for (const [questionId, position] of Object.entries(slot.delivery.questionSlots)) logical.set(JSON.stringify([position, questionId]), slotId);
+    }
+    positions.set(stepAttemptId, logical);
+    return logical;
+  };
+  return ({ stepAttemptId, slotId, questionId }: TeacherAmendmentBinding) =>
+    positionsOf(stepAttemptId).get(JSON.stringify([slotId, questionId])) ?? slotId;
+}
+
+function matchAmendments(
+  expected: Map<string, ExpectedAmendment>, rows: Iterable<unknown>, logicalSlot: (binding: TeacherAmendmentBinding) => string,
+) {
   for (const row of rows) {
     const parsed = teacherAmendmentBinding.safeParse(row);
     if (!parsed.success) throw amendmentMismatch();
-    const key = amendmentKey(parsed.data);
+    const key = amendmentKey({ ...parsed.data, slotId: logicalSlot(parsed.data) });
     const match = expected.get(key);
     if (match?.binding.revision !== parsed.data.revision) throw amendmentMismatch();
     expected.delete(key);
@@ -114,6 +143,6 @@ function isQuestionInStep(row: unknown, { slotId, questionId }: TeacherAmendment
   if (!practice.success) return false;
   const step = practice.data.steps.find(candidate => candidate.id === stored.data.stepId);
   const slot = step?.submit.slots[slotId];
-  return slot?.type === "oneChoicePerQuestion" && step?.inputs[slot.source]?.from === "questions"
+  return (slot?.type === "oneChoicePerQuestion" || slot?.type === "questionDelivery") && step?.inputs[slot.source]?.from === "questions"
     && practice.data.questions.some(question => question.id === questionId);
 }

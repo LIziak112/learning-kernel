@@ -7,7 +7,8 @@ import { questionDeliveryScoringKey, readQuestionDelivery } from "../contracts/q
 import { readingPracticeSchema, wholePaperScoringKey } from "../contracts/reading-publication.ts";
 import { readingAnswer } from "../contracts/reading-runtime.ts";
 import { readResponseConfirmation } from "../contracts/response.ts";
-import { revisedChoiceKey } from "./choice-snapshot-store.ts";
+import { effectiveChoiceQuestions, revisedChoiceKey, revisedDeliveryKey } from "./choice-snapshot-store.ts";
+import { questionDeliveryPosition } from "./question-delivery-drafts.ts";
 import { readTransaction, writeTransaction } from "./database.ts";
 import { recordEvaluation } from "./evaluation.ts";
 import { confirmedDeliveryAssessment } from "./question-delivery-evaluation.ts";
@@ -80,11 +81,11 @@ function evaluateTask(database: DatabaseSync, registry: Registry, task: PendingT
     practice: { id: practice.id, version: practice.version } };
   const frozen = frozenAnswers(database, registry, practice, task, content, key);
   if (!frozen) return undefined;
-  const outcomes = evaluateFrozenAnswers(registry, practice, assessment.evaluator, context, frozen.answers, frozen.keyOf);
+  const outcomes = evaluateFrozenAnswers(registry, frozen.practice ?? practice, assessment.evaluator, context, frozen.answers, frozen.keyOf);
   return frozen.judgedOnly ? judgedOnly(outcomes).map(({ questionId, correct }) => ({ questionId, result: { status: "judged", correct } })) : outcomes;
 }
 
-type Frozen = { answers: FrozenAnswer[]; keyOf: QuestionKey; judgedOnly: boolean };
+type Frozen = { answers: FrozenAnswer[]; keyOf: QuestionKey; judgedOnly: boolean; practice?: Practice };
 
 function frozenAnswers(
   database: DatabaseSync, registry: Registry, practice: Practice, task: PendingTask, content: unknown, key: unknown,
@@ -96,7 +97,13 @@ function frozenAnswers(
     const { automatic } = confirmedDeliveryAssessment({ practice }, delivery);
     if (!automatic.length) return undefined;
     const { acceptedByQuestion } = questionDeliveryScoringKey.parse(key);
-    return { answers: automatic, judgedOnly: false, keyOf: question => {
+    const slot = practice.steps.map(step => step.submit.slots[task.slotId]).find(candidate => candidate?.type === "questionDelivery");
+    const revised = { ...practice, questions: effectiveChoiceQuestions(database, task.stepAttemptId, practice.questions).questions };
+    return { answers: automatic, judgedOnly: false, practice: revised, keyOf: question => {
+      const slotId = slot?.type === "questionDelivery" ? questionDeliveryPosition(slot, task.slotId, question.id) : task.slotId;
+      const revisedKey = revisedDeliveryKey(database, { stepAttemptId: task.stepAttemptId, slotId, questionId: question.id },
+        question.version ?? 1);
+      if (revisedKey !== undefined) return frozenResponseType(registry, practice, question).parseKey?.(revisedKey, question);
       const entry = Object.hasOwn(acceptedByQuestion, question.id) ? acceptedByQuestion[question.id] : undefined;
       if (!entry || entry.response !== question.response) return undefined;
       const { response, ...questionKey } = entry;

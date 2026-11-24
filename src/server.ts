@@ -8,6 +8,12 @@ import type { ChoiceDraftInput, CurrentChoiceDraftMode, UnversionedChoiceDraftIn
 import { choiceSnapshotRevisionInput } from "./contracts/choice-snapshot.ts";
 import type { AuthorizeChoiceSnapshotRevision, ChoiceSnapshotRevisionInput, ChoiceSnapshotReviewerScope, HasChoiceSnapshotEvidence } from "./contracts/choice-snapshot.ts";
 import { questionDeliveryDraftInput, questionDeliveryInput, questionDeliveryReviewMode } from "./contracts/question-delivery.ts";
+import {
+  questionDeliveryAmendmentScope, questionDeliveryDraftAmendmentInput, questionDeliverySnapshotRevisionInput,
+} from "./contracts/question-delivery-amendment.ts";
+import type {
+  QuestionDeliveryAmendmentScope, QuestionDeliveryDraftAmendmentInput, QuestionDeliverySnapshotRevisionInput,
+} from "./contracts/question-delivery-amendment.ts";
 import type { QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
 import { frozenConfirmationVerdictMode, verdictCommand } from "./contracts/verdict.ts";
 import type { AuthorizeReview, FrozenConfirmationVerdictMode, VerdictCommand } from "./contracts/verdict.ts";
@@ -36,6 +42,8 @@ import {
   readChoiceConfirmationVerdicts, readQuestionDeliveryReview, readQuestionDeliveryVerdicts, readResponseConfirmationVerdicts, writeQuestionDeliveryVerdict,
 } from "./kernel/question-delivery-review.ts";
 import { saveQuestionDeliveryDraft } from "./kernel/question-delivery-drafts.ts";
+import { amendQuestionDeliveryDraft, readQuestionDeliveryDraftForAmendment } from "./kernel/question-delivery-amendment.ts";
+import { reviseQuestionDeliverySnapshot } from "./kernel/question-delivery-snapshot.ts";
 import { registerPublication } from "./kernel/publication.ts";
 import { evaluatePending } from "./kernel/pending-evaluation.ts";
 import type { EvaluationSummary } from "./kernel/pending-evaluation.ts";
@@ -94,6 +102,7 @@ export type { QuestionDefinition, QuestionIssue, RegisteredResponseType, Respons
 export { defineResponseType } from "./contracts/response-type.ts";
 export { defaultEvaluators, defaultResponseTypes, defaultTools } from "./extensions/index.ts";
 export type { QuestionDeliveryDraftInput, QuestionDeliveryInput };
+export type { QuestionDeliveryAmendmentScope, QuestionDeliveryDraftAmendmentInput, QuestionDeliverySnapshotRevisionInput };
 export type { AuthorizeReview, ReviewAccess, ReviewedDelivery, ReviewScope, VerdictCommand, VerdictReceipt } from "./contracts/verdict.ts";
 export { QuestionDeliveryConflict } from "./kernel/question-delivery-drafts.ts";
 export { ChoiceConfirmationConflict } from "./kernel/choice-confirmation.ts";
@@ -238,6 +247,20 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     confirmQuestionDelivery(principal: StudentPrincipal, activityId: string, input: QuestionDeliveryInput) {
       return confirmQuestionDelivery(database, registry, principalId(studentPrincipal, principal), uuid.parse(activityId),
         questionDeliveryInput.parse(input), clock, settings.verifyOriginal, settings.authorizeConfirmationRecovery);
+    },
+    readQuestionDeliveryDraftForAmendment(principal: ReviewerPrincipal, activityId: string, scope: QuestionDeliveryAmendmentScope) {
+      return readQuestionDeliveryDraftForAmendment(database, registry, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
+        questionDeliveryAmendmentScope.parse(scope), settings.authorizeChoiceDraftAmendment);
+    },
+    amendQuestionDeliveryDraft(principal: ReviewerPrincipal, activityId: string, input: QuestionDeliveryDraftAmendmentInput) {
+      return amendQuestionDeliveryDraft(database, registry, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
+        questionDeliveryDraftAmendmentInput.parse(input), clock, settings.authorizeChoiceDraftAmendment);
+    },
+    reviseQuestionDeliverySnapshot(principal: ReviewerPrincipal, activityId: string, input: QuestionDeliverySnapshotRevisionInput) {
+      return reviseQuestionDeliverySnapshot(database, registry, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
+        questionDeliverySnapshotRevisionInput.parse(input), clock, {
+          authorize: settings.authorizeChoiceSnapshotRevision, hasEvidence: settings.hasChoiceSnapshotEvidence,
+        });
     },
     recoverQuestionDelivery: recoverDelivery,
     readQuestionDeliveryReview: readDeliveryReview,

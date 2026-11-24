@@ -61,13 +61,14 @@ function stubEvaluator(world: StubWorld): EvaluatorRegistration {
 }
 
 function stubWorld(t: TestContext): StubWorld {
-  const owns = (scope: ReviewScope) => world.reviewAllowed && scope.reviewerId === reviewer.id && world.students.has(scope.studentId);
+  const owns = (scope: Pick<ReviewScope, "reviewerId" | "studentId">) => world.reviewAllowed && scope.reviewerId === reviewer.id && world.students.has(scope.studentId);
   const world: StubWorld = {
     databasePath: scenarioDatabase(t), evaluated: [], students: new Set([student.id]), failuresLeft: 0, recoveryAllowed: true, reviewAllowed: true,
     open() {
       const runtime = openRuntime(world.databasePath, {
         responseTypes: [stubResponse], evaluators: [stubEvaluator(world)],
         authorizeConfirmationRecovery: () => world.recoveryAllowed, authorizeReview: owns,
+        authorizeChoiceDraftAmendment: owns, authorizeChoiceSnapshotRevision: owns, hasChoiceSnapshotEvidence: () => false,
       });
       let open = true;
       const close = runtime.close;

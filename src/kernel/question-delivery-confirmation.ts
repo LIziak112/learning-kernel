@@ -16,6 +16,7 @@ import {
 } from "./question-delivery-drafts.ts";
 import { recoverQuestionDeliveryAssessment, registerDeliveryAssessment } from "./question-delivery-evaluation.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
+import { choiceRevisionBeforeAnswers } from "./choice-snapshot-store.ts";
 import { frozenResponseType } from "./question-types.ts";
 import { requireAvailableTool, requireBeforeDeadline } from "./reading-progress.ts";
 import type { Registry } from "./registry.ts";
@@ -77,7 +78,10 @@ function freezeDeliveryDraft(
 ) {
   const slotId = questionDeliveryPosition(slot, logicalSlotId, question.questionId);
   const head = deliveryDraftHead(database, activity, slotId, question.questionId);
-  const { revision, value } = head ?? { revision: 0, value: null };
+  const { revision, value } = head ?? {
+    revision: choiceRevisionBeforeAnswers(database, { stepAttemptId: activity.stepAttemptId, slotId, questionId: question.questionId }),
+    value: null,
+  };
   if (revision !== question.revision) throw new QuestionDeliveryConflict({ revision, value }, "ANSWER_REVISION_CONFLICT", question.questionId);
   const answered = value !== null && isDeliveryAnswered(registry, activity, question, value);
   if (!answered && !slot.confirmFromDrafts.allowUnanswered) throw new LearningError(422, "UNANSWERED_QUESTION");

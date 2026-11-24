@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ChoiceDraftScope } from "../contracts/choice-draft.ts";
 import { choiceSnapshotContent, choiceSnapshotRevision } from "../contracts/choice-snapshot.ts";
+import { questionSnapshotContent } from "../contracts/question-delivery-amendment.ts";
 import { readingQuestion } from "../contracts/reading-publication.ts";
 import type { ReadingPublication } from "../contracts/reading-publication.ts";
 
@@ -27,8 +28,7 @@ export function effectiveChoiceQuestions(database: DatabaseSync, stepAttemptId: 
   const questions = published.map<FrozenQuestion>(question => {
     const latest = byQuestion.get(question.id);
     if (!latest) return question;
-    const patch = editedQuestion.strip().parse(JSON.parse(latest.content));
-    return { ...question, version: latest.questionVersion, ...patch };
+    return revisedQuestion(question, latest.questionVersion, latest.content);
   });
   return { questions, choiceSnapshotRevisions: snapshots.map(row => {
     const { content, ...revision } = row;
@@ -52,4 +52,20 @@ export function revisedChoiceKey(
     WHERE step_attempt_id = ? AND slot_id = ? AND question_id = ? AND question_version = ?
   `).get(stepAttemptId, slotId, questionId, questionVersion);
   return row ? choiceSnapshotContent.parse(JSON.parse(String(row.content))).acceptedChoice : undefined;
+}
+
+export function revisedQuestion(question: FrozenQuestion, version: number, content: string): FrozenQuestion {
+  const stored: unknown = JSON.parse(content);
+  const delivery = questionSnapshotContent.safeParse(stored);
+  if (!delivery.success) return { ...question, version, ...editedQuestion.strip().parse(stored) };
+  const { id, response } = question;
+  return { ...delivery.data.question, id, version, ...response === undefined ? {} : { response } };
+}
+
+export function revisedDeliveryKey(database: DatabaseSync, scope: SnapshotScope, questionVersion: number) {
+  const row = database.prepare(`
+    SELECT content FROM choice_snapshot_revisions
+    WHERE step_attempt_id = ? AND slot_id = ? AND question_id = ? AND question_version = ?
+  `).get(scope.stepAttemptId, scope.slotId, scope.questionId, questionVersion);
+  return row ? questionSnapshotContent.parse(JSON.parse(String(row.content))).key : undefined;
 }
