@@ -14,6 +14,8 @@ import { confirmedWorkForOperation } from "./question-confirmation.ts";
 import { requireQuestionDeliverySlot } from "./question-delivery-drafts.ts";
 import { confirmedDeliveryAssessment, readManualReviewBasis, readManualReviewQuestions } from "./question-delivery-evaluation.ts";
 import { boundOutput } from "./reading-progress.ts";
+import type { SelfAssessmentView } from "./self-assessment.ts";
+import { currentSelfAssessments, selfAssessmentCounts, selfAssessmentScoring, selfAssessmentView, selfReviewQuestionIds } from "./self-assessment.ts";
 import { appendReview, eventView, repeatedReview } from "./verdict-history.ts";
 import { questionVerdictStates, submissionReviewTarget } from "./verdict-state.ts";
 
@@ -43,8 +45,12 @@ export function readQuestionDeliveryVerdicts(
     const { automatic, review } = confirmedDeliveryAssessment(activity, content);
     const assessmentIds = new Set([...automatic, ...review].map(({ questionId }) => questionId));
     const confirmed = content.questions.filter(({ questionId }) => assessmentIds.has(questionId));
-    const questions = reviewedVerdicts(database, target, confirmed, automatic, fields);
-    const reviewed = { ...reviewedDelivery(activity, receipt, { ...content, questions: confirmed }, fields), targetId: target.targetId, questions };
+    const { questions, selfAssessment } = withSelfAssessments(database, activity, receipt.id,
+      reviewedVerdicts(database, target, confirmed, automatic, fields), fields);
+    const reviewed = {
+      ...reviewedDelivery(activity, receipt, { ...content, questions: confirmed }, fields), targetId: target.targetId, questions,
+      ...selfAssessment && { selfAssessment },
+    };
     if (manualReview) return { ...reviewed, assessment: "manual" as const, ...manualBasis(database, receipt, manualReview.keyRef, fields) };
     if (automatic.length) return { ...reviewed, assessment: "automatic" as const };
     return { ...reviewed, assessment: "teacherReview" as const };
@@ -103,6 +109,22 @@ function reviewedVerdicts(
     if (effective) return { ...state, status: "judged" as const, ...basis && { effective } };
     return { ...state, status: unfinished.has(questionId) ? waiting : "needsReview" as const };
   });
+}
+
+function withSelfAssessments<Question extends { questionId: string; effective?: { correct: boolean } | undefined }>(
+  database: DatabaseSync, activity: ReadingActivity, submissionId: string, verdicts: readonly Question[], fields: Fields,
+) {
+  const scoring = selfAssessmentScoring(activity);
+  const routed = selfReviewQuestionIds(activity);
+  const current = currentSelfAssessments(database, submissionId);
+  const viewOf = (questionId: string) => routed.has(questionId) ? selfAssessmentView(current.get(questionId)) : undefined;
+  const questions = verdicts.map((question): Question & { selfAssessment?: SelfAssessmentView } => {
+    const selfAssessment = viewOf(question.questionId);
+    return selfAssessment ? { ...question, selfAssessment } : question;
+  });
+  if (!scoring) return { questions };
+  const entries = verdicts.map(({ questionId, effective }) => ({ ...effective && { effective }, self: viewOf(questionId)?.verdict ?? null }));
+  return { questions, selfAssessment: fields.has("gradingBasis") ? selfAssessmentCounts(scoring, entries) : { scoring } };
 }
 
 export function writeQuestionDeliveryVerdict(

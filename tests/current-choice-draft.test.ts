@@ -67,6 +67,7 @@ test("旧库仅恢复当前修订可证的最近操作，歧义由后续普通�
       DROP TABLE choice_snapshot_revisions;
       DROP TABLE choice_draft_amendments;
       DROP TABLE response_review_requirements;
+      DROP TABLE self_assessment_events;
       DROP TABLE activity_restarts;
       DELETE FROM schema_migrations WHERE version >= 12;
     `);

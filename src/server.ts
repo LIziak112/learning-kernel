@@ -15,6 +15,8 @@ import type {
   QuestionDeliveryAmendmentScope, QuestionDeliveryDraftAmendmentInput, QuestionDeliverySnapshotRevisionInput,
 } from "./contracts/question-delivery-amendment.ts";
 import type { QuestionDeliveryDraftInput, QuestionDeliveryInput } from "./contracts/question-delivery.ts";
+import { selfAssessmentInput } from "./contracts/self-assessment.ts";
+import type { SelfAssessmentReceipt } from "./contracts/self-assessment.ts";
 import { frozenConfirmationVerdictMode, verdictCommand } from "./contracts/verdict.ts";
 import type { AuthorizeReview, FrozenConfirmationVerdictMode, VerdictCommand } from "./contracts/verdict.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
@@ -52,6 +54,7 @@ import type { RuntimeCheckpoint } from "./kernel/runtime-checkpoint.ts";
 import { readingEntries } from "./runtime/reading.ts";
 import { confirmResponses, recoverResponseConfirmation } from "./kernel/response-confirmation.ts";
 import { saveResponseDraft } from "./kernel/response-drafts.ts";
+import { assessSelf, readSelfAssessments } from "./kernel/self-assessment.ts";
 import { readActivity } from "./kernel/submission.ts";
 
 const callable = <T>() => z.custom<T>(value => typeof value === "function");
@@ -119,6 +122,9 @@ export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeo
 export type StudentPrincipal = z.input<typeof studentPrincipal>;
 export type PublishedStartInput = z.input<typeof publishedStartInput>;
 export type RestartInput = z.input<typeof restartInput>;
+export type SelfAssessmentInput = z.input<typeof selfAssessmentInput>;
+export type { SelfAssessmentReceipt, SelfAssessmentScoring, SelfAssessmentVerdict } from "./contracts/self-assessment.ts";
+export type StudentSelfAssessments = ReturnType<typeof readSelfAssessments>;
 export type ActivityReceipt = ReturnType<typeof startActivity>;
 export type StudentActivity = ReturnType<typeof readActivity>;
 
@@ -267,6 +273,13 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     writeQuestionDeliveryVerdict(principal: ReviewerPrincipal, activityId: string, key: ConfirmationKey, command: VerdictCommand, input?: FrozenConfirmationVerdictMode) {
       return writeQuestionDeliveryVerdict(database, principalId(reviewerPrincipal, principal), uuid.parse(activityId),
         confirmationKey.parse(key), verdictCommand.parse(command), settings.authorizeReview, clock, verdictMode.parse(input));
+    },
+    selfAssess(principal: StudentPrincipal, activityId: string, key: ConfirmationKey, input: SelfAssessmentInput): SelfAssessmentReceipt {
+      return assessSelf(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key),
+        selfAssessmentInput.parse(input), clock);
+    },
+    readSelfAssessments(principal: StudentPrincipal, activityId: string, key: ConfirmationKey): StudentSelfAssessments {
+      return readSelfAssessments(database, principalId(studentPrincipal, principal), uuid.parse(activityId), confirmationKey.parse(key));
     },
     evaluatePending(scope?: { submissionId: string }): EvaluationSummary {
       return evaluatePending(database, registry, settings.checkpoint, scope && uuid.parse(scope.submissionId));

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { orderedQuestionValues, questionDeliveryMode, questionDeliveryReviewBasis, questionDeliveryScoringKey } from "./question-delivery.ts";
 import { id, materialSchema, versionRef } from "./reading.ts";
+import { selfAssessmentPolicy } from "./self-assessment.ts";
 
 const nonempty = z.string().min(1);
 const descriptions = z.record(id, nonempty).refine(value => Object.keys(value).length > 0);
@@ -62,6 +63,7 @@ const policy = z.strictObject({
       onFinal: z.array(z.literal("passageGradingStatus")),
     }),
     restart: z.literal("anytime").optional(),
+    selfAssessment: selfAssessmentPolicy.optional(),
     passageScore: z.strictObject({
       whenAll: z.tuple([z.literal("finalConfirmed"), z.literal("allQuestionsJudged")]),
       group: z.literal("wholePassage"),
@@ -88,6 +90,9 @@ const policy = z.strictObject({
   externalAi: z.literal("disabled"),
 });
 
+const routedQuestionIds = z.array(id).min(1).refine(ids => new Set(ids).size === ids.length, "评阅题标识重复")
+  .transform(ids => ids.toSorted());
+
 export const questionFields = ["id", "version", "prompt", "options", "response"] as const;
 export const readingQuestion = z.looseObject({
   id, version: versionRef.shape.version.optional(), prompt: nonempty, options: z.record(id, nonempty).default({}),
@@ -112,10 +117,8 @@ export const readingPracticeSchema = versionRef.extend({
       effectiveVerdictOrder: z.tuple([z.literal("teacherReview"), z.literal("automatic")]),
     }).optional(),
     manualReview: z.strictObject({ keyRef: versionRef }).optional(),
-    teacherReview: z.strictObject({
-      questionIds: z.array(id).min(1).refine(ids => new Set(ids).size === ids.length, "评阅题标识重复")
-        .transform(ids => ids.toSorted()),
-    }).optional(),
+    teacherReview: z.strictObject({ questionIds: routedQuestionIds }).optional(),
+    selfReview: z.strictObject({ questionIds: routedQuestionIds }).optional(),
   }).default({}),
   policy,
 });
