@@ -27,7 +27,6 @@ responseTypeContract({
   unanswered: { expected: { status: "needsReview" }, blank: { body: "   ", title: "附注" } },
 });
 
-// —— 其余 8 行（由 PR #8 的数据行迁入本夹具；判分路径与 OwnClass 冻结策略一致：choice / multi 自动判，其余教师评阅）——
 const correct = { status: "judged", correct: true } as const;
 const wrong = { status: "judged", correct: false } as const;
 const needsReview = { status: "needsReview" } as const;
