@@ -12,7 +12,7 @@ import {
   sameQuestionIntent, writeQuestionConfirmation,
 } from "./question-confirmation.ts";
 import {
-  deliveryDraftHead, QuestionDeliveryConflict, questionDeliveryPosition, requireFrozenQuestion, requireQuestionDeliverySlot,
+  deliveryDraftHead, QuestionDeliveryConflict, questionDeliveryPosition, requireFrozenQuestion, requireOpenRound, requireQuestionDeliverySlot,
 } from "./question-delivery-drafts.ts";
 import { recoverQuestionDeliveryAssessment, registerDeliveryAssessment } from "./question-delivery-evaluation.ts";
 import type { DeliverySlot } from "./question-delivery-publication.ts";
@@ -38,7 +38,7 @@ export function confirmQuestionDelivery(
       }
       return previous.receipt;
     }
-    if (activity.completed) throw new LearningError(409, "ALREADY_SUBMITTED");
+    requireOpenRound(activity);
     const slot = requireQuestionDeliverySlot(activity, input.slotId);
     requireAvailableTool(registry, activity.step, slot.type);
     const now = clock();

@@ -12,6 +12,7 @@ import { responseEvaluationMigration } from "./response-evaluation-migration.ts"
 import { reviewAnchorMigration } from "./review-anchor-migration.ts";
 import { evaluationFailureMigration } from "./evaluation-failure-migration.ts";
 import { preparedIntentCheckMigration } from "./prepared-intent-migration.ts";
+import { activityRestartMigration } from "./activity-restart-migration.ts";
 
 const migrationVersion = z.object({ version: z.int().nullable() });
 const migrations = [
@@ -58,6 +59,7 @@ const migrations = [
   reviewAnchorMigration,
   evaluationFailureMigration,
   preparedIntentCheckMigration,
+  activityRestartMigration,
 ];
 export const latestDatabaseVersion = migrations.length + 1;
 

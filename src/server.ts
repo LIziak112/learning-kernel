@@ -13,7 +13,7 @@ import { frozenConfirmationVerdictMode, verdictCommand } from "./contracts/verdi
 import type { AuthorizeReview, FrozenConfirmationVerdictMode, VerdictCommand } from "./contracts/verdict.ts";
 import { preparedVersionInput } from "./contracts/prepared-activity.ts";
 import type { PreparedActivityVersionInput, PreparedActivityVersionReceipt } from "./contracts/prepared-activity.ts";
-import { id, publicationSchema, startInput, versionRef } from "./contracts/reading.ts";
+import { id, publicationSchema, restartInput, startInput, versionRef } from "./contracts/reading.ts";
 import { readingPublicationSchema } from "./contracts/reading-publication.ts";
 import type { ToolCapability } from "./contracts/capabilities.ts";
 import type { Evaluator, EvaluatorRegistration, QuestionAnswerRule } from "./contracts/evaluator.ts";
@@ -22,6 +22,7 @@ import type { ResponseConfirmationInput, ResponseDraftInput } from "./contracts/
 import type { RegisteredResponseType } from "./contracts/response-type.ts";
 import { defaultEvaluators, defaultResponseTypes, defaultTools } from "./extensions/index.ts";
 import { startActivity } from "./kernel/activity.ts";
+import { restartActivity } from "./kernel/activity-restart.ts";
 import { amendChoiceDraft, readChoiceDraftForAmendment } from "./kernel/choice-amendment.ts";
 import { confirmChoices, recoverChoiceConfirmation } from "./kernel/choice-confirmation.ts";
 import { readChoiceDraftActivity } from "./kernel/choice-draft-activity.ts";
@@ -108,6 +109,8 @@ export type { ChoiceDraftInput, AuthorizeConfirmationRecovery, ChoiceConfirmatio
 export type PublicationInput = z.input<typeof publicationSchema> | z.input<typeof readingPublicationSchema>;
 export type StudentPrincipal = z.input<typeof studentPrincipal>;
 export type PublishedStartInput = z.input<typeof publishedStartInput>;
+export type RestartInput = z.input<typeof restartInput>;
+export type ActivityReceipt = ReturnType<typeof startActivity>;
 export type StudentActivity = ReturnType<typeof readActivity>;
 
 function principalId(schema: z.ZodType<{ id: string }>, principal: unknown) {
@@ -166,6 +169,9 @@ export function openLearningRuntime(options: z.input<typeof runtimeOptions>) {
     },
     prepare(principal: StudentPrincipal, input: PublishedStartInput) {
       return startActivity(database, principalId(studentPrincipal, principal), publishedStartInput.parse(input), clock, undefined, "prepare");
+    },
+    restart(principal: StudentPrincipal, activityId: string, input: RestartInput): ActivityReceipt {
+      return restartActivity(database, principalId(studentPrincipal, principal), uuid.parse(activityId), restartInput.parse(input), clock);
     },
     replacePreparedActivityVersion(
       principal: StudentPrincipal, activityId: string, input: PreparedActivityVersionInput,

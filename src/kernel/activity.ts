@@ -15,6 +15,7 @@ const storedActivity = startReceipt.extend({
   practiceJSON: z.string(),
   preparedPracticeVersion: z.int().positive().nullable(),
   completed: z.literal([0, 1]),
+  abandoned: z.literal([0, 1]),
   redoOf: z.uuid().nullable(),
 });
 const publishedPractice = z.union([practiceSchema, readingPracticeSchema]);
@@ -70,7 +71,7 @@ export function redoActivity(database: DatabaseSync, student: string, sourceId: 
   });
 }
 
-function recoverStart(database: DatabaseSync, student: string, operationId: string) {
+export function recoverStart(database: DatabaseSync, student: string, operationId: string) {
   const row = database.prepare(`
     SELECT a.id AS activityId, COALESCE(a.initial_prepared_step_attempt_id, s.id) AS stepAttemptId,
       a.started_at AS startedAt, a.practice_id AS practiceId,
@@ -85,7 +86,7 @@ function recoverStart(database: DatabaseSync, student: string, operationId: stri
   return { practiceId, practiceVersion, redoOf, prepared, receipt };
 }
 
-function createActivity(
+export function createActivity(
   database: DatabaseSync, student: string, practice: z.infer<typeof publishedPractice>, operationId: string,
   startedAt: Date, assignedReviewer?: string, redoOf: string | null = null, prepared = false,
 ) {
@@ -126,7 +127,8 @@ export function loadActivity(database: DatabaseSync, student: string, activityId
     SELECT a.id AS activityId, s.id AS stepAttemptId, s.step_id AS stepId, a.started_at AS startedAt,
       p.definition AS practiceJSON, m.definition AS materialJSON, a.redo_of AS redoOf,
       CASE WHEN a.initial_prepared_step_attempt_id IS NOT NULL THEN a.practice_version END AS preparedPracticeVersion,
-      EXISTS (SELECT 1 FROM completions c WHERE c.activity_id = a.id) AS completed
+      EXISTS (SELECT 1 FROM completions c WHERE c.activity_id = a.id) AS completed,
+      EXISTS (SELECT 1 FROM activity_restarts r WHERE r.source_activity_id = a.id AND r.source_status = 'abandoned') AS abandoned
     FROM activities a
     JOIN step_attempts s ON s.activity_id = a.id
     JOIN practices p ON p.id = a.practice_id AND p.version = a.practice_version
@@ -134,7 +136,7 @@ export function loadActivity(database: DatabaseSync, student: string, activityId
     WHERE a.id = ? AND a.student_id = ? ORDER BY s.ordinal DESC LIMIT 1
   `).get(activityId, student);
   if (!row) throw new LearningError(403, "FORBIDDEN");
-  const { stepId, materialJSON, practiceJSON, completed, redoOf, preparedPracticeVersion, ...receipt } = storedActivity.parse(row);
+  const { stepId, materialJSON, practiceJSON, completed, abandoned, redoOf, preparedPracticeVersion, ...receipt } = storedActivity.parse(row);
   const practice = publishedPractice.parse(JSON.parse(practiceJSON));
   const common = { ...receipt, completed: completed === 1 };
   if ("formatVersion" in practice) {
@@ -142,8 +144,8 @@ export function loadActivity(database: DatabaseSync, student: string, activityId
     if (!step) throw new Error("活动的步骤尝试找不到已发布步骤");
     const material = practice.material ? parseFrozenMaterial(materialJSON) : undefined;
     const { questions, choiceSnapshotRevisions } = effectiveChoiceQuestions(database, receipt.stepAttemptId, practice.questions);
-    return { kind: "reading" as const, ...common, material, practice: { ...practice, questions }, step, choiceSnapshotRevisions,
-      redoOf: redoOf ?? undefined,
+    return { kind: "reading" as const, ...common, abandoned: abandoned === 1, material, practice: { ...practice, questions }, step,
+      choiceSnapshotRevisions, redoOf: redoOf ?? undefined,
       practiceVersion: preparedPracticeVersion ?? undefined };
   }
   return { kind: "single" as const, ...common, material: parseFrozenMaterial(materialJSON), title: practice.title, step: practice.steps[0] };

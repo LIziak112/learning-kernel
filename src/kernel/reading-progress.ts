@@ -6,7 +6,7 @@ import type { ChoiceConfirmation } from "../contracts/choice-confirmation.ts";
 import { readResponseConfirmation } from "../contracts/response.ts";
 import type { ResponseConfirmation } from "../contracts/response.ts";
 import type { StudentValue } from "../contracts/capabilities.ts";
-import type { ActivityDetail, Material, SubmitInput, VersionRef } from "../contracts/reading.ts";
+import type { Material, SubmitInput, VersionRef } from "../contracts/reading.ts";
 import type { ReadingStep } from "../contracts/reading-publication.ts";
 import { readingAnswer, readingSelection } from "../contracts/reading-runtime.ts";
 import type { ReadingAnswer, ReadingAnswerInput, ReadingSaveInput, ReadingSelection } from "../contracts/reading-runtime.ts";
@@ -155,11 +155,16 @@ function advanceReading(database: DatabaseSync, activity: ReadingActivity) {
     .run(randomUUID(), activity.activityId, next.id, ordinal);
 }
 
+export function readingStatus({ completed, abandoned }: ReadingActivity) {
+  if (completed) return "completed" as const;
+  return abandoned ? "abandoned" as const : "active" as const;
+}
+
 export function readingActivityView(database: DatabaseSync, activity: ReadingActivity, submissions: StoredSubmission[]) {
-  const { activityId, stepAttemptId, startedAt, step, practice, completed, practiceVersion } = activity;
+  const { activityId, stepAttemptId, startedAt, step, practice, practiceVersion } = activity;
   const submitted = questionDeliverySlot(step) ? undefined : submissions.find(item => item.receipt.stepAttemptId === stepAttemptId);
   const materialBound = Object.values(step.inputs).some(input => input.from === "material");
-  const status: ActivityDetail["status"] = completed ? "completed" : "active";
+  const status = readingStatus(activity);
   return {
     formatVersion: practice.formatVersion,
     ...(practiceVersion === undefined ? {} : { practiceVersion }),

@@ -61,6 +61,7 @@ const policy = z.strictObject({
       fields: z.array(z.enum(["receipt", "submittedQuotes", "ownChoices", "ownResponses"])),
       onFinal: z.array(z.literal("passageGradingStatus")),
     }),
+    restart: z.literal("anytime").optional(),
     passageScore: z.strictObject({
       whenAll: z.tuple([z.literal("finalConfirmed"), z.literal("allQuestionsJudged")]),
       group: z.literal("wholePassage"),
