@@ -203,3 +203,21 @@ test("备份勘误对账｜整卷题组的教师修正与勘误按原操作配�
   assert.throws(() => verifyActivityBindings(path, claims([claim({ ...pick, id: "missing" }, "answer", "ghost")])),
     { status: 409, code: "TEACHER_AMENDMENTS_MISMATCH" });
 });
+
+test("备份勘误对账｜逐题交付的修正与勘误按逻辑槽位声明配对，逐题位置标识不能冒充", t => {
+  const path = scenarioDatabase(t);
+  const { runtime, activity } = open(t, undefined, path);
+  amend(runtime, activity, fill, ["一", "二"], 0);
+  revise(runtime, activity, essay, { question: { prompt: "逐题勘误。" } });
+  const claim = (question: ContractQuestion, kind: "answer" | "snapshot", operationId: string, claimedSlot = slotId) => ({
+    kind, activityId: activity.activityId, studentId: student.id, stepAttemptId: activity.stepAttemptId, slotId: claimedSlot,
+    questionId: question.id, reviewerId: reviewer.id, operationId, revision: 1 });
+  const verify = (completed: ReturnType<typeof claim>[], pending: ReturnType<typeof claim>[] = []) => verifyActivityBindings(path, {
+    protocolVersion: 1, bindings: [{ activityId: activity.activityId, studentId: student.id, operationId: `start-${lesson.id}` }],
+    openingIntents: [], teacherAmendments: { completed, pending } });
+  const completed = [claim(fill, "answer", "amend-fill"), claim(essay, "snapshot", "revise-essay")];
+  const mismatch = { status: 409, code: "TEACHER_AMENDMENTS_MISMATCH" };
+  assert.equal(verify(completed, [claim(pick, "answer", "pending-pick")]), undefined);
+  assert.throws(() => verify([claim(fill, "answer", "amend-fill", `${slotId}-fill`), completed[1]!]), mismatch);
+  assert.throws(() => verify(completed, [claim(pick, "answer", "pending-pick", `${slotId}-pick`)]), mismatch);
+});
