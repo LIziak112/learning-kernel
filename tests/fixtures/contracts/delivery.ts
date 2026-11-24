@@ -23,6 +23,7 @@ export type DeliveryDeclaration = Readonly<{
   grading: ContractGrading;
   mode: "whole" | "perQuestion";
   allowUnanswered: boolean;
+  version?: number;
   evaluator?: Readonly<{ id: string; version: number }>;
   policy?: ReadingPractice["policy"];
 }>;
@@ -54,23 +55,23 @@ function deliveryMode(mode: DeliveryDeclaration["mode"], questions: readonly Con
   return { mode, questionSlots: Object.fromEntries(questions.map(({ id }) => [id, questionSlot(id)])) };
 }
 
-function scoringKey({ keys }: ContractGrading, questions: readonly ContractQuestion[]) {
+function scoringKey({ keys }: ContractGrading, questions: readonly ContractQuestion[], version: number) {
   const acceptedByQuestion = Object.fromEntries(Object.entries(keys).map(([questionId, key]) => {
     const question = questions.find(({ id }) => id === questionId);
     if (!question) throw new Error(`评分键引用了不存在的题：${questionId}`);
     return [questionId, { ...key, response: question.response }];
   }));
-  return { ...keyRef, acceptedByQuestion };
+  return { ...keyRef, version, acceptedByQuestion };
 }
 
 export function deliveryPublication(declaration: DeliveryDeclaration): PublicationInput {
-  const { id, questions, grading, mode, allowUnanswered, evaluator = evaluatorRef, policy = contractPolicy } = declaration;
+  const { id, questions, grading, mode, allowUnanswered, version = 1, evaluator = evaluatorRef, policy = contractPolicy } = declaration;
   const automatic = Object.keys(grading.keys).length > 0;
-  const assessment: Assessment = { from: { stepId: "answer", slotId }, evaluator: { ...evaluator }, keyRef, unit: "question",
+  const assessment: Assessment = { from: { stepId: "answer", slotId }, evaluator: { ...evaluator }, keyRef: { ...keyRef, version }, unit: "question",
     effectiveVerdictOrder: ["teacherReview", "automatic"] };
   return {
     practice: {
-      id, version: 1, formatVersion: 1, title: "迁移契约", goals: { [targetId]: "完成作答" },
+      id, version, formatVersion: 1, title: "迁移契约", goals: { [targetId]: "完成作答" },
       questions: questions.map(question => ({ ...question })),
       steps: [{
         id: "answer", instructions: "作答。", tool: { id: "question-delivery", version: 1 }, inputs: { questions: { from: "questions" } },
@@ -85,7 +86,7 @@ export function deliveryPublication(declaration: DeliveryDeclaration): Publicati
       },
       policy,
     },
-    ...automatic ? { scoringKey: scoringKey(grading, questions) } : {},
+    ...automatic ? { scoringKey: scoringKey(grading, questions, version) } : {},
   };
 }
 
