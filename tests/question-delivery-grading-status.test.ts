@@ -59,13 +59,13 @@ function paper(id: string, student: StudentPolicy, questions: readonly Question[
   } satisfies PublicationInput;
 }
 
-function mixedPaper(id: string) {
+function mixedPaper(id: string, perQuestion = true) {
   const grading = {
     teacherReview: { questionIds: [essay.id] },
     assessment: { from: { stepId: "answer", slotId }, evaluator, keyRef, unit: "question",
       effectiveVerdictOrder: ["teacherReview", "automatic"] },
   } satisfies Practice["grading"];
-  return { ...paper(id, scoredStudent, [judge, essay], grading, true),
+  return { ...paper(id, scoredStudent, [judge, essay], grading, perQuestion),
     scoringKey: { ...keyRef, acceptedByQuestion: { [judge.id]: { response: judge.response, acceptedResponse: true } } } };
 }
 
@@ -181,4 +181,29 @@ test("题组交付公布成绩须每题都有评估或教师评阅，且仍不�
   const review = { requires: "passageScore", while: "reviewOpen", byQuestion: ["effectiveVerdict"], byQuoteSet: [] } as const;
   rejects(runtime, paper("review-scored", { ...scoredStudent, review: { ...review, byQuestion: [...review.byQuestion], byQuoteSet: [] } }),
     ["practice", "policy"], "原值确认只支持回执与本人获准作答");
+});
+
+function correctCounts(value: unknown): number[] {
+  return [...JSON.stringify(value).matchAll(/"correctCount":(\d+)/g)].map(([, count]) => Number(count));
+}
+
+test("混合整卷｜声明公布时学生回取不泄露自动判分，教师改判后学生只见读面这一份成绩", t => {
+  const runtime = open(t);
+  runtime.publish(mixedPaper("mixed-whole", false));
+  const activity = startPaper(runtime, "mixed-whole");
+  const mark = deliver(runtime, activity, [judge, essay], "whole");
+  const key = { protocolVersion: 1, stepAttemptId: activity.stepAttemptId, operationId: "hand-in" } as const;
+  const studentSees = () => [runtime.read(student, activity.activityId), runtime.recoverQuestionDelivery(student, activity.activityId, key),
+    runtime.recoverQuestionDelivery(student, activity.activityId, key, "declared")] as const;
+  const [handedIn, recovered, declared] = studentSees();
+  assert.deepEqual(assessmentOf(handedIn), { status: "pending" });
+  assert.deepEqual(recovered.evaluation, { status: "withheld", evaluator });
+  assert.equal(declared.assessment, "automatic");
+  assert.doesNotMatch(JSON.stringify(studentSees()), leak);
+  mark(essay.id, true);
+  mark(judge.id, false);
+  const [judged, ...recoveries] = studentSees();
+  assert.deepEqual(assessmentOf(judged), { status: "complete", correctCount: 1, questionCount: 2 });
+  assert.doesNotMatch(JSON.stringify(recoveries), leak);
+  assert.deepEqual(correctCounts(studentSees()), [1]);
 });

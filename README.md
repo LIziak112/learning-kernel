@@ -129,7 +129,7 @@ const activity = runtime.read(principal, receipt.activityId);
 
 可信宿主可传第四参数 `"declared"`，按该回执的 `assessment` 字段识别 `"none"`、`"manual"`、`"teacherReview"` 和 `"automatic"`。各模式都带原回执与确认事实，并按现行授权交付。有预先声明的待评题时，`review.questions` 交付确认时登记的题与冻结版本。学生 `read` 只按发布策略交付 `questionDeliveries` 的回执或本人题值，并返回本步仍可编辑的 `questionDeliveryDrafts`。
 
-题组可选声明 `policy.student.passageScore` 与 `ownSubmission.onFinal: ["passageGradingStatus"]`，含义与整卷单选相同：前提是每道题都声明了自动评估、`manualReview` 或 `teacherReview`，复盘 `review` 仍然拒绝。活动完成后，只要还有一道题没有有效判定（自动评估待评或失败、教师未判），学生 `read` 只返回 `assessment: { status: "pending" }`，不给分数；全部判定后才返回 `{ status: "complete", ... }`，教师判定优先于自动结果。`status: "completed"` 仍只表示活动完成。未声明时行为与原来一致，不返回 `assessment`。
+题组可选声明 `policy.student.passageScore` 与 `ownSubmission.onFinal: ["passageGradingStatus"]`，含义与整卷单选相同：前提是每道题都声明了自动评估、`manualReview` 或 `teacherReview`，复盘 `review` 仍然拒绝。活动完成后，只要还有一道题没有有效判定（自动评估待评或失败、教师未判），学生 `read` 只返回 `assessment: { status: "pending" }`，不给分数；全部判定后才返回 `{ status: "complete", ... }`，教师判定优先于自动结果。声明后学生回取 `recoverQuestionDelivery` 不再给自动判分：评估完成时 `evaluation` 只返回 `{ status: "withheld", evaluator }`，分数以 `read` 为准。`status: "completed"` 仍只表示活动完成。未声明时行为与原来一致，不返回 `assessment`，回取照旧交付 `evaluation` 计数与逐题结果。
 
 需要人工评阅时，在 `grading.manualReview.keyRef` 引用本次私有 `scoringKey: { id, version, reviewCriteria }`。填写实际的量表或评阅准则文本。每个确认覆盖的位置都登记待评，含已确认的空答。表现记录继续遵守已答规则。宿主凭已验证的 `{ role: "reviewer", id }`、活动 ID 和原确认键调用 `readQuestionDeliveryReview`，授权与字段范围见[评阅授权与教学策略](#评阅授权与教学策略)。该读口交付冻结原值、待评题和精确版本的 `basis`；原值须练法声明 `studentChoices`，量表须声明 `gradingBasis`。
 

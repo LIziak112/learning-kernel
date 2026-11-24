@@ -32,7 +32,8 @@ export function recoverQuestionDeliveryAssessment(
 ) {
   const { automatic, review } = confirmedDeliveryAssessment(activity, content);
   if (automatic.length) {
-    const evaluation = readEvaluatedResponses(database, activity, receipt, automatic, submissionAssessmentTarget(database, receipt.id));
+    const evaluation = studentEvaluation(activity,
+      readEvaluatedResponses(database, activity, receipt, automatic, submissionAssessmentTarget(database, receipt.id)));
     const questions = mode === "declared" && review.length > 0
       ? readManualReviewQuestions(database, receipt, review, true)
       : undefined;
@@ -45,6 +46,16 @@ export function recoverQuestionDeliveryAssessment(
     return { assessment: "teacherReview" as const, review: { questions } };
   }
   return { assessment: "none" as const };
+}
+
+type Evaluation = ReturnType<typeof readEvaluatedResponses>;
+type WithheldEvaluation = { [field in Exclude<keyof Extract<Evaluation, { status: "evaluated" }>, "status" | "evaluator">]?: never } & {
+  status: "withheld"; evaluator: Evaluation["evaluator"];
+};
+
+function studentEvaluation(activity: ReadingActivity, evaluation: Evaluation): Evaluation | WithheldEvaluation {
+  if (evaluation.status !== "evaluated" || !activity.practice.policy.student.passageScore) return evaluation;
+  return { status: "withheld" as const, evaluator: evaluation.evaluator };
 }
 
 export function readManualReviewQuestions(
